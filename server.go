@@ -20,6 +20,22 @@ type ServerConfig struct {
 
 	// TLSConfig, if set, configures the server to use TLS.
 	TLSConfig *tls.Config
+
+	// If ReadTimeout is set, reads will time out.
+	ReadTimeout time.Duration
+
+	// If WriteTimeout is set, writes will time out.
+	WriteTimeout time.Duration
+
+	// If KeepaliveInterval is set, the server will write a keepalive frame
+	// if the interval passes without a write.
+	KeepaliveInterval time.Duration
+}
+
+type svrConn struct {
+	conn net.Conn
+	bus  *Bus
+	cfg  ServerConfig
 }
 
 // Serve serves bus to conn using the Yat protocol.
@@ -51,21 +67,36 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 		conn = tls.Server(conn, cfg.TLSConfig)
 	}
 
+	sc := &svrConn{conn, bus, cfg}
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
-		panic("reader")
+		return sc.ReadFrames(ctx)
 	})
 
 	eg.Go(func() error {
-		panic("writer")
+		return sc.WriteFrames(ctx)
 	})
 
-	eg.Go(func() error {
-		panic("keepalive")
-	})
+	if cfg.KeepaliveInterval > 0 {
+		eg.Go(func() error {
+			return sc.Keepalive(ctx)
+		})
+	}
 
 	return eg.Wait()
+}
+
+func (sc *svrConn) ReadFrames(ctx context.Context) error {
+	panic("ReadFrames")
+}
+
+func (sc *svrConn) WriteFrames(ctx context.Context) error {
+	panic("WriteFrames")
+}
+
+func (sc *svrConn) Keepalive(ctx context.Context) error {
+	panic("Keepalive")
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {
