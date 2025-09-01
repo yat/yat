@@ -11,26 +11,19 @@ import (
 func TestAppendTag(t *testing.T) {
 	tcs := []struct {
 		Type  field.Type
-		Card  field.Card
 		Field int
 	}{
-		{field.Num, field.One, 1},
-		{field.Num, field.N, 2},
-		{field.Run, field.One, 3},
-		{field.Run, field.N, 4},
+		{field.Num, 1},
+		{field.Run, 2},
 	}
 
 	for _, tc := range tcs {
-		t.Run(fmt.Sprintf("%v-%v-%v", tc.Type, tc.Card, tc.Field), func(t *testing.T) {
-			b := field.AppendTag(nil, tc.Type, tc.Card, tc.Field)
+		t.Run(fmt.Sprintf("%v-%v", tc.Type, tc.Field), func(t *testing.T) {
+			b := field.AppendTag(nil, tc.Type, tc.Field)
 			tag := field.Tag(b[0])
 
 			if got := tag.Type(); got != tc.Type {
 				t.Errorf("type %v != %v", got, tc.Type)
-			}
-
-			if got := tag.Card(); got != tc.Card {
-				t.Errorf("cardinality %v != %v", got, tc.Card)
 			}
 
 			if got := tag.Field(); got != tc.Field {
@@ -45,13 +38,13 @@ func TestAppendTag_TruncateField(t *testing.T) {
 		Field int // out-of-range field number
 		Want  int // truncated field number
 	}{
-		{65, 1},
-		{-1, 63},
+		{129, 1},
+		{-1, 127},
 	}
 
 	for _, tc := range tcs {
 		t.Run(fmt.Sprint(tc.Field), func(t *testing.T) {
-			b := field.AppendTag(nil, 0, 0, tc.Field)
+			b := field.AppendTag(nil, 0, tc.Field)
 			tag := field.Tag(b[0])
 
 			if got := tag.Field(); got != tc.Want {
@@ -92,25 +85,6 @@ func TestType_String(t *testing.T) {
 		t.Run(tc.Want, func(t *testing.T) {
 			if got, want := tc.Type.String(), tc.Want; got != want {
 				t.Errorf("type string %v != %v", got, want)
-			}
-		})
-	}
-}
-
-func TestCard_String(t *testing.T) {
-	tcs := []struct {
-		Card field.Card
-		Want string
-	}{
-		{field.N, "N"},
-		{field.One, "One"},
-		{99, "Card(99)"},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.Want, func(t *testing.T) {
-			if got, want := tc.Card.String(), tc.Want; got != want {
-				t.Errorf("card string %v != %v", got, want)
 			}
 		})
 	}

@@ -90,31 +90,19 @@ func (r *Reader) Discard(t Tag) error {
 		return r.e
 	}
 
-	count := 1
-	if t.Card() != One {
-		v, err := r.ReadNum()
-		if err != nil {
-			return err
-		}
-
-		count = int(v)
+	// num value or run len
+	val, err := r.ReadNum()
+	if err != nil {
+		return err
 	}
 
-	for range count {
-		// num value or run len
-		val, err := r.ReadNum()
-		if err != nil {
-			return err
+	// discard run
+	if t.Type() == Run {
+		if uint64(len(r.b)) < val {
+			r.e = ErrShort
+			return ErrShort
 		}
-
-		// if run, discard data
-		if t.Type() == Run {
-			if uint64(len(r.b)) < val {
-				r.e = ErrShort
-				return ErrShort
-			}
-			r.b = r.b[val:]
-		}
+		r.b = r.b[val:]
 	}
 
 	return nil

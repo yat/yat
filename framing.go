@@ -13,27 +13,27 @@ import (
 
 func (m Msg) appendFields(b []byte) []byte {
 	if !m.Topic.IsZero() {
-		b = field.AppendTag(b, field.Run, field.One, 1)
+		b = field.AppendTag(b, field.Run, 1)
 		b = field.AppendRun(b, m.Topic.Bytes())
 	}
 
 	if !m.Inbox.IsZero() {
-		b = field.AppendTag(b, field.Run, field.One, 2)
+		b = field.AppendTag(b, field.Run, 2)
 		b = field.AppendRun(b, m.Inbox.Bytes())
 	}
 
 	if len(m.Data) > 0 {
-		b = field.AppendTag(b, field.Run, field.One, 3)
+		b = field.AppendTag(b, field.Run, 3)
 		b = field.AppendRun(b, m.Data)
 	}
 
 	if len(m.Meta) > 0 {
-		b = field.AppendTag(b, field.Run, field.One, 4)
+		b = field.AppendTag(b, field.Run, 4)
 		b = field.AppendRun(b, m.Meta)
 	}
 
 	if !m.Deadline.IsZero() {
-		b = field.AppendTag(b, field.Num, field.One, 5)
+		b = field.AppendTag(b, field.Num, 5)
 		b = nv.Append(b, uint64(m.Deadline.UnixNano()))
 	}
 
@@ -53,33 +53,32 @@ func (m *Msg) parseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 1:
-			m.Topic, err = parseOneTopic(tag, r)
+			m.Topic, err = parseTopicField(tag, r)
 
 		case 2:
-			m.Inbox, err = parseOneTopic(tag, r)
+			m.Inbox, err = parseTopicField(tag, r)
 
 		case 3:
-			m.Data, err = parseOneRun(tag, r)
+			m.Data, err = parseRunField(tag, r)
 
 		case 4:
-			m.Meta, err = parseOneRun(tag, r)
+			m.Meta, err = parseRunField(tag, r)
 
 		case 5:
-			m.Deadline, err = parseOneTime(tag, r)
+			m.Deadline, err = parseTimeField(tag, r)
 
 		default:
 			err = r.Discard(tag)
 		}
 
 		if err != nil {
-			return fmt.Errorf("parse Msg: field %d (%v %v): %v",
-				tag.Field(), tag.Card(), tag.Type(), err)
+			return fmt.Errorf("parse Msg: field %d: %v", tag.Field(), err)
 		}
 	}
 }
 
-func parseOneTopic(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {
-	raw, err := parseOneRun(t, r)
+func parseTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {
+	raw, err := parseRunField(t, r)
 	if err != nil {
 		return
 	}
@@ -87,8 +86,8 @@ func parseOneTopic(t field.Tag, r *field.Reader) (parsed topic.Path, err error) 
 	return
 }
 
-func parseOneTime(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
-	ns, err := parseOneNum(t, r)
+func parseTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
+	ns, err := parseNumField(t, r)
 	if err != nil {
 		return
 	}
@@ -96,31 +95,18 @@ func parseOneTime(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
 	return
 }
 
-func parseOneNum(t field.Tag, r *field.Reader) (uint64, error) {
+func parseNumField(t field.Tag, r *field.Reader) (uint64, error) {
 	if t.Type() != field.Num {
 		return 0, errFieldType
 	}
-
-	if t.Card() != field.One {
-		return 0, errFieldCard
-	}
-
 	return r.ReadNum()
 }
 
-func parseOneRun(t field.Tag, r *field.Reader) ([]byte, error) {
+func parseRunField(t field.Tag, r *field.Reader) ([]byte, error) {
 	if t.Type() != field.Run {
 		return nil, errFieldType
 	}
-
-	if t.Card() != field.One {
-		return nil, errFieldCard
-	}
-
 	return r.ReadRun()
 }
 
-var (
-	errFieldType = errors.New("invalid type")
-	errFieldCard = errors.New("invalid cardinality")
-)
+var errFieldType = errors.New("invalid type")

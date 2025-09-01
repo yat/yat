@@ -122,7 +122,7 @@ A Call frame (type 5)
 
 #### Pkg Frame
 
-A Pkg frame (type 129) contains the same fields as a [Msg frame](#msg-frame), plus an additional Num field (63) identifying the subscription.
+A Pkg frame (type 129) contains the same fields as a [Msg frame](#msg-frame), plus an additional Num field (127) identifying the subscription.
 
 #### Ret Frame
 
@@ -132,12 +132,11 @@ A Ret frame (type 130)
 
 A field set is a run of bytes containing zero or more encoded fields.
 The encoding is similar to the Protocol Buffers wire format, but much more limited.
-Field sets are designed for structs with a small number of simple fields, mostly unsigned integers and byte slices.
+Field sets are designed for structs with a small number of fields containing unsigned integers and byte slices.
 
 A field is a 1 byte tag followed by an encoded value.
 The MSB of the tag is the field type, **Num** (0) or **Run** (1).
-The next bit of the tag is the field cardinality, **N** (0) or **One** (1).
-The least significant 6 bits of the tag are the field number, 0-63.
+The least significant 7 bits of the tag are the field number, 0-127.
 
 #### Field Values
 
@@ -145,17 +144,12 @@ Num values hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
 
 Run values hold a run of bytes encoded as a 1-9 byte nv len followed by len bytes.
 
-#### Field Cardinality
-
-A field contains either a single value (cardinality 1)
-or an array of values prefixed by an nv count (cardinality 0).
-
 #### Encoding and Decoding Fields
 
 Fields may appear in any order.
 Duplicate fields may appear.
 
-Only fields with nonzero values should be encoded. A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes, or if the field has a cardinality of N and a count > 0.
+Only fields with nonzero values should be encoded. A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes.
 
 When decoding, fields with reserved (0) or unknown field numbers should be discarded.
 
@@ -163,7 +157,7 @@ Two errors can occur during decoding: A short field or a Num overflow.
 
 #### Field Set Limitations
 
-- Structs with field counts exceeding the valid field number range (1-63) can't be encoded.
+Structs with field counts exceeding the valid field number range (1-127) can't be encoded.
 
 ### Integer Encoding
 

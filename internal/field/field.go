@@ -2,15 +2,14 @@
 // The encoding is similar to the Protocol Buffers wire format, but much more limited.
 // The encoding is not general-purpose: It was designed to be used in the Yat network protocol,
 // where a handwritten codec is a pain but efficiency and careful memory allocation are required.
-// Field sets are designed for structs with a small number of simple fields,
-// mostly unsigned integers and byte slices.
+// Field sets are designed for structs with a small number of fields containing unsigned integers
+// and byte slices.
 //
 // A field set is a run of bytes containing zero or more encoded fields.
 //
 // A field is a 1 byte tag followed by an encoded value.
 // The MSB of the tag is the field type, Num (0) or Run (1).
-// The next bit of the tag is the field cardinality, N (0) or One (1).
-// The least significant 6 bits of the tag are the field number, 0-63.
+// The least significant 7 bits of the tag are the field number, 0-127.
 //
 // # Values
 //
@@ -18,25 +17,19 @@
 //     For encoding details, see the internal/nv package.
 //   - Run values hold a run of bytes encoded as an nv len followed by len bytes.
 //
-// # Cardinality
-//
-// A field contains either a single value (cardinality 1)
-// or an array of values prefixed by an nv count (cardinality 0).
-//
 // # Codec
 //
 // Fields may appear in any order.
 // Duplicate fields may appear.
 //
 // Only fields with nonzero values should be encoded.
-// A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes,
-// or if the field has a cardinality of N and a count > 0.
+// A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes.
 // When decoding, fields with reserved (0) or unknown numbers should be discarded.
 // Two errors can occur during decoding: A short field or a Num overflow.
 //
 // # Limitations
 //
-// - Structs with field counts exceeding the valid field number range (1-63) can't be encoded.
+// - Structs with field counts exceeding the valid field number range (1-127) can't be encoded.
 package field
 
 import (
@@ -51,8 +44,7 @@ type Tag byte
 
 const (
 	typeBit = 0b10000000
-	cardBit = 0b01000000
-	numBits = 0b00111111
+	numBits = 0b01111111
 )
 
 // Type is the type of a field, [Num] or [Run].
@@ -63,23 +55,15 @@ const (
 	Run = Type(typeBit)
 )
 
-// Card is the cardinality of a field, [N] or [One].
-type Card byte
-
 const (
-	N   = Card(0)       // the field contains 1 or more values
-	One = Card(cardBit) // the field contains exactly 1 value
-)
-
-const (
-	MaxTagNum = 63
+	MaxTagNum = 127
 )
 
 // AppendTag appends a tag byte to b and returns the extended slice.
-// The field number must be in the range 0-63:
-// Larger numbers are reduced to their least significant 6 bits.
-func AppendTag(b []byte, typ Type, card Card, field int) []byte {
-	return append(b, byte(typ)|byte(card)|byte(field&numBits))
+// The field number must be in the range 0-127:
+// Larger numbers are reduced to their least significant 7 bits.
+func AppendTag(b []byte, typ Type, field int) []byte {
+	return append(b, byte(typ)|byte(field&numBits))
 }
 
 func AppendRun[T ~[]byte | ~string](b []byte, value T) []byte {
@@ -91,12 +75,7 @@ func (t Tag) Type() Type {
 	return Type(t & typeBit)
 }
 
-// Card returns the field cardinality.
-func (t Tag) Card() Card {
-	return Card(t & cardBit)
-}
-
-// Num returns the field number, 0-63.
+// Num returns the field number, 0-127.
 func (t Tag) Field() int {
 	return int(t & numBits)
 }
@@ -111,18 +90,5 @@ func (t Type) String() string {
 		return "Run"
 	default:
 		return fmt.Sprintf("Type(%d)", t)
-	}
-}
-
-// String returns a string describing the cardinality, "N" or "One".
-// If the value is invalid, String returns "Card(value)".
-func (c Card) String() string {
-	switch c {
-	case N:
-		return "N"
-	case One:
-		return "One"
-	default:
-		return fmt.Sprintf("Card(%d)", c)
 	}
 }

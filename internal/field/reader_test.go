@@ -10,7 +10,7 @@ import (
 
 func TestReader(t *testing.T) {
 	var b []byte
-	b = field.AppendTag(b, field.Num, field.One, 1)
+	b = field.AppendTag(b, field.Num, 1)
 	b = nv.Append(b, 1111)
 
 	var r field.Reader
@@ -23,10 +23,6 @@ func TestReader(t *testing.T) {
 
 	if got, want := tag.Type(), field.Num; got != want {
 		t.Errorf("type %v != %v", got, want)
-	}
-
-	if got, want := tag.Card(), field.One; got != want {
-		t.Errorf("cardinality %v != %v", got, want)
 	}
 
 	if got, want := tag.Field(), 1; got != want {
