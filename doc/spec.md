@@ -91,12 +91,12 @@ A Msg frame (type 2) contains a message field set.
 | Field | Name | Type | Description |
 | -- | -- | -- | -- |
 | 1 | Topic | Run | The topic path bytes |
-| 2 | Data | Run | Opaque message data |
-| 3 | Inbox | Run | The inbox path bytes |
-| 4 | Deadline | Num | Nanoseconds after the Unix epoch |
-| 5 | Metadata | Run | Opaque message metadata |
+| 2 | Inbox | Run | The inbox path bytes |
+| 3 | Data | Run | Message data |
+| 4 | Meta | Run | Message metadata |
+| 5 | Deadline | Num | In Unix nanos |
 
-The server discards Msg frames without a topic.
+Msg frames without a topic are discarded.
 
 #### Sub Frame
 

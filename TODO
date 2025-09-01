@@ -1,1 +1,3 @@
+- aggressive test coverage for internal/*
 - bad AI tests in internal/nv
+- frame / field parsing error cases
