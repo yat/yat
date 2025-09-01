@@ -3,7 +3,7 @@
 // The encoding is not general-purpose: It was designed to be used in the Yat network protocol,
 // where a handwritten codec is a pain but efficiency and careful memory allocation are required.
 // Field sets are designed for structs with a small number of fields containing unsigned integers
-// and byte slices.
+// and byte slices. Repeated fields and nested structs are not supported.
 //
 // A field set is a run of bytes containing zero or more encoded fields.
 //
