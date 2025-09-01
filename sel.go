@@ -18,6 +18,7 @@ type DeliveryGroup struct {
 	h unique.Handle[string]
 }
 
+// Group returns the delivery group representing the given value.
 func Group[T ~[]byte | ~string](value T) DeliveryGroup {
 	return DeliveryGroup{unique.Make(string(value))}
 }
