@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/yat/yat/internal/field"
+	"github.com/yat/yat/field"
 	"github.com/yat/yat/topic"
 )
 

@@ -35,7 +35,7 @@ package field
 import (
 	"fmt"
 
-	"github.com/yat/yat/internal/nv"
+	"github.com/yat/yat/nv"
 )
 
 // Tag is the first byte of an encoded field.

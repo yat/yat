@@ -7,7 +7,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/yat/yat/internal/nv"
+	"github.com/yat/yat/nv"
 )
 
 func TestAppendPutParse_RoundTrip(t *testing.T) {
