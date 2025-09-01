@@ -79,36 +79,17 @@ func TestParse(t *testing.T) {
 	}
 }
 
-func TestNew(t *testing.T) {
-	t.Run("good", func(t *testing.T) {
-		p := topic.New("test")
-		if p.String() != "test" {
-			t.Fatalf("%q != %q", p.String(), "test")
-		}
-	})
-
-	t.Run("panic", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("expected panic")
-			}
-		}()
-		topic.New([]byte{0})
-	})
-}
-
-func TestInbox(t *testing.T) {
-	i1 := topic.Inbox()
-	i2 := topic.Inbox()
-
-	if i1.Equal(i2) {
-		t.Fatalf("not random: %v == %v", i1, i2)
+func must[T ~[]byte | ~string](v T) topic.Path {
+	top, _, err := topic.Parse(v)
+	if err != nil {
+		panic(err)
 	}
+	return top
 }
 
 func TestPath_Clone(t *testing.T) {
 	buf := []byte("hello")
-	p := topic.New(buf)
+	p := must(buf)
 
 	buf[0] = 'H'
 	if p.String() != string(buf) {
@@ -123,9 +104,9 @@ func TestPath_Clone(t *testing.T) {
 }
 
 func TestPath_Equal(t *testing.T) {
-	p1 := topic.New("test")
-	p2 := topic.New("test")
-	p3 := topic.New("test2")
+	p1 := must("test")
+	p2 := must("test")
+	p3 := must("test2")
 
 	if !p1.Equal(p2) {
 		t.Fatalf("%v != %v", p1, p2)
@@ -142,7 +123,7 @@ func TestPath_Equal(t *testing.T) {
 
 func TestPath_IsZero(t *testing.T) {
 	zero := topic.Path{}
-	nonzero := topic.New("test")
+	nonzero := must("test")
 
 	if !zero.IsZero() {
 		t.Fatal("zero is not zero")
@@ -155,15 +136,15 @@ func TestPath_IsZero(t *testing.T) {
 
 func TestPath_Match(t *testing.T) {
 	for _, tc := range matchTestCases {
-		pat := topic.New(tc.Pat)
+		pat := must(tc.Pat)
 		for _, ok := range tc.OK {
-			if !pat.Match(topic.New(ok)) {
+			if !pat.Match(must(ok)) {
 				t.Errorf("pattern %q doesn't match %q", tc.Pat, ok)
 			}
 		}
 
 		for _, no := range tc.No {
-			if pat.Match(topic.New(no)) {
+			if pat.Match(must(no)) {
 				t.Errorf("pattern %q unexepectedly matches %q", tc.Pat, no)
 			}
 		}
@@ -177,7 +158,7 @@ func TestPath_Match(t *testing.T) {
 }
 
 func TestPath_MarshalJSON(t *testing.T) {
-	p := topic.New("x/y/z")
+	p := must("x/y/z")
 	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)

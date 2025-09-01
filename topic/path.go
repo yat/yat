@@ -2,8 +2,6 @@ package topic
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"iter"
 	"slices"
 )
@@ -16,30 +14,9 @@ type Path struct {
 	buf []byte
 }
 
-// New creates a new topic path from a raw value.
-// If the value is a byte slice, the returned path aliases the slice.
-// If the path is invalid, New panics.
-func New[V ~[]byte | ~string](raw V) Path {
-	p, _, err := Parse(raw)
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
-
-// Inbox returns a random path like "@8952/eb0b/8e18151af00e5bcfc13c75ea".
-func Inbox() Path {
-	raw := make([]byte, 16)
-	rand.Read(raw)
-	inb := make([]byte, len(raw)*2+3)
-
-	inb[0] = '@'
-	hex.Encode(inb[1:5], raw[0:2])
-	inb[5] = '/'
-	hex.Encode(inb[6:10], raw[2:4])
-	inb[10] = '/'
-	hex.Encode(inb[11:], raw[4:])
-	return Path{inb}
+// New return a Path backed by b, which must hold a valid path.
+func New(b []byte) Path {
+	return Path{b}
 }
 
 // Bytes returns a byte slice aliasing the path.
@@ -59,6 +36,7 @@ func (p Path) Equal(other Path) bool {
 }
 
 // Match returns true if the given path matches the receiver.
+// It gives the same answer as [Tree.Matches].
 func (p Path) Match(other Path) bool {
 	if p.IsZero() || other.IsZero() {
 		return false

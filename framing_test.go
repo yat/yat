@@ -7,21 +7,20 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/yat/yat/field"
-	"github.com/yat/yat/topic"
 )
 
 func TestMsgRoundtrip(t *testing.T) {
 	mm := []Msg{
 		{},
-		{Topic: topic.New("topic")},
-		{Inbox: topic.New("inbox")},
+		{Topic: Topic("topic")},
+		{Inbox: Topic("inbox")},
 		{Data: []byte("data")},
 		{Meta: []byte("meta")},
 		{Deadline: time.Now()},
 
 		{
-			Topic:    topic.New("topic"),
-			Inbox:    topic.New("inbox"),
+			Topic:    Topic("topic"),
+			Inbox:    Topic("inbox"),
 			Data:     []byte("data"),
 			Meta:     []byte("meta"),
 			Deadline: time.Now(),
@@ -47,13 +46,13 @@ func TestMsgRoundtrip(t *testing.T) {
 func TestSelRoundtrip(t *testing.T) {
 	ss := []Sel{
 		{},
-		{Topic: topic.New("topic")},
+		{Topic: Topic("topic")},
 		{Limit: 111},
 		{Group: Group("group")},
 		{Flags: DATA | INBOX},
 
 		{
-			Topic: topic.New("topic"),
+			Topic: Topic("topic"),
 			Limit: 1,
 			Group: Group("group"),
 			Flags: DATA,
