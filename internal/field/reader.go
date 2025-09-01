@@ -16,6 +16,12 @@ type Reader struct {
 var ErrShort = errors.New("short field")
 var ErrOverflow = errors.New("value overflows 64 bits")
 
+func NewReader(b []byte) *Reader {
+	r := &Reader{}
+	r.Reset(b)
+	return r
+}
+
 func (r *Reader) ReadTag() (tag Tag, err error) {
 	if r.e != nil {
 		err = r.e
