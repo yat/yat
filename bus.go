@@ -17,16 +17,19 @@ type Bus struct {
 }
 
 // Publish delivers m to all interested subscribers before returning.
-func (b *Bus) Publish(m Msg) {
+// It always returns a nil error.
+func (b *Bus) Publish(m Msg) error {
 	for _, s := range b.route(m) {
 		s.Deliver(m)
 	}
+	return nil
 }
 
 // Subscribe arranges for f to be called when a message matching sel is published.
-func (b *Bus) Subscribe(sel Sel, f func(Msg)) Subscription {
+// It always returns a nil error.
+func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	if sel.Topic.IsZero() || f == nil {
-		return zeroSub{}
+		return zeroSub{}, nil
 	}
 
 	b.mu.Lock()
@@ -39,8 +42,7 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) Subscription {
 	})
 
 	b.tt.Ins(sel.Topic, sub)
-
-	return sub
+	return sub, nil
 }
 
 func (b *Bus) route(m Msg) []*subscription {
