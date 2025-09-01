@@ -72,7 +72,65 @@ func (m *Msg) parseFields(r *field.Reader) error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("parse Msg: field %d: %v", tag.Field(), err)
+			return fmt.Errorf("parse message: field %d: %v", tag.Field(), err)
+		}
+	}
+}
+
+func (s Sel) appendFields(b []byte) []byte {
+	if !s.Topic.IsZero() {
+		b = field.AppendTag(b, field.Run, 1)
+		b = field.AppendRun(b, s.Topic.Bytes())
+	}
+
+	if s.Limit > 0 {
+		b = field.AppendTag(b, field.Num, 2)
+		b = nv.Append(b, uint64(s.Limit))
+	}
+
+	if !s.Group.IsZero() {
+		b = field.AppendTag(b, field.Run, 3)
+		b = field.AppendRun(b, s.Group.String())
+	}
+
+	if s.Flags != 0 {
+		b = field.AppendTag(b, field.Num, 4)
+		b = nv.Append(b, uint64(s.Flags))
+	}
+
+	return b
+}
+
+func (s *Sel) parseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+		case 1:
+			s.Topic, err = parseTopicField(tag, r)
+
+		case 2:
+			s.Limit, err = parseIntField(tag, r)
+
+		case 3:
+			s.Group, err = parseGroupField(tag, r)
+
+		case 4:
+			s.Flags, err = parseSelFlagsField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse selector: field %d: %v", tag.Field(), err)
 		}
 	}
 }
@@ -95,11 +153,37 @@ func parseTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) 
 	return
 }
 
+// just casts
+func parseIntField(t field.Tag, r *field.Reader) (int, error) {
+	v, err := parseNumField(t, r)
+	if err != nil {
+		return 0, err
+	}
+	return int(v), nil
+}
+
+// just casts
+func parseSelFlagsField(t field.Tag, r *field.Reader) (SelFlags, error) {
+	v, err := parseNumField(t, r)
+	if err != nil {
+		return 0, err
+	}
+	return SelFlags(v), nil
+}
+
 func parseNumField(t field.Tag, r *field.Reader) (uint64, error) {
 	if t.Type() != field.Num {
 		return 0, errFieldType
 	}
 	return r.ReadNum()
+}
+
+func parseGroupField(t field.Tag, r *field.Reader) (DeliveryGroup, error) {
+	b, err := parseRunField(t, r)
+	if err != nil {
+		return DeliveryGroup{}, err
+	}
+	return Group(b), nil
 }
 
 func parseRunField(t field.Tag, r *field.Reader) ([]byte, error) {

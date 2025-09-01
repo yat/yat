@@ -18,7 +18,26 @@ type DeliveryGroup struct {
 	h unique.Handle[string]
 }
 
+func Group[T ~[]byte | ~string](value T) DeliveryGroup {
+	return DeliveryGroup{unique.Make(string(value))}
+}
+
+// IsZero returns true if the g is the zero group.
+func (g DeliveryGroup) IsZero() bool {
+	return g == DeliveryGroup{}
+}
+
+// Equal returns true if the groups are equal.
+// It is exactly the same operation as g == other.
+func (g DeliveryGroup) Equal(other DeliveryGroup) bool {
+	return g == other
+}
+
+// String returns the name of the group.
 func (g DeliveryGroup) String() string {
+	if g.IsZero() {
+		return ""
+	}
 	return g.h.Value()
 }
 

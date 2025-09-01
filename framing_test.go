@@ -43,3 +43,35 @@ func TestMsgRoundtrip(t *testing.T) {
 		})
 	}
 }
+
+func TestSelRoundtrip(t *testing.T) {
+	ss := []Sel{
+		{},
+		{Topic: topic.New("topic")},
+		{Limit: 111},
+		{Group: Group("group")},
+		{Flags: DATA | INBOX},
+
+		{
+			Topic: topic.New("topic"),
+			Limit: 1,
+			Group: Group("group"),
+			Flags: DATA,
+		},
+	}
+
+	for i, s := range ss {
+		t.Run(fmt.Sprintf("ss[%d]", i), func(t *testing.T) {
+			b := s.appendFields(nil)
+
+			var got Sel
+			if err := got.parseFields(field.NewReader(b)); err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(s, got); diff != "" {
+				t.Error(diff)
+			}
+		})
+	}
+}
