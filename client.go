@@ -365,7 +365,7 @@ func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, r *field
 		return nil
 	}
 
-	if dl := body.Msg.Deadline; !dl.IsZero() && time.Now().After(dl) {
+	if body.Msg.IsExpired() {
 		return nil
 	}
 

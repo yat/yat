@@ -159,7 +159,7 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
-	if dl := body.Msg.Deadline; !dl.IsZero() && time.Now().After(dl) {
+	if body.Msg.IsExpired() {
 		return nil
 	}
 
