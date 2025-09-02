@@ -38,7 +38,8 @@ type ServerConfig struct {
 type svrConn struct {
 	conn net.Conn
 	bus  *Bus
-	cfg  ServerConfig
+
+	cfg ServerConfig
 
 	mu      sync.Mutex
 	wbuf    net.Buffers
@@ -154,6 +155,14 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 
 	logger.DebugContext(ctx, "read msg frame", "body", body)
 
+	if body.Msg.Topic.IsZero() {
+		return nil
+	}
+
+	if dl := body.Msg.Deadline; !dl.IsZero() && time.Now().After(dl) {
+		return nil
+	}
+
 	return nil
 }
 
@@ -164,6 +173,10 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	logger.DebugContext(ctx, "read sub frame", "body", body)
+
+	if body.Sel.Topic.IsZero() {
+		return nil
+	}
 
 	return nil
 }

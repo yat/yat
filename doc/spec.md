@@ -86,6 +86,7 @@ A Msg frame (type 2) contains a message field set.
 | 5 | Deadline | Num | In Unix nanos |
 
 A Msg frame without a topic is discarded by the server.
+A Msg frame with a deadline in the past is discarded by the server.
 
 #### Sub Frame
 
@@ -99,7 +100,7 @@ A Sub frame (type 3) contains a field set describing a subscription.
 | 4 | Group | Run | Delivery group name |
 | 5 | Flags | Num | Selector flags |
 
-If a Sub frame is missing its Number or Topic field, it is discarded by the server.
+If a Sub frame is missing a topic field, it is discarded by the server.
 
 #### Unsub Frame
 
@@ -107,7 +108,8 @@ An Unsub frame (type 4) contains a single Num field (1) identifying the subscrip
 
 #### Pkg Frame
 
-A Pkg frame (type 128) contains the same fields as a [Msg frame](#msg-frame), plus an additional field 127 for the subscription number. If a Pkg frame is missing its subscription number or topic, it is discarded by the client.
+A Pkg frame (type 128) contains the same fields as a [Msg frame](#msg-frame), plus an additional field 127 for the subscription number. If a Pkg frame is missing a topic field, it is discarded by the client.
+If a Pkg frame has a deadline in the past, it is discarded by the client.
 
 ### Field Sets
 

@@ -1,0 +1,454 @@
+package yat
+
+import (
+	"context"
+	"crypto/tls"
+	"io"
+	"log/slog"
+	"net"
+	"sync"
+	"time"
+
+	"github.com/yat/yat/field"
+	"github.com/yat/yat/frame"
+	"golang.org/x/sync/errgroup"
+)
+
+type Client struct {
+	cfg ClientConfig
+
+	mu    sync.Mutex
+	doneC chan struct{} // closed by Close
+	connC chan struct{} // closed when connect returns
+
+	op   uint64
+	subs map[uint64]*subscription
+
+	wbuf  []byte
+	wbufC chan struct{}
+
+	// these are buffered operations waiting to be sent
+	// the client tracks them to keep from buffering duplicates after it reconnects
+	// like wbuf, this set is cleared every time the buffer is flushed
+	bops map[uint64]struct{}
+
+	// set to the current time when the buffer is flushed
+	flushed time.Time
+
+	// flushers are blocked calls to Flush
+	// this set is cleared and the channels are closed after the buffer is flushed
+	flushers []chan<- error
+}
+
+// ClientConfig holds optional client configuration.
+type ClientConfig struct {
+
+	// Logger is where the client writes logs.
+	// If it is not set, client logs are discarded.
+	Logger *slog.Logger
+
+	// TLSConfig, if set, configures the client to use TLS.
+	TLSConfig *tls.Config
+
+	// If ReadTimeout is set, reads will time out.
+	ReadTimeout time.Duration
+
+	// If WriteTimeout is set, writes will time out.
+	WriteTimeout time.Duration
+
+	// If KeepaliveInterval is set, the client will write a keepalive frame
+	// if the interval passes without a write.
+	KeepaliveInterval time.Duration
+}
+
+// DialFunc is called by the client to establish a connection to the server.
+// It may be called many times from different goroutines.
+type DialFunc func(context.Context) (net.Conn, error)
+
+func NewClient(dial DialFunc, cfg ClientConfig) *Client {
+	c := &Client{
+		cfg:   cfg.withDefaults(),
+		doneC: make(chan struct{}),
+		connC: make(chan struct{}),
+		subs:  map[uint64]*subscription{},
+		wbufC: make(chan struct{}, 1),
+		bops:  map[uint64]struct{}{},
+	}
+
+	// cancelled after the client is closed
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		<-c.doneC
+		cancel()
+	}()
+
+	go func() {
+		defer close(c.connC)
+		c.connect(ctx, dial)
+	}()
+
+	return c
+}
+
+// Publish copies m to the outbound message buffer.
+// The buffer is flushed automatically when the client is connected.
+// Publish returns an error if the client is closed.
+func (c *Client) Publish(m Msg) error {
+	if m.Topic.IsZero() {
+		return nil
+	}
+
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return net.ErrClosed
+	default:
+	}
+
+	c.wbuf = frame.Append(c.wbuf, msgFrame, msgFrameBody{
+		Msg: m,
+	})
+
+	c.mu.Unlock()
+	c.flush()
+
+	return nil
+}
+
+// Subscribe arranges for deliver to be called in a new goroutine when a selected message is published.
+// Call [Subscription.Stop] on the returned subscription to stop delivery.
+// Subscribe returns an error if the client is closed.
+//
+// The message passed to deliver aliases internal buffers.
+// It is an error to modify it or retain its fields after deliver returns.
+func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return nil, net.ErrClosed
+	default:
+	}
+
+	if sel.Topic.IsZero() || deliver == nil {
+		c.mu.Unlock()
+		return zeroSub{}, nil
+	}
+
+	num := c.op
+	c.op++
+
+	sub := newSub(sel, func(m Msg, _ []byte) { deliver(m) }, func(sub *subscription) {
+		c.mu.Lock()
+		delete(c.subs, num)
+
+		// only if the server hasn't cleaned up already
+		unsub := sel.Limit <= 0 || sub.deliveries.Load() < uint64(sel.Limit)
+		if unsub {
+			c.wbuf = frame.Append(c.wbuf, unsubFrame, unsubFrameBody{
+				Num: num,
+			})
+		}
+
+		c.mu.Unlock()
+
+		if unsub {
+			c.flush()
+		}
+	})
+
+	c.subs[num] = sub
+	c.bops[num] = struct{}{}
+
+	c.wbuf = frame.Append(c.wbuf, subFrame, subFrameBody{
+		Num: num,
+		Sel: sel,
+	})
+
+	c.mu.Unlock()
+	c.flush()
+
+	return sub, nil
+}
+
+// Flush blocks until the client flushes its outbound message buffer.
+// It returns an error if the client is closed, or if the context is canceled,
+// or if an error occurs while writing the message buffers.
+// If the buffer is empty, Flush does nothing and returns nil.
+func (c *Client) Flush(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return net.ErrClosed
+	default:
+	}
+
+	if len(c.wbuf) == 0 {
+		c.mu.Unlock()
+		return nil
+	}
+
+	flushC := make(chan error)
+	c.flushers = append(c.flushers, flushC)
+	c.mu.Unlock()
+
+	c.flush()
+
+	select {
+	case <-c.doneC:
+		return net.ErrClosed
+
+	case <-ctx.Done():
+		return ctx.Err()
+
+	case err := <-flushC:
+		return err
+	}
+}
+
+// Close shuts down the client.
+// After Close is called, all methods return [net.ErrClosed].
+func (c *Client) Close() error {
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return net.ErrClosed
+
+	default:
+		close(c.doneC)
+		c.mu.Unlock()
+	}
+
+	<-c.connC
+	return nil
+}
+
+func (c *Client) connect(ctx context.Context, dial DialFunc) {
+	for {
+		if ctx.Err() != nil {
+			return // closed
+		}
+
+		// FIX: ClientConfig.DialTimeout
+		dctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+		conn, err := dial(dctx)
+		cancel()
+
+		if err != nil {
+			if err == ctx.Err() {
+				return
+			}
+
+			c.cfg.Logger.WarnContext(ctx, "dial failed",
+				"error", err)
+
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		start := time.Now()
+
+		if c.cfg.TLSConfig != nil {
+			conn = tls.Client(conn, c.cfg.TLSConfig)
+		}
+
+		logger := c.cfg.Logger.With(
+			"local", conn.LocalAddr().String(),
+			"remote", conn.RemoteAddr().String())
+
+		logger.Info("client connected")
+
+		c.mu.Lock()
+
+		var resubs int
+		for num, sub := range c.subs {
+			if _, pending := c.bops[num]; !pending {
+				sel := sub.sel
+				if sel.Limit > 0 {
+					sel.Limit -= int(sub.deliveries.Load())
+				}
+
+				c.wbuf = frame.Append(c.wbuf, subFrame, subFrameBody{
+					Num: num,
+					Sel: sel,
+				})
+
+				resubs++
+			}
+		}
+
+		if resubs > 0 {
+			c.flush()
+		}
+
+		c.mu.Unlock()
+
+		eg, ctx := errgroup.WithContext(ctx)
+
+		eg.Go(func() error {
+			return c.readFrames(ctx, logger, conn)
+		})
+
+		eg.Go(func() error {
+			return c.writeFrames(ctx, conn)
+		})
+
+		if c.cfg.KeepaliveInterval > 0 {
+			eg.Go(func() error {
+				return c.keepalive(ctx, conn)
+			})
+		}
+
+		err = eg.Wait()
+		logger.WarnContext(ctx, "connection failed",
+			"elapsed", time.Since(start),
+			"error", err)
+	}
+}
+
+func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
+	frames := frame.NewReader(conn)
+	fields := field.NewReader(nil)
+
+	for {
+		if d := c.cfg.ReadTimeout; d != 0 {
+			conn.SetReadDeadline(time.Now().Add(d))
+		}
+
+		hdr, err := frames.Next()
+		if err != nil {
+			return err
+		}
+
+		var handle func(context.Context, *slog.Logger, *field.Reader) error
+
+		switch hdr.Type {
+		case pkgFrame:
+			handle = c.readPkgFrame
+		}
+
+		body := make([]byte, hdr.BodyLen())
+		if _, err := io.ReadFull(frames, body); err != nil {
+			return err
+		}
+
+		fields.Reset(body)
+		if err := handle(ctx, logger, fields); err != nil {
+			logger.ErrorContext(ctx, "frame handler failed",
+				"type", hdr.Type,
+				"error", err)
+		}
+	}
+}
+
+func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+	var body pkgFrameBody
+	if err := body.ParseFields(r); err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "read pkg frame", "body", body)
+
+	if body.Msg.Topic.IsZero() {
+		return nil
+	}
+
+	if dl := body.Msg.Deadline; !dl.IsZero() && time.Now().After(dl) {
+		return nil
+	}
+
+	return nil
+
+}
+
+func (c *Client) writeFrames(ctx context.Context, conn net.Conn) error {
+	defer conn.Close()
+
+	for {
+		select {
+		case <-ctx.Done():
+		case <-c.wbufC:
+		}
+
+		now := time.Now()
+
+		c.mu.Lock()
+		buf := c.wbuf
+		flushers := c.flushers
+		c.wbuf = nil
+		c.flushers = nil
+		c.flushed = now
+		clear(c.bops)
+		c.mu.Unlock()
+
+		if d := c.cfg.WriteTimeout; d > 0 {
+			conn.SetWriteDeadline(now.Add(d))
+		}
+
+		_, err := conn.Write(buf)
+		for _, f := range flushers {
+			select {
+			case f <- err:
+			default:
+			}
+		}
+	}
+}
+
+func (c *Client) keepalive(ctx context.Context, conn net.Conn) error {
+	tick := time.NewTicker(c.cfg.KeepaliveInterval)
+	emptyFrame := frame.Append(nil, 0, nil)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-tick.C:
+			c.mu.Lock()
+
+			now := time.Now()
+			should := len(c.wbuf) == 0 &&
+				now.Sub(c.flushed) > c.cfg.KeepaliveInterval
+
+			c.mu.Unlock()
+
+			if should {
+				if d := c.cfg.WriteTimeout; d > 0 {
+					conn.SetWriteDeadline(now.Add(d))
+				}
+
+				if _, err := conn.Write(emptyFrame); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+func (c *Client) flush() {
+	select {
+	case c.wbufC <- struct{}{}:
+	default:
+	}
+}
+
+func (cfg ClientConfig) withDefaults() ClientConfig {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	return cfg
+}
