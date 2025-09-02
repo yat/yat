@@ -29,9 +29,12 @@ func (tt *Tree[V]) Del(pattern Path, value V) {
 }
 
 func (tt *Tree[V]) Matches(p Path) iter.Seq[V] {
+	if p.IsZero() {
+		return func(func(V) bool) {}
+	}
+
 	return func(yield func(V) bool) {
-		wild := !p.IsZero() && p.buf[0] != '.'
-		tt.match(p, wild, yield)
+		tt.match(p, yield)
 	}
 }
 
@@ -65,7 +68,7 @@ func (tt *Tree[V]) leaf(p Path, createMissing bool) *Tree[V] {
 	return c.leaf(cdr, true)
 }
 
-func (tt *Tree[V]) match(p Path, wild bool, yield func(V) bool) {
+func (tt *Tree[V]) match(p Path, yield func(V) bool) {
 	if p.IsZero() {
 		for s := range tt.subs {
 			if !yield(s) {
@@ -77,17 +80,15 @@ func (tt *Tree[V]) match(p Path, wild bool, yield func(V) bool) {
 
 	car, cdr := p.cut()
 	if c, ok := tt.children[car.String()]; ok {
-		c.match(cdr, wild, yield)
+		c.match(cdr, yield)
 	}
 
-	if wild {
-		if c, ok := tt.children["**"]; ok {
-			c.match(Path{}, false, yield)
-		}
+	if c, ok := tt.children["**"]; ok {
+		c.match(Path{}, yield)
+	}
 
-		if c, ok := tt.children["*"]; ok {
-			c.match(cdr, wild, yield)
-		}
+	if c, ok := tt.children["*"]; ok {
+		c.match(cdr, yield)
 	}
 }
 

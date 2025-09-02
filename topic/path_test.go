@@ -209,10 +209,9 @@ type matchTestCase struct {
 var matchTestCases = []matchTestCase{
 	{Pat: "a", OK: []string{"a"}, No: []string{"b"}},
 	{Pat: "a/b", OK: []string{"a/b"}, No: []string{"a", "a/c", "a/b/c"}},
-	{Pat: "*", OK: []string{"a", "b"}, No: []string{"@a", "a/b", "a/b/c"}},
+	{Pat: "*", OK: []string{"a", "b"}, No: []string{"a/b", "a/b/c"}},
 	{Pat: "a/*", OK: []string{"a/a", "a/b"}, No: []string{"b/a", "a/b/c"}},
 	{Pat: "*/a", OK: []string{"a/a", "b/a"}, No: []string{"a/b", "a/a/c"}},
-	{Pat: "**", OK: []string{"a", "b", "a/b"}, No: []string{"@a", "@a/b"}},
+	{Pat: "**", OK: []string{"a", "b", "a/b"}},
 	{Pat: "a/**", OK: []string{"a/a", "a/b", "a/b/c"}, No: []string{"b/a", "b", "a"}},
-	{Pat: "@a", OK: []string{"@a"}},
 }

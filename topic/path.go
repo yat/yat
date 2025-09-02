@@ -9,7 +9,7 @@ import (
 //go:generate sh -c "ragel -Z -G2 -o path.rl.go path.rl && go fmt path.rl.go > /dev/null"
 
 // Path is a topic path where messages are published.
-// Create one by calling [Parse], [New], or [Inbox].
+// Create one by calling [Parse] or [New].
 type Path struct {
 	buf []byte
 }
@@ -44,11 +44,6 @@ func (p Path) Match(other Path) bool {
 
 	if other.Equal(p) {
 		return true
-	}
-
-	// @ topics must match exactly
-	if other.buf[0] == '@' {
-		return false
 	}
 
 	next, stop := iter.Pull(bytes.SplitSeq(other.buf, []byte{'/'}))
