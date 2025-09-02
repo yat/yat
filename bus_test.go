@@ -1,6 +1,6 @@
 package yat_test
 
-import "github.com/yat/yat"
+import "yat.io"
 
 var _ yat.Publisher = (*yat.Bus)(nil)
 var _ yat.Subscriber = (*yat.Bus)(nil)

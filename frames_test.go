@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/yat/yat/field"
+	"yat.io/field"
 )
 
 func TestMsgFields(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/yat/yat/nv"
+	"yat.io/nv"
 )
 
 // Reader reads fields from an encoded field set.

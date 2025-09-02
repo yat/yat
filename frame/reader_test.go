@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/yat/yat/frame"
+	"yat.io/frame"
 )
 
 func TestReader(t *testing.T) {

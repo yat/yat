@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/yat/yat/pkigen"
+	"yat.io/pkigen"
 )
 
 // Generates:

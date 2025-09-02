@@ -3,7 +3,7 @@ package yat
 import (
 	"time"
 
-	"github.com/yat/yat/topic"
+	"yat.io/topic"
 )
 
 type Msg struct {

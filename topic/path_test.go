@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yat/yat/topic"
+	"yat.io/topic"
 )
 
 func TestParse(t *testing.T) {

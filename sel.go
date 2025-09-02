@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"unique"
 
-	"github.com/yat/yat/topic"
+	"yat.io/topic"
 )
 
 type Sel struct {
