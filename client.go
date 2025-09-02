@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"yat.io/field"
-	"yat.io/frame"
+	"yat.io/yat/field"
+	"yat.io/yat/frame"
 )
 
 type Client struct {

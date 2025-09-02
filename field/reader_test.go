@@ -4,8 +4,8 @@ import (
 	"io"
 	"testing"
 
-	"yat.io/field"
-	"yat.io/nv"
+	"yat.io/yat/field"
+	"yat.io/yat/nv"
 )
 
 func TestReader(t *testing.T) {

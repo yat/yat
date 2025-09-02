@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"yat.io"
+	"yat.io/yat"
 )
 
 func TestMsg_IsExpired(t *testing.T) {

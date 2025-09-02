@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"yat.io/field"
+	"yat.io/yat/field"
 )
 
 func TestAppendTag(t *testing.T) {

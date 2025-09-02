@@ -6,9 +6,9 @@ import (
 	"io"
 	"time"
 
-	"yat.io/field"
-	"yat.io/nv"
-	"yat.io/topic"
+	"yat.io/yat/field"
+	"yat.io/yat/nv"
+	"yat.io/yat/topic"
 )
 
 type msgFrameBody struct {

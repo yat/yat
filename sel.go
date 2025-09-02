@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"unique"
 
-	"yat.io/topic"
+	"yat.io/yat/topic"
 )
 
 type Sel struct {

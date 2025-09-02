@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"yat.io/topic"
+	"yat.io/yat/topic"
 )
 
 // Bus maintains a tree mapping topic paths to subscribers.

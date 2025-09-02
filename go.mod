@@ -1,4 +1,4 @@
-module yat.io
+module yat.io/yat
 
 go 1.25.0
 
