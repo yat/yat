@@ -20,7 +20,7 @@ type Bus struct {
 // It always returns a nil error.
 func (b *Bus) Publish(m Msg) error {
 	for _, s := range b.route(m) {
-		s.Deliver(m)
+		s.Deliver(m, m.appendFields(nil))
 	}
 	return nil
 }
@@ -35,7 +35,7 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	sub := newSub(sel, f, func(sub *subscription) {
+	sub := newSub(sel, func(m Msg, _ []byte) { f(m) }, func(sub *subscription) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		b.tt.Del(sel.Topic, sub)
@@ -88,14 +88,14 @@ func (b *Bus) route(m Msg) []*subscription {
 type subscription struct {
 	sel Sel
 
-	deliver    func(Msg)
+	deliver    func(Msg, []byte)
 	deliveries atomic.Uint64
 
 	stop  func()
 	stopC chan struct{}
 }
 
-func newSub(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscription {
+func newSub(sel Sel, deliver func(Msg, []byte), cleanup func(*subscription)) *subscription {
 	sub := &subscription{
 		sel:     sel,
 		deliver: deliver,
@@ -110,13 +110,13 @@ func newSub(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscripti
 	return sub
 }
 
-func (s *subscription) Deliver(m Msg) {
+func (s *subscription) Deliver(m Msg, fields []byte) {
 	n := s.deliveries.Add(1)
 	lim := uint64(s.sel.Limit)
 	ltd := lim > 0
 
 	if !ltd || n <= lim {
-		s.deliver(m)
+		s.deliver(m, fields)
 	}
 
 	if ltd && n >= lim {
