@@ -21,22 +21,25 @@ type Client struct {
 	doneC chan struct{} // closed by Close
 	connC chan struct{} // closed when connect returns
 
-	op   uint64
+	// op is incremented by every subscribe operation.
+	// The value before incrementing is used as the subscription number.
+	op uint64
+
 	subs map[uint64]*subscription
 
 	wbuf  []byte
 	wbufC chan struct{}
 
-	// these are buffered operations waiting to be sent
-	// the client tracks them to keep from buffering duplicates after it reconnects
-	// like wbuf, this set is cleared every time the buffer is flushed
+	// bops are buffered operations waiting to be sent.
+	// The client tracks them to keep from buffering duplicates after it reconnects.
+	// Like wbuf, this set is cleared every time the buffer is flushed.
 	bops map[uint64]struct{}
 
-	// set to the current time when the buffer is flushed
+	// flushed is set to the current time when the buffer is flushed.
 	flushed time.Time
 
-	// flushers are blocked calls to Flush
-	// this set is cleared and the channels are closed after the buffer is flushed
+	// flushers are blocked calls to Flush.
+	// This set is cleared and the channels are closed after the buffer is flushed.
 	flushers []chan<- error
 }
 
@@ -393,16 +396,27 @@ func (c *Client) writeFrames(ctx context.Context, conn net.Conn) error {
 		clear(c.bops)
 		c.mu.Unlock()
 
-		if d := c.cfg.WriteTimeout; d > 0 {
-			conn.SetWriteDeadline(now.Add(d))
+		var err error
+		if len(buf) > 0 {
+			if to := c.cfg.WriteTimeout; to > 0 {
+				conn.SetWriteDeadline(now.Add(to))
+			}
+			_, err = conn.Write(buf)
 		}
 
-		_, err := conn.Write(buf)
 		for _, f := range flushers {
 			select {
 			case f <- err:
 			default:
 			}
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if ctx.Err() != nil {
+			return net.ErrClosed
 		}
 	}
 }
