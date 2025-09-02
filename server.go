@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
+	"github.com/yat/yat/field"
 	"github.com/yat/yat/frame"
 	"golang.org/x/sync/errgroup"
 )
@@ -37,6 +39,11 @@ type svrConn struct {
 	conn net.Conn
 	bus  *Bus
 	cfg  ServerConfig
+
+	mu      sync.Mutex
+	wbuf    net.Buffers
+	wbufC   chan struct{}
+	flushed time.Time
 }
 
 // Serve serves bus to conn using the Yat protocol.
@@ -48,13 +55,16 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 		"local", conn.LocalAddr(),
 		"remote", conn.RemoteAddr())
 
-	if logger.Enabled(ctx, slog.LevelDebug-1) {
-		logger.DebugContext(ctx, "connection opened")
+	trace := slog.LevelDebug - 1
+	logTrace := logger.Enabled(ctx, trace)
+
+	if logTrace {
+		logger.Log(ctx, trace, "connection opened")
 	}
 
 	defer func() {
-		if logger.Enabled(ctx, slog.LevelDebug-1) {
-			logger.DebugContext(ctx, "connection closed",
+		if logTrace {
+			logger.Log(ctx, trace, "connection closed",
 				"elapsed", time.Since(start))
 		}
 
@@ -68,7 +78,14 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 		conn = tls.Server(conn, cfg.TLSConfig)
 	}
 
-	sc := &svrConn{conn, bus, cfg}
+	sc := &svrConn{
+		conn: conn,
+		bus:  bus,
+		cfg:  cfg,
+
+		wbufC: make(chan struct{}, 1),
+	}
+
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
@@ -89,21 +106,39 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 }
 
 func (sc *svrConn) ReadFrames(ctx context.Context, logger *slog.Logger) error {
-	fr := frame.NewReader(sc.conn)
+	frames := frame.NewReader(sc.conn)
+	fields := field.NewReader(nil)
 
 	for {
-		hdr, err := fr.Next()
+		if d := sc.cfg.ReadTimeout; d != 0 {
+			sc.conn.SetReadDeadline(time.Now().Add(d))
+		}
+
+		hdr, err := frames.Next()
 		if err != nil {
 			return err
 		}
 
+		var handle func(context.Context, *slog.Logger, *field.Reader) error
+
 		switch hdr.Type {
 		case msgFrame:
+			handle = sc.readMsgFrame
+
 		case subFrame:
+			handle = sc.readSubFrame
+
 		case unsubFrame:
+			handle = sc.readUnsubFrame
 		}
 
-		if err != nil {
+		body := make([]byte, hdr.BodyLen())
+		if _, err := io.ReadFull(frames, body); err != nil {
+			return err
+		}
+
+		fields.Reset(body)
+		if err := handle(ctx, logger, fields); err != nil {
 			logger.ErrorContext(ctx, "frame handler failed",
 				"type", hdr.Type,
 				"error", err)
@@ -111,12 +146,99 @@ func (sc *svrConn) ReadFrames(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
+func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+	var body msgFrameBody
+	if err := body.ParseFields(r); err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "read msg frame", "body", body)
+
+	return nil
+}
+
+func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+	var body subFrameBody
+	if err := body.ParseFields(r); err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "read sub frame", "body", body)
+
+	return nil
+}
+
+func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+	var body unsubFrameBody
+	if err := body.ParseFields(r); err != nil {
+		return err
+	}
+
+	logger.DebugContext(ctx, "read unsub frame", "body", body)
+
+	return nil
+}
+
 func (sc *svrConn) WriteFrames(ctx context.Context) error {
-	panic("WriteFrames")
+	defer sc.conn.Close()
+
+	for {
+		select {
+		case <-ctx.Done():
+		case <-sc.wbufC:
+		}
+
+		now := time.Now()
+
+		sc.mu.Lock()
+		nb := sc.wbuf
+		sc.wbuf = nil
+		sc.flushed = now
+		sc.mu.Unlock()
+
+		if d := sc.cfg.WriteTimeout; d > 0 {
+			sc.conn.SetWriteDeadline(now.Add(d))
+		}
+
+		if _, err := nb.WriteTo(sc.conn); err != nil {
+			return err
+		}
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 }
 
 func (sc *svrConn) Keepalive(ctx context.Context) error {
-	panic("Keepalive")
+	tick := time.NewTicker(sc.cfg.KeepaliveInterval)
+	emptyFrame := frame.Append(nil, 0, nil)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-tick.C:
+			sc.mu.Lock()
+
+			now := time.Now()
+			should := len(sc.wbuf) == 0 &&
+				now.Sub(sc.flushed) > sc.cfg.KeepaliveInterval
+
+			sc.mu.Unlock()
+
+			if should {
+				if d := sc.cfg.WriteTimeout; d > 0 {
+					sc.conn.SetWriteDeadline(now.Add(d))
+				}
+
+				if _, err := sc.conn.Write(emptyFrame); err != nil {
+					return err
+				}
+			}
+		}
+	}
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {
