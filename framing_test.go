@@ -9,7 +9,7 @@ import (
 	"github.com/yat/yat/field"
 )
 
-func TestMsgRoundtrip(t *testing.T) {
+func TestMsgFields(t *testing.T) {
 	mm := []Msg{
 		{},
 		{Topic: Topic("topic")},
@@ -43,15 +43,33 @@ func TestMsgRoundtrip(t *testing.T) {
 	}
 }
 
-func TestSelRoundtrip(t *testing.T) {
-	ss := []Sel{
-		{},
-		{Topic: Topic("topic")},
-		{Limit: 111},
-		{Group: Group("group")},
-		{Flags: DATA | INBOX},
+func Test_msgFrameBodyFields(t *testing.T) {
+	f := msgFrameBody{
+		Msg: Msg{
+			Topic:    Topic("topic"),
+			Inbox:    Topic("inbox"),
+			Data:     []byte("data"),
+			Meta:     []byte("meta"),
+			Deadline: time.Now(),
+		},
+	}
 
-		{
+	b := f.AppendBody(nil)
+
+	var got msgFrameBody
+	if err := got.ParseFields(field.NewReader(b)); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(f, got); diff != "" {
+		t.Error(diff)
+	}
+}
+
+func Test_subFrameBodyFields(t *testing.T) {
+	f := subFrameBody{
+		Num: 1,
+		Sel: Sel{
 			Topic: Topic("topic"),
 			Limit: 1,
 			Group: Group("group"),
@@ -59,18 +77,55 @@ func TestSelRoundtrip(t *testing.T) {
 		},
 	}
 
-	for i, s := range ss {
-		t.Run(fmt.Sprintf("ss[%d]", i), func(t *testing.T) {
-			b := s.appendFields(nil)
+	b := f.AppendBody(nil)
 
-			var got Sel
-			if err := got.parseFields(field.NewReader(b)); err != nil {
-				t.Fatal(err)
-			}
+	var got subFrameBody
+	if err := got.ParseFields(field.NewReader(b)); err != nil {
+		t.Fatal(err)
+	}
 
-			if diff := cmp.Diff(s, got); diff != "" {
-				t.Error(diff)
-			}
-		})
+	if diff := cmp.Diff(f, got); diff != "" {
+		t.Error(diff)
+	}
+}
+
+func Test_unsubFrameBodyFields(t *testing.T) {
+	f := unsubFrameBody{
+		Num: 1,
+	}
+
+	b := f.AppendBody(nil)
+
+	var got unsubFrameBody
+	if err := got.ParseFields(field.NewReader(b)); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(f, got); diff != "" {
+		t.Error(diff)
+	}
+}
+
+func Test_pkgFrameBodyFields(t *testing.T) {
+	f := pkgFrameBody{
+		Num: 1,
+		Msg: Msg{
+			Topic:    Topic("topic"),
+			Inbox:    Topic("inbox"),
+			Data:     []byte("data"),
+			Meta:     []byte("meta"),
+			Deadline: time.Now(),
+		},
+	}
+
+	b := f.AppendBody(nil)
+
+	var got pkgFrameBody
+	if err := got.ParseFields(field.NewReader(b)); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(f, got); diff != "" {
+		t.Error(diff)
 	}
 }

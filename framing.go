@@ -11,6 +11,192 @@ import (
 	"github.com/yat/yat/topic"
 )
 
+type msgFrameBody struct {
+	Msg Msg
+}
+
+type subFrameBody struct {
+	Num uint64
+	Sel Sel
+}
+
+type unsubFrameBody struct {
+	Num uint64
+}
+
+type pkgFrameBody struct {
+	Num uint64
+	Msg Msg
+}
+
+const (
+	msgFrame   = 2
+	subFrame   = 3
+	unsubFrame = 4
+	pkgFrame   = 128
+)
+
+// The parse methods in this file don't clear self before parsing.
+
+func (f msgFrameBody) AppendBody(b []byte) []byte {
+	return f.Msg.appendFields(b)
+}
+
+func (f *msgFrameBody) ParseFields(r *field.Reader) error {
+	return f.Msg.parseFields(r)
+}
+
+func (f subFrameBody) AppendBody(b []byte) []byte {
+	if f.Num > 0 {
+		b = field.AppendTag(b, field.Num, 1)
+		b = nv.Append(b, f.Num)
+	}
+
+	if !f.Sel.Topic.IsZero() {
+		b = field.AppendTag(b, field.Run, 2)
+		b = field.AppendRun(b, f.Sel.Topic.Bytes())
+	}
+
+	if f.Sel.Limit > 0 {
+		b = field.AppendTag(b, field.Num, 3)
+		b = nv.Append(b, uint64(f.Sel.Limit))
+	}
+
+	if !f.Sel.Group.IsZero() {
+		b = field.AppendTag(b, field.Run, 4)
+		b = field.AppendRun(b, f.Sel.Group.String())
+	}
+
+	if f.Sel.Flags != 0 {
+		b = field.AppendTag(b, field.Num, 5)
+		b = nv.Append(b, uint64(f.Sel.Flags))
+	}
+
+	return b
+}
+
+func (f *subFrameBody) ParseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+		case 1:
+			f.Num, err = parseNumField(tag, r)
+
+		case 2:
+			f.Sel.Topic, err = parseTopicField(tag, r)
+
+		case 3:
+			f.Sel.Limit, err = parseIntField(tag, r)
+
+		case 4:
+			f.Sel.Group, err = parseGroupField(tag, r)
+
+		case 5:
+			f.Sel.Flags, err = parseSelFlagsField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse sub frame body field %d: %v", tag.Field(), err)
+		}
+	}
+}
+
+func (f unsubFrameBody) AppendBody(b []byte) []byte {
+	if f.Num > 0 {
+		b = field.AppendTag(b, field.Num, 1)
+		b = nv.Append(b, f.Num)
+	}
+
+	return b
+}
+
+func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+		case 1:
+			f.Num, err = parseNumField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse unsub frame body field %d: %v", tag.Field(), err)
+		}
+	}
+}
+
+func (f pkgFrameBody) AppendBody(b []byte) []byte {
+	if f.Num > 0 {
+		b = field.AppendTag(b, field.Num, 127)
+		b = nv.Append(b, f.Num)
+	}
+
+	return f.Msg.appendFields(b)
+}
+
+func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+		case 127:
+			f.Num, err = parseNumField(tag, r)
+
+		// copied from Msg.parseFields
+
+		case 1:
+			f.Msg.Topic, err = parseTopicField(tag, r)
+
+		case 2:
+			f.Msg.Inbox, err = parseTopicField(tag, r)
+
+		case 3:
+			f.Msg.Data, err = parseRunField(tag, r)
+
+		case 4:
+			f.Msg.Meta, err = parseRunField(tag, r)
+
+		case 5:
+			f.Msg.Deadline, err = parseTimeField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse pkg frame field %d: %v", tag.Field(), err)
+		}
+	}
+}
+
 func (m Msg) appendFields(b []byte) []byte {
 	if !m.Topic.IsZero() {
 		b = field.AppendTag(b, field.Run, 1)
@@ -52,6 +238,9 @@ func (m *Msg) parseFields(r *field.Reader) error {
 		}
 
 		switch tag.Field() {
+
+		// these cases are duplicated in pkgFrameBody.ParseFields
+
 		case 1:
 			m.Topic, err = parseTopicField(tag, r)
 
@@ -72,65 +261,7 @@ func (m *Msg) parseFields(r *field.Reader) error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("parse message: field %d: %v", tag.Field(), err)
-		}
-	}
-}
-
-func (s Sel) appendFields(b []byte) []byte {
-	if !s.Topic.IsZero() {
-		b = field.AppendTag(b, field.Run, 1)
-		b = field.AppendRun(b, s.Topic.Bytes())
-	}
-
-	if s.Limit > 0 {
-		b = field.AppendTag(b, field.Num, 2)
-		b = nv.Append(b, uint64(s.Limit))
-	}
-
-	if !s.Group.IsZero() {
-		b = field.AppendTag(b, field.Run, 3)
-		b = field.AppendRun(b, s.Group.String())
-	}
-
-	if s.Flags != 0 {
-		b = field.AppendTag(b, field.Num, 4)
-		b = nv.Append(b, uint64(s.Flags))
-	}
-
-	return b
-}
-
-func (s *Sel) parseFields(r *field.Reader) error {
-	for {
-		tag, err := r.ReadTag()
-		if err == io.EOF {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		switch tag.Field() {
-		case 1:
-			s.Topic, err = parseTopicField(tag, r)
-
-		case 2:
-			s.Limit, err = parseIntField(tag, r)
-
-		case 3:
-			s.Group, err = parseGroupField(tag, r)
-
-		case 4:
-			s.Flags, err = parseSelFlagsField(tag, r)
-
-		default:
-			err = r.Discard(tag)
-		}
-
-		if err != nil {
-			return fmt.Errorf("parse selector: field %d: %v", tag.Field(), err)
+			return fmt.Errorf("parse message field %d: %v", tag.Field(), err)
 		}
 	}
 }

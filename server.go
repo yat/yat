@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/yat/yat/frame"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -71,7 +72,7 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
-		return sc.ReadFrames(ctx)
+		return sc.ReadFrames(ctx, logger)
 	})
 
 	eg.Go(func() error {
@@ -87,8 +88,27 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 	return eg.Wait()
 }
 
-func (sc *svrConn) ReadFrames(ctx context.Context) error {
-	panic("ReadFrames")
+func (sc *svrConn) ReadFrames(ctx context.Context, logger *slog.Logger) error {
+	fr := frame.NewReader(sc.conn)
+
+	for {
+		hdr, err := fr.Next()
+		if err != nil {
+			return err
+		}
+
+		switch hdr.Type {
+		case msgFrame:
+		case subFrame:
+		case unsubFrame:
+		}
+
+		if err != nil {
+			logger.ErrorContext(ctx, "frame handler failed",
+				"type", hdr.Type,
+				"error", err)
+		}
+	}
 }
 
 func (sc *svrConn) WriteFrames(ctx context.Context) error {

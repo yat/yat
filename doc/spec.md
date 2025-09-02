@@ -51,7 +51,7 @@ An empty selector is valid, matching nothing.
 
 A client connection is wrapped by a bi-directional stream of typed frames. The client writes frames to publish messages and manage subscriptions; the server writes frames to deliver messages. There is no handshake: After connecting, a client may immediately start writing and reading frames. Other than a (frequent) keepalive, the server does not write unsolicited frames.
 
-### Frames
+### Wire Frames
 
 A frame is encoded as an 8 byte header followed by a [field set](#field-sets) of varying length.
 
@@ -68,7 +68,7 @@ type FrameHeader struct {
 | [Msg](#msg-frame) | 2 | Written by the client to publish a message |
 | [Sub](#sub-frame) | 3 | Written by the client to start or update a subscription |
 | [Unsub](#unsub-frame) | 4 | Written by the client to stop a subscription |
-| [Pkg](#pkg-frame) | 129 | Written by the server to deliver a message |
+| [Pkg](#pkg-frame) | 128 | Written by the server to deliver a message |
 
 Frame type 0 is written by the client and server as a keepalive.
 Frame type 1 is reserved.
@@ -107,7 +107,7 @@ An Unsub frame (type 4) contains a single Num field (1) identifying the subscrip
 
 #### Pkg Frame
 
-A Pkg frame (type 129) contains the same fields as a [Msg frame](#msg-frame), plus an additional field (127) for the subscription number. If a Pkg frame is missing its subscription number or topic, it is discarded by the client.
+A Pkg frame (type 128) contains the same fields as a [Msg frame](#msg-frame), plus an additional field 127 for the subscription number. If a Pkg frame is missing its subscription number or topic, it is discarded by the client.
 
 ### Field Sets
 
