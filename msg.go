@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"slices"
 	"time"
 
 	"yat.io/yat/topic"
@@ -38,4 +39,15 @@ func Topic[V ~[]byte | ~string](raw V) topic.Path {
 // IsExpired returns true if the message deadline has passed.
 func (m Msg) IsExpired() bool {
 	return !m.Deadline.IsZero() && time.Now().After(m.Deadline)
+}
+
+// Clone returns a copy of the message.
+func (m Msg) Clone() Msg {
+	return Msg{
+		Topic:    m.Topic.Clone(),
+		Inbox:    m.Inbox.Clone(),
+		Data:     slices.Clone(m.Data),
+		Meta:     slices.Clone(m.Meta),
+		Deadline: m.Deadline,
+	}
 }
