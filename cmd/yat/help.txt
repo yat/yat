@@ -4,17 +4,19 @@ Usage:
 
   yat command [args]
 
-Commands:
+Client commands:
 
-  pub        publish a message
-  sub        receive messages
+  pub    publish a message
+  sub    receive messages
 
-  serve      run the server
-  env        print config
+Other commands:
+
+  serve  run the server
+  env    print config
 
 Run "yat help command" for more information about a command.
 
-Client flags:
+Client command flags:
 
   -server [::1]:8765 ($YAT_SERVER)
       Connect to the server at this TCP address:port.
@@ -24,3 +26,12 @@ Global flags:
   -log-level error ($YAT_LOG_LEVEL)
       Set the log level to debug, info, warn, or error.
       Logs are written to stderr as JSON lines.
+
+  -tls-ca-file PATH ($YAT_TLS_CA_FILE)
+      Load CA certificates from this PEM-encoded file.
+
+  -tls-cert-file PATH ($YAT_TLS_CERT_FILE)
+      Load a leaf-first certificate chain from this PEM-encoded file.
+
+  -tls-key-file PATH ($YAT_TLS_KEY_FILE)
+      Load the corresponding private key from this PEM-encoded file.

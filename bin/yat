@@ -1,7 +1,12 @@
 #!/bin/sh
-# build and run yat in dev
+# build and run client commands in dev
 
 set -eu
 
 bin/build
+
+export YAT_TLS_CA_FILE=tmp/pki/root.crt
+export YAT_TLS_CERT_FILE=tmp/pki/client.crt
+export YAT_TLS_KEY_FILE=tmp/pki/client.key
+
 exec ./yat "$@"

@@ -10,6 +10,7 @@ import (
 	"yat.io/yat/cmd/yat/flagset"
 )
 
+// FIX: support ACME
 type serveCmd struct {
 	Address string
 }
@@ -33,6 +34,7 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 		}
 
 		wg.Go(func() {
+			// FIX: configure TLS
 			yat.Serve(ctx, conn, &yat.Bus{}, yat.ServerConfig{
 				Logger: logger,
 

@@ -17,6 +17,10 @@ import (
 type sharedConfig struct {
 	LogLevel slog.Level
 
+	TLSCAFile   string
+	TLSCertFile string
+	TLSKeyFile  string
+
 	// client flags
 	Server string
 }
@@ -55,6 +59,9 @@ func run() error {
 
 	gflags := flagset.New()
 	gflags.Text(&shared.LogLevel, "log-level")
+	gflags.String(&shared.TLSCAFile, "tls-ca-file")
+	gflags.String(&shared.TLSCertFile, "tls-cert-file")
+	gflags.String(&shared.TLSKeyFile, "tls-key-file")
 	gflags.String(&shared.Server, "server")
 
 	args, err := gflags.Parse(os.Args[1:])
@@ -144,20 +151,33 @@ func (cfg sharedConfig) NewClient(logger *slog.Logger) *yat.Client {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Server)
 	}
 
+	// FIX: configure TLS
 	return yat.NewClient(dial, yat.ClientConfig{
 		Logger: logger,
 	})
 }
 
-func parseEnv(gc *sharedConfig) error {
+func parseEnv(shared *sharedConfig) error {
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
-		if err := gc.LogLevel.UnmarshalText([]byte(ll)); err != nil {
+		if err := shared.LogLevel.UnmarshalText([]byte(ll)); err != nil {
 			return fmt.Errorf("parse YAT_LOG_LEVEL: %v", err)
 		}
 	}
 
+	if f, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
+		shared.TLSCAFile = f
+	}
+
+	if f, ok := os.LookupEnv("YAT_TLS_CERT_FILE"); ok {
+		shared.TLSCertFile = f
+	}
+
+	if f, ok := os.LookupEnv("YAT_TLS_KEY_FILE"); ok {
+		shared.TLSKeyFile = f
+	}
+
 	if svr, ok := os.LookupEnv("YAT_SERVER"); ok {
-		gc.Server = svr
+		shared.Server = svr
 	}
 
 	return nil
