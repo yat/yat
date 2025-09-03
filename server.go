@@ -12,10 +12,17 @@ import (
 	"golang.org/x/sync/errgroup"
 	"yat.io/yat/field"
 	"yat.io/yat/frame"
+	"yat.io/yat/topic"
 )
 
 // ServerConfig holds optional server configuration.
 type ServerConfig struct {
+
+	// Auth is called by the server when a connection's identity changes.
+	// Every time the server reads a frame from the connection, it will call the
+	// func returned by Auth to decide if the action is allowed.
+	// If Auth is nil, the server will deny all client actions.
+	Auth func(Identity) func(topic.Path, Action) bool
 
 	// Logger is where the server writes logs.
 	// If it is not set, server logs are discarded.
@@ -33,6 +40,10 @@ type ServerConfig struct {
 	// If KeepaliveInterval is set, the server will write a keepalive frame
 	// if the interval passes without a write.
 	KeepaliveInterval time.Duration
+
+	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
+	// If the Auth func is set, it is ignored.
+	InsecureAllowAllActions bool
 }
 
 type svrConn struct {
@@ -42,6 +53,7 @@ type svrConn struct {
 	cfg ServerConfig
 
 	mu      sync.Mutex
+	auth    func(topic.Path, Action) bool
 	wbuf    net.Buffers
 	wbufC   chan struct{}
 	flushed time.Time
@@ -163,6 +175,13 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	if !sc.allowMu(body.Msg.Topic, PUB) {
+		return nil
+	}
+
 	return nil
 }
 
@@ -175,6 +194,13 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	logger.DebugContext(ctx, "read sub frame", "body", body)
 
 	if body.Sel.Topic.IsZero() {
+		return nil
+	}
+
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+
+	if !sc.allowMu(body.Sel.Topic, SUB) {
 		return nil
 	}
 
@@ -254,7 +280,18 @@ func (sc *svrConn) Keepalive(ctx context.Context) error {
 	}
 }
 
+// the caller must hold sc.mu
+func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
+	return sc.cfg.InsecureAllowAllActions || sc.auth != nil && sc.auth(p, a)
+}
+
 func (cfg ServerConfig) withDefaults() ServerConfig {
+	if cfg.Auth == nil {
+		cfg.Auth = func(i Identity) func(topic.Path, Action) bool {
+			return func(topic.Path, Action) bool { return false }
+		}
+	}
+
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
