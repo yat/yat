@@ -108,7 +108,8 @@ An Unsub frame (type 4) contains a single Num field (1) identifying the subscrip
 
 #### Pkg Frame
 
-A Pkg frame (type 128) contains the same fields as a [Msg frame](#msg-frame), plus an additional field 127 for the subscription number. If a Pkg frame is missing a topic field, it is discarded by the client.
+A Pkg frame (type 128) contains the same field set as a [Msg frame](#msg-frame), plus an additional field 127 containing the subscription number.
+If a Pkg frame is missing a topic field, it is discarded by the client.
 If a Pkg frame has a deadline in the past, it is discarded by the client.
 
 ### Field Sets
@@ -126,7 +127,7 @@ The least significant 7 bits of the tag are the field number, 0-127.
 
 Num values hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
 
-Run values hold a run of bytes encoded as a 1-9 byte nv len followed by len bytes.
+Run values hold a run of bytes encoded as an nv len followed by len bytes.
 
 #### Encoding and Decoding Fields
 
