@@ -59,7 +59,7 @@ type svrConn struct {
 	flushed time.Time
 }
 
-// Serve serves bus to conn using the Yat protocol.
+// Serve serves bus to conn according to cfg.
 func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err error) {
 	cfg = cfg.withDefaults()
 
@@ -92,33 +92,36 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 	}
 
 	sc := &svrConn{
-		conn: conn,
-		bus:  bus,
-		cfg:  cfg,
-
+		conn:  conn,
+		bus:   bus,
+		cfg:   cfg,
 		wbufC: make(chan struct{}, 1),
 	}
 
+	return sc.Serve(ctx, logger)
+}
+
+func (sc *svrConn) Serve(ctx context.Context, logger *slog.Logger) error {
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
-		return sc.ReadFrames(ctx, logger)
+		return sc.readFrames(ctx, logger)
 	})
 
 	eg.Go(func() error {
-		return sc.WriteFrames(ctx)
+		return sc.writeFrames(ctx)
 	})
 
-	if cfg.KeepaliveInterval > 0 {
+	if sc.cfg.KeepaliveInterval > 0 {
 		eg.Go(func() error {
-			return sc.Keepalive(ctx)
+			return sc.keepalive(ctx)
 		})
 	}
 
 	return eg.Wait()
 }
 
-func (sc *svrConn) ReadFrames(ctx context.Context, logger *slog.Logger) error {
+func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 	frames := frame.NewReader(sc.conn)
 	fields := field.NewReader(nil)
 
@@ -218,7 +221,7 @@ func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *f
 	return nil
 }
 
-func (sc *svrConn) WriteFrames(ctx context.Context) error {
+func (sc *svrConn) writeFrames(ctx context.Context) error {
 	defer sc.conn.Close()
 
 	for {
@@ -249,7 +252,7 @@ func (sc *svrConn) WriteFrames(ctx context.Context) error {
 	}
 }
 
-func (sc *svrConn) Keepalive(ctx context.Context) error {
+func (sc *svrConn) keepalive(ctx context.Context) error {
 	tick := time.NewTicker(sc.cfg.KeepaliveInterval)
 	emptyFrame := frame.Append(nil, 0, nil)
 
