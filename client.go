@@ -271,7 +271,7 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 			"local", conn.LocalAddr().String(),
 			"remote", conn.RemoteAddr().String())
 
-		logger.Info("client connected")
+		logger.Debug("connection opened")
 
 		c.mu.Lock()
 
@@ -314,10 +314,12 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 			})
 		}
 
-		err = eg.Wait()
-		logger.WarnContext(ctx, "connection failed",
-			"elapsed", time.Since(start),
-			"error", err)
+		if err := eg.Wait(); err != nil && err != net.ErrClosed {
+			logger.WarnContext(ctx, "connection failed", "error", err)
+		}
+
+		logger.DebugContext(ctx, "connection closed",
+			"elapsed", time.Since(start))
 	}
 }
 
@@ -326,8 +328,8 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 	fields := field.NewReader(nil)
 
 	for {
-		if d := c.cfg.ReadTimeout; d != 0 {
-			conn.SetReadDeadline(time.Now().Add(d))
+		if to := c.cfg.ReadTimeout; to != 0 {
+			conn.SetReadDeadline(time.Now().Add(to))
 		}
 
 		hdr, err := frames.Next()
@@ -440,8 +442,8 @@ func (c *Client) keepalive(ctx context.Context, conn net.Conn) error {
 			c.mu.Unlock()
 
 			if should {
-				if d := c.cfg.WriteTimeout; d > 0 {
-					conn.SetWriteDeadline(now.Add(d))
+				if to := c.cfg.WriteTimeout; to > 0 {
+					conn.SetWriteDeadline(now.Add(to))
 				}
 
 				if _, err := conn.Write(emptyFrame); err != nil {

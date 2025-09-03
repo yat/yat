@@ -1,0 +1,26 @@
+Yat is a communication toolkit.
+
+Usage:
+
+  yat command [args]
+
+Commands:
+
+  pub        publish a message
+  sub        receive messages
+
+  serve      run the server
+  env        print config
+
+Run "yat help command" for more information about a command.
+
+Client flags:
+
+  -server [::1]:8765 ($YAT_SERVER)
+      Connect to the server at this TCP address:port.
+
+Global flags:
+
+  -log-level error ($YAT_LOG_LEVEL)
+      Set the log level to debug, info, warn, or error.
+      Logs are written to stderr as JSON lines.

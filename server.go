@@ -73,8 +73,8 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 
 	start := time.Now()
 	logger := cfg.Logger.With(
-		"local", conn.LocalAddr(),
-		"remote", conn.RemoteAddr())
+		"local", conn.LocalAddr().String(),
+		"remote", conn.RemoteAddr().String())
 
 	trace := slog.LevelDebug - 1
 	logTrace := logger.Enabled(ctx, trace)
@@ -138,8 +138,8 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 	fields := field.NewReader(nil)
 
 	for {
-		if d := sc.cfg.ReadTimeout; d != 0 {
-			sc.conn.SetReadDeadline(time.Now().Add(d))
+		if to := sc.cfg.ReadTimeout; to != 0 {
+			sc.conn.SetReadDeadline(time.Now().Add(to))
 		}
 
 		hdr, err := frames.Next()
@@ -180,7 +180,7 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return err
 	}
 
-	logger.DebugContext(ctx, "read msg frame", "body", body)
+	logger.DebugContext(ctx, "msg frame", "msg", body.Msg)
 
 	if body.Msg.Topic.IsZero() {
 		return nil
@@ -206,7 +206,9 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return err
 	}
 
-	logger.DebugContext(ctx, "read sub frame", "body", body)
+	logger.DebugContext(ctx, "sub frame",
+		"num", body.Num,
+		"sel", body.Sel)
 
 	if body.Sel.Topic.IsZero() {
 		return nil
@@ -228,7 +230,8 @@ func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *f
 		return err
 	}
 
-	logger.DebugContext(ctx, "read unsub frame", "body", body)
+	logger.DebugContext(ctx, "unsub frame",
+		"num", body.Num)
 
 	return nil
 }
@@ -250,8 +253,8 @@ func (sc *svrConn) writeFrames(ctx context.Context) error {
 		sc.flushed = now
 		sc.mu.Unlock()
 
-		if d := sc.cfg.WriteTimeout; d > 0 {
-			sc.conn.SetWriteDeadline(now.Add(d))
+		if to := sc.cfg.WriteTimeout; to > 0 {
+			sc.conn.SetWriteDeadline(now.Add(to))
 		}
 
 		if _, err := nb.WriteTo(sc.conn); err != nil {
@@ -283,8 +286,8 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 			sc.mu.Unlock()
 
 			if should {
-				if d := sc.cfg.WriteTimeout; d > 0 {
-					sc.conn.SetWriteDeadline(now.Add(d))
+				if to := sc.cfg.WriteTimeout; to > 0 {
+					sc.conn.SetWriteDeadline(now.Add(to))
 				}
 
 				if _, err := sc.conn.Write(emptyFrame); err != nil {

@@ -10,19 +10,19 @@ import (
 type Msg struct {
 
 	// Topic is the address of the message.
-	Topic topic.Path
+	Topic topic.Path `json:"topic,omitzero"`
 
 	// Inbox is a path where responses can be published.
-	Inbox topic.Path
+	Inbox topic.Path `json:"inbox,omitzero"`
 
 	// Data holds opaque message data.
-	Data []byte
+	Data []byte `json:"data,omitzero"`
 
 	// Meta holds opaque message metadata.
-	Meta []byte
+	Meta []byte `json:"meta,omitzero"`
 
 	// Deadline is the instant when the message expires.
-	Deadline time.Time
+	Deadline time.Time `json:"deadline,omitzero"`
 }
 
 // Topic creates a topic path from a raw value.
