@@ -1,4 +1,5 @@
 #!/bin/sh
+# build and run yat in dev
 
 set -eu
 
