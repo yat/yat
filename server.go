@@ -22,13 +22,18 @@ type ServerConfig struct {
 	// Every time the server reads a frame from the connection, it will call the
 	// func returned by Auth to decide if the action is allowed.
 	// If Auth is nil, the server will deny all client actions.
-	Auth func(Identity) func(topic.Path, Action) bool
+	//
+	// To disable auth and allow all actions,
+	// even for unidentified connections,
+	// set InsecureAllowAllActions.
+	Auth AuthorizerFunc
 
 	// Logger is where the server writes logs.
 	// If it is not set, server logs are discarded.
 	Logger *slog.Logger
 
-	// TLSConfig, if set, configures the server to use TLS.
+	// TLSConfig is the server's TLS configuration.
+	// If it is not set, client connections are immediately closed unless InsecureAllowNoTLS is true.
 	TLSConfig *tls.Config
 
 	// If ReadTimeout is set, reads will time out.
@@ -42,8 +47,11 @@ type ServerConfig struct {
 	KeepaliveInterval time.Duration
 
 	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
-	// If the Auth func is set, it is ignored.
+	// Any configured Auth func is ignored.
 	InsecureAllowAllActions bool
+
+	// InsecureAllowNoTLS, if set, allows connections to proceed when TLSConfig is nil.
+	InsecureAllowNoTLS bool
 }
 
 type svrConn struct {
@@ -57,6 +65,28 @@ type svrConn struct {
 	wbuf    net.Buffers
 	wbufC   chan struct{}
 	flushed time.Time
+}
+
+// NewServerConfig returns a default server configuration with reasonable timeouts.
+// It panics if auth or tlsConfig are nil.
+func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
+	if auth == nil {
+		panic("auth is nil")
+	}
+
+	if tlsConfig == nil {
+		panic("tls config is nil")
+	}
+
+	return ServerConfig{
+		Auth:      auth,
+		TLSConfig: tlsConfig,
+
+		// FIX: make these reasonable
+		ReadTimeout:       3 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		KeepaliveInterval: 1 * time.Second,
+	}
 }
 
 // Serve serves bus to conn according to cfg.
@@ -86,6 +116,10 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 				"error", err)
 		}
 	}()
+
+	if cfg.TLSConfig == nil && !cfg.InsecureAllowNoTLS {
+		return conn.Close()
+	}
 
 	if cfg.TLSConfig != nil {
 		conn = tls.Server(conn, cfg.TLSConfig)
@@ -290,7 +324,7 @@ func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
 
 func (cfg ServerConfig) withDefaults() ServerConfig {
 	if cfg.Auth == nil {
-		cfg.Auth = func(i Identity) func(topic.Path, Action) bool {
+		cfg.Auth = func(Identity) func(topic.Path, Action) bool {
 			return func(topic.Path, Action) bool { return false }
 		}
 	}

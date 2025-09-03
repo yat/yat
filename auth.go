@@ -35,6 +35,9 @@ const (
 	SUB                     // receive messages
 )
 
+// An AuthorizerFunc compiles and returns an auth func for the given identity.
+type AuthorizerFunc func(Identity) func(topic.Path, Action) bool
+
 // Compile compiles a match function for the given identity.
 func (rs RuleSet) Compile(id Identity) func(topic.Path, Action) bool {
 	var grants []Grant
