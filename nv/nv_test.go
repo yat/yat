@@ -94,21 +94,6 @@ func TestParseIncomplete(t *testing.T) {
 	}
 }
 
-func TestNonCanonicalAccepted(t *testing.T) {
-	// Value 5 encoded with prefixed nb=1 (non-minimal but should decode).
-	b := []byte{0x80, 0x05}
-	v, n := nv.Parse(b)
-	if v != 5 || n != 2 {
-		t.Fatalf("non-canonical nb=1: got (v=%d,n=%d), want (5,2)", v, n)
-	}
-	// Value 5 encoded with prefixed nb=2 and a zero high byte (also non-minimal).
-	b = []byte{0x80 | 0x01, 0x05, 0x00}
-	v, n = nv.Parse(b)
-	if v != 5 || n != 3 {
-		t.Fatalf("non-canonical nb=2: got (v=%d,n=%d), want (5,3)", v, n)
-	}
-}
-
 func TestPutPanicsWhenTooSmall(t *testing.T) {
 	t.Run("empty buffer", func(t *testing.T) {
 		defer mustPanic(t)
@@ -211,6 +196,40 @@ func BenchmarkParse(b *testing.B) {
 
 			if value != want {
 				b.Fatal("value", value)
+			}
+		}
+	})
+}
+
+func FuzzPutParse(f *testing.F) {
+	for _, v := range []uint64{
+		0, 1, 2, 127, 128, 255, 256,
+		(1 << 16) - 1, 1 << 16,
+		(1 << 32) - 1, 1 << 32,
+		(1 << 48) - 1, 1 << 48,
+		(1 << 63) - 1,
+	} {
+		f.Add(v)
+	}
+
+	f.Fuzz(func(t *testing.T, v uint64) {
+		var buf [nv.MaxLen64]byte
+		n := nv.Put(buf[:], v)
+
+		got, read := nv.Parse(buf[:n])
+		if read != n || got != v {
+			t.Fatalf("%d != %d: wrote=%d read=%d raw=%v",
+				got, v, n, read, buf[:n])
+		}
+	})
+}
+
+func FuzzParse(f *testing.F) {
+	f.Fuzz(func(t *testing.T, buf []byte) {
+		if value, n := nv.Parse(buf); n > 0 {
+			rt := nv.Append(nil, value)
+			if !bytes.Equal(buf[:n], rt) {
+				t.Errorf("buffer roundtrip mismatch: buf=%v value=%d rt=%v", buf, value, rt)
 			}
 		}
 	})

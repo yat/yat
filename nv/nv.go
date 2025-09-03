@@ -1,24 +1,19 @@
-// Package nv provides an efficient wire encoding for integers.
+// Package nv implements a wire encoding for integers.
+// The encoding is not always as space-efficient as a varint, but it is easier to decode.
 //
 // An nv is 1-65 bytes long, with a range of +- (2^512)-1.
 // The [Append], [Put], [Parse], and [Len] functions support uint64 values,
 // which are encoded in 1-9 bytes.
 //
 // The first byte of an nv is tagged. If the most significant bit (b7) is 0,
-// the entire value 0-127 is encoded in the lower 7 bits of the tagged byte.
-// If b7 is 1, b6 is a sign flag (1=-) and b0-b5 encode the number-1 of
-// following bytes, which contain the little-endian magnitude.
-//
-// Append and Put encode values in their canonical form,
-// but Parse also accepts less efficient encodings.
+// the entire value 0-127 is encoded in the remaining 7 bits of the tagged byte.
+// If b7 is 1, b6 is a sign flag (1=-) and b0-b5 encode the number-1 of following bytes,
+// which contain the little-endian magnitude.
 package nv
 
 import "math/bits"
 
-// The loops in Append, Put, and Parse are manually unrolled because
-// it's at least twice as fast as what the Go compiler generates.
-// But that's just in a microbenchmark, and it's hard to say if
-// the performance gain will be worth it in a larger test.
+const MaxLen64 = 9
 
 // Append appends the encoded value to b and returns the extended slice.
 func Append(b []byte, value uint64) []byte {
@@ -167,7 +162,12 @@ func Put(b []byte, value uint64) int {
 }
 
 // Parse decodes a value from b, returning the value and the number of bytes read (> 0).
-// If n == 0, the buffer is too small. If n < 0, the value overflows uint64 and -n is the number of encoded bytes.
+// If n == 0, the buffer is too small. If n < 0, the encoding is invalid
+// or the value overflows uint64 and -n is the number of encoded bytes.
+//
+// Parse rejects non-canonical encodings:
+// A value < 128 must be encoded in 1 byte.
+// If a value is encoded in > 1 byte, the last encoded byte must not be 0.
 func Parse(b []byte) (value uint64, n int) {
 	if len(b) == 0 {
 		return 0, 0
@@ -185,7 +185,18 @@ func Parse(b []byte) (value uint64, n int) {
 		return 0, 0
 	}
 
-	if nb > 8 {
+	// overflows uint64
+	if nb > 8 || t&(1<<6) != 0 {
+		return 0, -n
+	}
+
+	// should've been 1 byte
+	if nb == 1 && b[1] < 128 {
+		return 0, -n
+	}
+
+	// no extra zeroes
+	if nb > 1 && b[nb] == 0 {
 		return 0, -n
 	}
 
