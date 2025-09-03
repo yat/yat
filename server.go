@@ -67,28 +67,6 @@ type svrConn struct {
 	flushed time.Time
 }
 
-// NewServerConfig returns a default server configuration with reasonable timeouts.
-// It panics if auth or tlsConfig are nil.
-func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
-	if auth == nil {
-		panic("auth is nil")
-	}
-
-	if tlsConfig == nil {
-		panic("tls config is nil")
-	}
-
-	return ServerConfig{
-		Auth:      auth,
-		TLSConfig: tlsConfig,
-
-		// FIX: make these reasonable
-		ReadTimeout:       3 * time.Second,
-		WriteTimeout:      3 * time.Second,
-		KeepaliveInterval: 1 * time.Second,
-	}
-}
-
 // Serve serves bus to conn according to cfg.
 func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err error) {
 	cfg = cfg.withDefaults()
@@ -320,6 +298,28 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
 	return sc.cfg.InsecureAllowAllActions || sc.auth != nil && sc.auth(p, a)
+}
+
+// NewServerConfig returns a default configuration with reasonable timeouts.
+// It panics if auth or tlsConfig are nil.
+func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
+	if auth == nil {
+		panic("auth is nil")
+	}
+
+	if tlsConfig == nil {
+		panic("tls config is nil")
+	}
+
+	return ServerConfig{
+		Auth:      auth,
+		TLSConfig: tlsConfig,
+
+		// FIX: make these reasonable
+		ReadTimeout:       3 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		KeepaliveInterval: 1 * time.Second,
+	}.withDefaults()
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {

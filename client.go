@@ -459,6 +459,23 @@ func (c *Client) flush() {
 	}
 }
 
+// NewClientConfig returns a default configuration with reasonable timeouts.
+// It panics if tlsConfig is nil.
+func NewClientConfig(tlsConfig *tls.Config) ClientConfig {
+	if tlsConfig == nil {
+		panic("tls config is nil")
+	}
+
+	return ClientConfig{
+		TLSConfig: tlsConfig,
+
+		// FIX: make these reasonable
+		ReadTimeout:       3 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		KeepaliveInterval: 1 * time.Second,
+	}.withDefaults()
+}
+
 func (cfg ClientConfig) withDefaults() ClientConfig {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
