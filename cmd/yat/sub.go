@@ -46,7 +46,11 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 		Flags: flags,
 	}
 
-	client := cfg.NewClient(logger)
+	client, err := cfg.NewClient(logger)
+	if err != nil {
+		return err
+	}
+
 	defer client.Close()
 
 	sub, err := client.Subscribe(sel, func(m yat.Msg) {

@@ -3,6 +3,7 @@ package yat
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -34,7 +35,6 @@ type ServerConfig struct {
 	Identify IdentifyFunc
 
 	// TLSConfig is the server's TLS configuration.
-	// If it is not set, client connections are immediately closed unless InsecureAllowNoTLS is true.
 	TLSConfig *tls.Config
 
 	// Logger is where the server writes logs.
@@ -52,18 +52,23 @@ type ServerConfig struct {
 	KeepaliveInterval time.Duration
 
 	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
-	// Any configured Auth func is ignored.
+	// The [AuthFunc] returned by Identify is ignored.
 	InsecureAllowAllActions bool
-
-	// InsecureAllowNoTLS, if set, allows connections to proceed when TLSConfig is nil.
-	InsecureAllowNoTLS bool
 }
 
 // IdentifyFunc is called by the server to identify a connection.
 type IdentifyFunc func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error)
 
-func NewServer(bus *Bus, cfg ServerConfig) *Server {
-	return &Server{bus, cfg}
+func NewServer(bus *Bus, cfg ServerConfig) (*Server, error) {
+	if cfg.Identify == nil && !cfg.InsecureAllowAllActions {
+		return nil, errors.New("invalid server configuration: set Identify or InsecureAllowAllActions")
+	}
+
+	if cfg.TLSConfig == nil {
+		return nil, errors.New("invalid server configuration: TLSConfig is nil")
+	}
+
+	return &Server{bus, cfg.withDefaults()}, nil
 }
 
 func (s *Server) Serve(l net.Listener) error {
@@ -79,7 +84,7 @@ func (s *Server) Serve(l net.Listener) error {
 		wg.Go(func() {
 			// this returns an error,
 			// but ServeConn has already logged it
-			ServeConn(context.Background(), conn, s.bus, s.cfg)
+			ServeConn(context.Background(), tls.Server(conn, s.cfg.TLSConfig), s.bus, s.cfg)
 		})
 	}
 }
@@ -137,28 +142,6 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 	}
 
 	return eg.Wait()
-}
-
-// NewServerConfig returns a default configuration with reasonable timeouts.
-// It panics if identify or tlsConfig are nil.
-func NewServerConfig(identify IdentifyFunc, tlsConfig *tls.Config) ServerConfig {
-	if identify == nil {
-		panic("identify func is nil")
-	}
-
-	if tlsConfig == nil {
-		panic("tls config is nil")
-	}
-
-	return ServerConfig{
-		Identify:  identify,
-		TLSConfig: tlsConfig,
-
-		// FIX: make these reasonable
-		ReadTimeout:       3 * time.Second,
-		WriteTimeout:      3 * time.Second,
-		KeepaliveInterval: 1 * time.Second,
-	}.withDefaults()
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {

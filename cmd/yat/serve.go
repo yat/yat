@@ -9,7 +9,6 @@ import (
 	"yat.io/yat/cmd/yat/flagset"
 )
 
-// FIX: support ACME
 type serveCmd struct {
 	Address string
 }
@@ -20,12 +19,21 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 		return err
 	}
 
-	svr := yat.NewServer(&yat.Bus{}, yat.ServerConfig{
-		Logger: logger,
+	tlsConfig, err := cfg.loadServerTLSConfig()
+	if err != nil {
+		return err
+	}
+
+	svr, err := yat.NewServer(&yat.Bus{}, yat.ServerConfig{
+		TLSConfig: tlsConfig,
+		Logger:    logger,
 
 		InsecureAllowAllActions: true,
-		InsecureAllowNoTLS:      true,
 	})
+
+	if err != nil {
+		return err
+	}
 
 	logger.Info("serve",
 		"addr", l.Addr().String())

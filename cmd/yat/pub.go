@@ -57,7 +57,11 @@ func (cmd pubCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 		m.Data = data
 	}
 
-	client := cfg.NewClient(logger)
+	client, err := cfg.NewClient(logger)
+	if err != nil {
+		return err
+	}
+
 	defer client.Close()
 
 	for range max(1, cmd.Count) {

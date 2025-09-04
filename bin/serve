@@ -1,0 +1,12 @@
+#!/bin/sh
+# build and run yat serve in dev
+
+set -eu
+
+bin/build
+
+export YAT_TLS_CA_FILE=tmp/pki/root.crt
+export YAT_TLS_CERT_FILE=tmp/pki/server.crt
+export YAT_TLS_KEY_FILE=tmp/pki/server.key
+
+exec ./yat serve "$@"

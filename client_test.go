@@ -24,9 +24,13 @@ func TestClient(t *testing.T) {
 		return cc, nil
 	}
 
-	client := yat.NewClient(dial, yat.ClientConfig{
+	client, err := yat.NewClient(dial, yat.ClientConfig{
 		Logger: slog.Default().With("part", "client"),
 	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := client.Close(); err != nil {
 		t.Fatal(err)

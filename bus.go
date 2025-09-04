@@ -17,7 +17,7 @@ type Bus struct {
 }
 
 // Publish delivers m to all interested subscribers before returning.
-// It always returns a nil error.
+// It returns an error to satisfy [Publisher], but the error is always nil.
 func (b *Bus) Publish(m Msg) error {
 	for _, s := range b.route(m) {
 		s.Deliver(m, m.appendFields(nil))
@@ -25,8 +25,8 @@ func (b *Bus) Publish(m Msg) error {
 	return nil
 }
 
-// Subscribe arranges for f to be called when a message matching sel is published.
-// It always returns a nil error.
+// Subscribe arranges for f to be called in a new goroutine when a message matching sel is published.
+// It returns an error to satisfy [Subscriber], but the error is always nil.
 func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	if sel.Topic.IsZero() || f == nil {
 		return zeroSub{}, nil
@@ -35,7 +35,7 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	sub := newSub(sel, func(m Msg, _ []byte) { f(m) }, func(sub *subscription) {
+	sub := newSub(sel, func(m Msg, _ []byte) { go f(m) }, func(sub *subscription) {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		b.tt.Del(sel.Topic, sub)

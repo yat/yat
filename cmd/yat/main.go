@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,7 +45,8 @@ func main() {
 	}
 
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "yat: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -146,15 +149,87 @@ func run() error {
 	return cmd.Run(context.Background(), logger, shared, args)
 }
 
-func (cfg sharedConfig) NewClient(logger *slog.Logger) *yat.Client {
+func (cfg sharedConfig) NewClient(logger *slog.Logger) (*yat.Client, error) {
 	dial := func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Server)
 	}
 
-	// FIX: configure TLS
+	tlsConfig, err := cfg.loadClientTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	return yat.NewClient(dial, yat.ClientConfig{
-		Logger: logger,
+		TLSConfig: tlsConfig,
+		Logger:    logger,
 	})
+}
+
+func (cfg sharedConfig) loadClientTLSConfig() (*tls.Config, error) {
+	sn, _, err := net.SplitHostPort(cfg.Server)
+	if err != nil {
+		return nil, err
+	}
+
+	tc := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: sn,
+	}
+
+	if len(cfg.TLSCertFile) > 0 && len(cfg.TLSKeyFile) > 0 {
+		crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		tc.Certificates = []tls.Certificate{crt}
+	}
+
+	if len(cfg.TLSCAFile) > 0 {
+		ca, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(ca) {
+			return nil, fmt.Errorf("load %s: no roots", cfg.TLSCAFile)
+		}
+
+		tc.RootCAs = roots
+	}
+
+	return tc, nil
+}
+
+func (cfg sharedConfig) loadServerTLSConfig() (*tls.Config, error) {
+	tc := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+	}
+
+	crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tc.Certificates = []tls.Certificate{crt}
+
+	if len(cfg.TLSCAFile) > 0 {
+		ca, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(ca) {
+			return nil, fmt.Errorf("load %s: no roots", cfg.TLSCAFile)
+		}
+
+		tc.ClientCAs = roots
+		tc.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return tc, nil
 }
 
 func parseEnv(shared *sharedConfig) error {

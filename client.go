@@ -3,6 +3,7 @@ package yat
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -46,12 +47,12 @@ type Client struct {
 // ClientConfig holds optional client configuration.
 type ClientConfig struct {
 
+	// TLSConfig is the client's TLS configuration.
+	TLSConfig *tls.Config
+
 	// Logger is where the client writes logs.
 	// If it is not set, client logs are discarded.
 	Logger *slog.Logger
-
-	// TLSConfig, if set, configures the client to use TLS.
-	TLSConfig *tls.Config
 
 	// If ReadTimeout is set, reads will time out.
 	ReadTimeout time.Duration
@@ -68,7 +69,15 @@ type ClientConfig struct {
 // It may be called many times from different goroutines.
 type DialFunc func(context.Context) (net.Conn, error)
 
-func NewClient(dial DialFunc, cfg ClientConfig) *Client {
+func NewClient(dial DialFunc, cfg ClientConfig) (*Client, error) {
+	if dial == nil {
+		return nil, errors.New("dial func is nil")
+	}
+
+	if cfg.TLSConfig == nil {
+		return nil, errors.New("invalid client configuration: TLSConfig is nil")
+	}
+
 	c := &Client{
 		cfg:   cfg.withDefaults(),
 		doneC: make(chan struct{}),
@@ -91,7 +100,7 @@ func NewClient(dial DialFunc, cfg ClientConfig) *Client {
 		c.connect(ctx, dial)
 	}()
 
-	return c
+	return c, nil
 }
 
 // Publish copies m to the outbound message buffer.
@@ -262,10 +271,7 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 		}
 
 		start := time.Now()
-
-		if c.cfg.TLSConfig != nil {
-			conn = tls.Client(conn, c.cfg.TLSConfig)
-		}
+		conn = tls.Client(conn, c.cfg.TLSConfig)
 
 		logger := c.cfg.Logger.With(
 			"local", conn.LocalAddr().String(),
@@ -459,23 +465,6 @@ func (c *Client) flush() {
 	case c.wbufC <- struct{}{}:
 	default:
 	}
-}
-
-// NewClientConfig returns a default configuration with reasonable timeouts.
-// It panics if tlsConfig is nil.
-func NewClientConfig(tlsConfig *tls.Config) ClientConfig {
-	if tlsConfig == nil {
-		panic("tls config is nil")
-	}
-
-	return ClientConfig{
-		TLSConfig: tlsConfig,
-
-		// FIX: make these reasonable
-		ReadTimeout:       3 * time.Second,
-		WriteTimeout:      3 * time.Second,
-		KeepaliveInterval: 1 * time.Second,
-	}.withDefaults()
 }
 
 func (cfg ClientConfig) withDefaults() ClientConfig {
