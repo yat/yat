@@ -259,7 +259,7 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 		}
 
 		// FIX: ClientConfig.DialTimeout
-		dctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+		dctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		conn, err := dial(dctx)
 		cancel()
 
