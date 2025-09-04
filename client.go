@@ -192,7 +192,7 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 	return sub, nil
 }
 
-// Flush blocks until the client flushes its outbound message buffer.
+// Flush waits until the client is connected, then blocks until the outbound message buffer is written.
 // It returns an error if the client is closed, or if the context is canceled,
 // or if an error occurs while writing the message buffers.
 // If the buffer is empty, Flush does nothing and returns nil.
@@ -234,6 +234,7 @@ func (c *Client) Flush(ctx context.Context) error {
 }
 
 // Close shuts down the client.
+// If the client is connected, Close waits for the connection to flush and close before returning.
 // After Close is called, all methods return [net.ErrClosed].
 func (c *Client) Close() error {
 	c.mu.Lock()
