@@ -123,6 +123,7 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 		conn:  conn,
 		bus:   bus,
 		cfg:   cfg,
+		subs:  map[uint64]*subscription{},
 		wbufC: make(chan struct{}, 1),
 	}
 
@@ -167,6 +168,7 @@ type svrConn struct {
 
 	mu      sync.Mutex
 	auth    func(topic.Path, Action) bool
+	subs    map[uint64]*subscription
 	wbuf    net.Buffers
 	wbufC   chan struct{}
 	flushed time.Time
@@ -260,6 +262,24 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
+	deliver := func(m Msg, fields []byte) {
+		sc.deliver(body.Num, m, fields)
+	}
+
+	cleanup := func(sub *subscription) {
+		sc.mu.Lock()
+		delete(sc.subs, body.Num)
+		sc.mu.Unlock()
+		sc.bus.del(sub)
+	}
+
+	sub := newSub(body.Sel, deliver, cleanup)
+	old := sc.subs[body.Num]
+	sc.subs[body.Num] = sub
+	sc.mu.Unlock()
+
+	sc.bus.ins(sub, old)
+
 	return nil
 }
 
@@ -336,6 +356,8 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 		}
 	}
 }
+
+func (sc *svrConn) deliver(num uint64, m Msg, fields []byte) {}
 
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {

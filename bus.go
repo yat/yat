@@ -36,7 +36,7 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 		b.del(sub)
 	})
 
-	b.ins(sub)
+	b.ins(sub, nil)
 	return sub, nil
 }
 
@@ -80,9 +80,14 @@ func (b *Bus) route(m Msg) []*subscription {
 	})
 }
 
-func (b *Bus) ins(s *subscription) {
+func (b *Bus) ins(s *subscription, del *subscription) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if del != nil {
+		b.tt.Del(del.sel.Topic, del)
+	}
+
 	b.tt.Ins(s.sel.Topic, s)
 }
 
