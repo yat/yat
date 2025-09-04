@@ -173,6 +173,7 @@ func (cfg sharedConfig) loadClientTLSConfig() (*tls.Config, error) {
 
 	tc := &tls.Config{
 		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{"yat"},
 		ServerName: sn,
 	}
 
@@ -205,6 +206,7 @@ func (cfg sharedConfig) loadClientTLSConfig() (*tls.Config, error) {
 func (cfg sharedConfig) loadServerTLSConfig() (*tls.Config, error) {
 	tc := &tls.Config{
 		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{"yat"},
 	}
 
 	crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)

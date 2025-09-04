@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -76,6 +77,10 @@ func NewClient(dial DialFunc, cfg ClientConfig) (*Client, error) {
 
 	if cfg.TLSConfig == nil {
 		return nil, errors.New("invalid client configuration: TLSConfig is nil")
+	}
+
+	if !slices.Contains(cfg.TLSConfig.NextProtos, "yat") {
+		return nil, errors.New("invalid client configuration: TLSConfig.NextProtos does not include yat")
 	}
 
 	c := &Client{

@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -68,25 +70,24 @@ func NewServer(bus *Bus, cfg ServerConfig) (*Server, error) {
 		return nil, errors.New("invalid server configuration: TLSConfig is nil")
 	}
 
+	if !slices.Contains(cfg.TLSConfig.NextProtos, "yat") {
+		return nil, errors.New("invalid server configuration: TLSConfig.NextProtos does not include yat")
+	}
+
 	return &Server{bus, cfg.withDefaults()}, nil
 }
 
 func (s *Server) Serve(l net.Listener) error {
-	var wg sync.WaitGroup
-	defer wg.Done()
-
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
-		}
-
-		wg.Go(func() {
-			// this returns an error,
-			// but ServeConn has already logged it
-			ServeConn(context.Background(), tls.Server(conn, s.cfg.TLSConfig), s.bus, s.cfg)
-		})
+	hs := &http.Server{
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){
+			"yat": func(_ *http.Server, conn *tls.Conn, _ http.Handler) {
+				ServeConn(context.Background(), conn, s.bus, s.cfg)
+			},
+		},
 	}
+
+	tl := tls.NewListener(l, s.cfg.TLSConfig)
+	return hs.Serve(tl)
 }
 
 // ServeConn serves bus to conn according to cfg.
