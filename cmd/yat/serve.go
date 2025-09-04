@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net"
-	"sync"
 
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/flagset"
@@ -21,28 +20,17 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 		return err
 	}
 
+	svr := yat.NewServer(&yat.Bus{}, yat.ServerConfig{
+		Logger: logger,
+
+		InsecureAllowAllActions: true,
+		InsecureAllowNoTLS:      true,
+	})
+
 	logger.Info("serve",
 		"addr", l.Addr().String())
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
-		}
-
-		wg.Go(func() {
-			// FIX: configure TLS
-			yat.Serve(ctx, conn, &yat.Bus{}, yat.ServerConfig{
-				Logger: logger,
-
-				InsecureAllowAllActions: true,
-				InsecureAllowNoTLS:      true,
-			})
-		})
-	}
+	return svr.Serve(l)
 }
 
 func (cmd *serveCmd) SetupFlags(fs *flagset.Set) {

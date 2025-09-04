@@ -67,7 +67,7 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 		b = field.AppendRun(b, f.Sel.Group.String())
 	}
 
-	if f.Sel.Flags != 0 {
+	if f.Sel.Flags > 0 {
 		b = field.AppendTag(b, field.Num, 5)
 		b = nv.Append(b, uint64(f.Sel.Flags))
 	}

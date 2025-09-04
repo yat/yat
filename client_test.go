@@ -16,7 +16,7 @@ func TestClient(t *testing.T) {
 	cc, sc := net.Pipe()
 	bus := &yat.Bus{}
 
-	go yat.Serve(t.Context(), sc, bus, yat.ServerConfig{
+	go yat.ServeConn(t.Context(), sc, bus, yat.ServerConfig{
 		Logger: slog.Default().With("part", "server"),
 	})
 

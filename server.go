@@ -15,6 +15,11 @@ import (
 	"yat.io/yat/topic"
 )
 
+type Server struct {
+	bus *Bus
+	cfg ServerConfig
+}
+
 // ServerConfig holds optional server configuration.
 type ServerConfig struct {
 
@@ -54,21 +59,31 @@ type ServerConfig struct {
 	InsecureAllowNoTLS bool
 }
 
-type svrConn struct {
-	conn net.Conn
-	bus  *Bus
-
-	cfg ServerConfig
-
-	mu      sync.Mutex
-	auth    func(topic.Path, Action) bool
-	wbuf    net.Buffers
-	wbufC   chan struct{}
-	flushed time.Time
+func NewServer(bus *Bus, cfg ServerConfig) *Server {
+	return &Server{bus, cfg}
 }
 
-// Serve serves bus to conn according to cfg.
-func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err error) {
+func (s *Server) Serve(l net.Listener) error {
+	var wg sync.WaitGroup
+	defer wg.Done()
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			return err
+		}
+
+		wg.Go(func() {
+			// this returns an error,
+			// but ServeConn has already logged it
+			ServeConn(context.Background(), conn, s.bus, s.cfg)
+		})
+	}
+}
+
+// ServeConn serves bus to conn according to cfg.
+// Any TLS configuration is ignored: ServeConn expects the caller to handle it.
+func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err error) {
 	cfg = cfg.withDefaults()
 
 	start := time.Now()
@@ -95,14 +110,6 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 		}
 	}()
 
-	if cfg.TLSConfig == nil && !cfg.InsecureAllowNoTLS {
-		return conn.Close()
-	}
-
-	if cfg.TLSConfig != nil {
-		conn = tls.Server(conn, cfg.TLSConfig)
-	}
-
 	sc := &svrConn{
 		conn:  conn,
 		bus:   bus,
@@ -110,10 +117,6 @@ func Serve(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err 
 		wbufC: make(chan struct{}, 1),
 	}
 
-	return sc.Serve(ctx, logger)
-}
-
-func (sc *svrConn) Serve(ctx context.Context, logger *slog.Logger) error {
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
@@ -131,6 +134,55 @@ func (sc *svrConn) Serve(ctx context.Context, logger *slog.Logger) error {
 	}
 
 	return eg.Wait()
+}
+
+// NewServerConfig returns a default configuration with reasonable timeouts.
+// It panics if auth or tlsConfig are nil.
+func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
+	if auth == nil {
+		panic("auth is nil")
+	}
+
+	if tlsConfig == nil {
+		panic("tls config is nil")
+	}
+
+	return ServerConfig{
+		Auth:      auth,
+		TLSConfig: tlsConfig,
+
+		// FIX: make these reasonable
+		ReadTimeout:       3 * time.Second,
+		WriteTimeout:      3 * time.Second,
+		KeepaliveInterval: 1 * time.Second,
+	}.withDefaults()
+}
+
+func (cfg ServerConfig) withDefaults() ServerConfig {
+	if cfg.Auth == nil {
+		cfg.Auth = func(Identity) func(topic.Path, Action) bool {
+			return func(topic.Path, Action) bool { return false }
+		}
+	}
+
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	return cfg
+}
+
+type svrConn struct {
+	conn net.Conn
+	bus  *Bus
+
+	cfg ServerConfig
+
+	mu      sync.Mutex
+	auth    func(topic.Path, Action) bool
+	wbuf    net.Buffers
+	wbufC   chan struct{}
+	flushed time.Time
 }
 
 func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
@@ -301,40 +353,4 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
 	return sc.cfg.InsecureAllowAllActions || sc.auth != nil && sc.auth(p, a)
-}
-
-// NewServerConfig returns a default configuration with reasonable timeouts.
-// It panics if auth or tlsConfig are nil.
-func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
-	if auth == nil {
-		panic("auth is nil")
-	}
-
-	if tlsConfig == nil {
-		panic("tls config is nil")
-	}
-
-	return ServerConfig{
-		Auth:      auth,
-		TLSConfig: tlsConfig,
-
-		// FIX: make these reasonable
-		ReadTimeout:       3 * time.Second,
-		WriteTimeout:      3 * time.Second,
-		KeepaliveInterval: 1 * time.Second,
-	}.withDefaults()
-}
-
-func (cfg ServerConfig) withDefaults() ServerConfig {
-	if cfg.Auth == nil {
-		cfg.Auth = func(Identity) func(topic.Path, Action) bool {
-			return func(topic.Path, Action) bool { return false }
-		}
-	}
-
-	if cfg.Logger == nil {
-		cfg.Logger = slog.New(slog.DiscardHandler)
-	}
-
-	return cfg
 }
