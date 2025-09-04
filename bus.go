@@ -32,16 +32,11 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 		return zeroSub{}, nil
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	sub := newSub(sel, func(m Msg, _ []byte) { go f(m) }, func(sub *subscription) {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		b.tt.Del(sel.Topic, sub)
+		b.del(sub)
 	})
 
-	b.tt.Ins(sel.Topic, sub)
+	b.ins(sub)
 	return sub, nil
 }
 
@@ -83,6 +78,20 @@ func (b *Bus) route(m Msg) []*subscription {
 
 		return flags&s.sel.Flags != s.sel.Flags
 	})
+}
+
+func (b *Bus) ins(s *subscription) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.tt.Ins(s.sel.Topic, s)
+}
+
+func (b *Bus) del(ss ...*subscription) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, s := range ss {
+		b.tt.Del(s.sel.Topic, s)
+	}
 }
 
 type subscription struct {
