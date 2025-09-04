@@ -8,11 +8,6 @@ import (
 	"yat.io/yat/topic"
 )
 
-// Identity holds information identifying a client.
-type Identity struct {
-	Claims map[string]any
-}
-
 type RuleSet struct {
 	Rules []Rule `json:"rules"`
 }
@@ -35,11 +30,16 @@ const (
 	SUB                     // receive messages
 )
 
-// An AuthorizerFunc compiles and returns an auth func for the given identity.
-type AuthorizerFunc func(Identity) func(topic.Path, Action) bool
+// Identity holds verified claims about a client.
+type Identity struct {
+	Subject string
+	Issuer  string
+}
 
-// Compile compiles a match function for the given identity.
-func (rs RuleSet) Compile(id Identity) func(topic.Path, Action) bool {
+type AuthFunc func(topic.Path, Action) bool
+
+// Compile compiles a match function for the given claims.
+func (rs RuleSet) Compile(claims map[string]any) func(topic.Path, Action) bool {
 	var grants []Grant
 
 	// FIX: This limited claims check (got != want) will probably not
@@ -52,7 +52,7 @@ compiling:
 		}
 
 		for name, want := range r.Claims {
-			got, ok := id.Claims[name]
+			got, ok := claims[name]
 			if !ok || got != want {
 				continue compiling
 			}

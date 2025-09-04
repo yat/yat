@@ -44,11 +44,10 @@ func TestRuleSet_Compile(t *testing.T) {
 		},
 	}
 
-	allow := rs.Compile(yat.Identity{
-		Claims: map[string]any{
-			"sub": "test",
-		},
-	})
+	allow := rs.Compile(map[string]any{
+		"sub": "test",
+	},
+	)
 
 	tcs := []struct {
 		Topic  string

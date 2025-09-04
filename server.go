@@ -23,23 +23,23 @@ type Server struct {
 // ServerConfig holds optional server configuration.
 type ServerConfig struct {
 
-	// Auth is called by the server when a connection's identity changes.
+	// Identify is called by the server when a connection's identity changes.
 	// Every time the server reads a frame from the connection, it will call the
-	// func returned by Auth to decide if the action is allowed.
-	// If Auth is nil, the server will deny all client actions.
+	// returned AuthFunc to decide if the action is allowed.
+	// If Identify is nil, the server will deny all client actions.
 	//
 	// To disable auth and allow all actions,
 	// even for unidentified connections,
 	// set InsecureAllowAllActions.
-	Auth AuthorizerFunc
-
-	// Logger is where the server writes logs.
-	// If it is not set, server logs are discarded.
-	Logger *slog.Logger
+	Identify IdentifyFunc
 
 	// TLSConfig is the server's TLS configuration.
 	// If it is not set, client connections are immediately closed unless InsecureAllowNoTLS is true.
 	TLSConfig *tls.Config
+
+	// Logger is where the server writes logs.
+	// If it is not set, server logs are discarded.
+	Logger *slog.Logger
 
 	// If ReadTimeout is set, reads will time out.
 	ReadTimeout time.Duration
@@ -58,6 +58,9 @@ type ServerConfig struct {
 	// InsecureAllowNoTLS, if set, allows connections to proceed when TLSConfig is nil.
 	InsecureAllowNoTLS bool
 }
+
+// IdentifyFunc is called by the server to identify a connection.
+type IdentifyFunc func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error)
 
 func NewServer(bus *Bus, cfg ServerConfig) *Server {
 	return &Server{bus, cfg}
@@ -137,10 +140,10 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 }
 
 // NewServerConfig returns a default configuration with reasonable timeouts.
-// It panics if auth or tlsConfig are nil.
-func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
-	if auth == nil {
-		panic("auth is nil")
+// It panics if identify or tlsConfig are nil.
+func NewServerConfig(identify IdentifyFunc, tlsConfig *tls.Config) ServerConfig {
+	if identify == nil {
+		panic("identify func is nil")
 	}
 
 	if tlsConfig == nil {
@@ -148,7 +151,7 @@ func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
 	}
 
 	return ServerConfig{
-		Auth:      auth,
+		Identify:  identify,
 		TLSConfig: tlsConfig,
 
 		// FIX: make these reasonable
@@ -159,9 +162,9 @@ func NewServerConfig(auth AuthorizerFunc, tlsConfig *tls.Config) ServerConfig {
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {
-	if cfg.Auth == nil {
-		cfg.Auth = func(Identity) func(topic.Path, Action) bool {
-			return func(topic.Path, Action) bool { return false }
+	if cfg.Identify == nil {
+		cfg.Identify = func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error) {
+			return Identity{}, func(topic.Path, Action) bool { return false }, nil
 		}
 	}
 
