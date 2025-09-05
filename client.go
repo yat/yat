@@ -386,6 +386,14 @@ func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, r *field
 		return nil
 	}
 
+	c.mu.Lock()
+	sub := c.subs[body.Num]
+	c.mu.Unlock()
+
+	if sub != nil {
+		go sub.Deliver(body.Msg)
+	}
+
 	return nil
 
 }
