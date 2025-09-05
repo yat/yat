@@ -19,7 +19,11 @@ type DeliveryGroup struct {
 }
 
 // Group returns the delivery group representing the given value.
+// The zero group is returned if len(value) is 0.
 func Group[T ~[]byte | ~string](value T) DeliveryGroup {
+	if len(value) == 0 {
+		return DeliveryGroup{}
+	}
 	return DeliveryGroup{unique.Make(string(value))}
 }
 

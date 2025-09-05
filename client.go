@@ -376,7 +376,7 @@ func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, r *field
 		return err
 	}
 
-	logger.DebugContext(ctx, "read pkg frame", "body", body)
+	logger.Log(ctx, slog.LevelDebug-1, "pkg frame received", "body", body)
 
 	if body.Msg.Topic.IsZero() {
 		return nil
