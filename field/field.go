@@ -8,22 +8,21 @@
 // A field set is a run of bytes containing zero or more encoded fields.
 //
 // A field is a 1 byte tag followed by an encoded value.
-// The MSB of the tag is the field type, Num (0) or Run (1).
+// The MSB of the tag is the field type, Value (0) or Run (1).
 // The least significant 7 bits of the tag are the field number, 0-127.
 //
-// # Values
+// # Types
 //
-//   - Num values hold a uint64 encoded as a 1-9 byte nv.
+//   - Values hold a uint64 encoded as a 1-9 byte nv.
 //     For encoding details, see the internal/nv package.
-//   - Run values hold a run of bytes encoded as an nv len followed by len bytes.
+//   - Runs hold a run of bytes encoded as an nv len followed by len bytes.
 //
 // # Codec
 //
 // Fields may appear in any order.
 // Duplicate fields may appear.
 //
-// Only fields with nonzero values should be encoded.
-// A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes.
+// Fields with zero values and runs of 0 bytes should not be encoded.
 // When decoding, fields with reserved (0) or unknown numbers should be discarded.
 // Two errors can occur during decoding: A short field or a Num overflow.
 //
@@ -51,8 +50,8 @@ const (
 type Type byte
 
 const (
-	Num = Type(0)
-	Run = Type(typeBit)
+	Value = Type(0)
+	Run   = Type(typeBit)
 )
 
 const (
@@ -66,8 +65,12 @@ func AppendTag(b []byte, typ Type, field int) []byte {
 	return append(b, byte(typ)|byte(field&numBits))
 }
 
-func AppendRun[T ~[]byte | ~string](b []byte, value T) []byte {
-	return append(nv.Append(b, uint64(len(value))), value...)
+func AppendValue(b []byte, value uint64) []byte {
+	return nv.Append(b, value)
+}
+
+func AppendRun(b []byte, data []byte) []byte {
+	return append(nv.Append(b, uint64(len(data))), data...)
 }
 
 // Type returns the field type.
@@ -80,12 +83,12 @@ func (t Tag) Field() int {
 	return int(t & numBits)
 }
 
-// String returns the name of the type, "Num" or "Run".
+// String returns the name of the type, "Value" or "Run".
 // If the value is invalid String returns "Type(value)".
 func (t Type) String() string {
 	switch t {
-	case Num:
-		return "Num"
+	case Value:
+		return "Value"
 	case Run:
 		return "Run"
 	default:

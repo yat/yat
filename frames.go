@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"yat.io/yat/field"
-	"yat.io/yat/nv"
 	"yat.io/yat/topic"
 )
 
@@ -48,8 +47,8 @@ func (f *msgFrameBody) ParseFields(r *field.Reader) error {
 
 func (f subFrameBody) AppendBody(b []byte) []byte {
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Num, 1)
-		b = nv.Append(b, f.Num)
+		b = field.AppendTag(b, field.Value, 1)
+		b = field.AppendValue(b, f.Num)
 	}
 
 	if !f.Sel.Topic.IsZero() {
@@ -58,18 +57,18 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 	}
 
 	if f.Sel.Limit > 0 {
-		b = field.AppendTag(b, field.Num, 3)
-		b = nv.Append(b, uint64(f.Sel.Limit))
+		b = field.AppendTag(b, field.Value, 3)
+		b = field.AppendValue(b, uint64(f.Sel.Limit))
 	}
 
 	if !f.Sel.Group.IsZero() {
 		b = field.AppendTag(b, field.Run, 4)
-		b = field.AppendRun(b, f.Sel.Group.String())
+		b = field.AppendRun(b, []byte(f.Sel.Group.String()))
 	}
 
 	if f.Sel.Flags > 0 {
-		b = field.AppendTag(b, field.Num, 5)
-		b = nv.Append(b, uint64(f.Sel.Flags))
+		b = field.AppendTag(b, field.Value, 5)
+		b = field.AppendValue(b, uint64(f.Sel.Flags))
 	}
 
 	return b
@@ -114,8 +113,8 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 
 func (f unsubFrameBody) AppendBody(b []byte) []byte {
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Num, 1)
-		b = nv.Append(b, f.Num)
+		b = field.AppendTag(b, field.Value, 1)
+		b = field.AppendValue(b, f.Num)
 	}
 
 	return b
@@ -148,8 +147,8 @@ func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
 
 func (f pkgFrameBody) AppendBody(b []byte) []byte {
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Num, 127)
-		b = nv.Append(b, f.Num)
+		b = field.AppendTag(b, field.Value, 127)
+		b = field.AppendValue(b, f.Num)
 	}
 
 	return f.Msg.appendFields(b)
@@ -219,8 +218,8 @@ func (m Msg) appendFields(b []byte) []byte {
 	}
 
 	if !m.Deadline.IsZero() {
-		b = field.AppendTag(b, field.Num, 5)
-		b = nv.Append(b, uint64(m.Deadline.UnixNano()))
+		b = field.AppendTag(b, field.Value, 5)
+		b = field.AppendValue(b, uint64(m.Deadline.UnixNano()))
 	}
 
 	return b
@@ -303,10 +302,10 @@ func parseSelFlagsField(t field.Tag, r *field.Reader) (SelFlags, error) {
 }
 
 func parseNumField(t field.Tag, r *field.Reader) (uint64, error) {
-	if t.Type() != field.Num {
+	if t.Type() != field.Value {
 		return 0, errFieldType
 	}
-	return r.ReadNum()
+	return r.ReadValue()
 }
 
 func parseGroupField(t field.Tag, r *field.Reader) (DeliveryGroup, error) {

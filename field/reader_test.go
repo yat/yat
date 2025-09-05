@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	"yat.io/yat/field"
-	"yat.io/yat/nv"
 )
 
 func TestReader(t *testing.T) {
 	var b []byte
-	b = field.AppendTag(b, field.Num, 1)
-	b = nv.Append(b, 1111)
+	b = field.AppendTag(b, field.Value, 1)
+	b = field.AppendValue(b, 1111)
 
 	var r field.Reader
 	r.Reset(b)
@@ -21,7 +20,7 @@ func TestReader(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := tag.Type(), field.Num; got != want {
+	if got, want := tag.Type(), field.Value; got != want {
 		t.Errorf("type %v != %v", got, want)
 	}
 
@@ -29,7 +28,7 @@ func TestReader(t *testing.T) {
 		t.Errorf("field number %d != %d", got, want)
 	}
 
-	value, err := r.ReadNum()
+	value, err := r.ReadValue()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ func TestAppendTag(t *testing.T) {
 		Type  field.Type
 		Field int
 	}{
-		{field.Num, 1},
+		{field.Value, 1},
 		{field.Run, 2},
 	}
 
@@ -56,7 +56,7 @@ func TestAppendTag_TruncateField(t *testing.T) {
 
 func TestAppendRun(t *testing.T) {
 	want := "hello"
-	b := field.AppendRun(nil, want)
+	b := field.AppendRun(nil, []byte(want))
 	rlen, n := binary.Uvarint(b)
 	if n <= 0 {
 		t.Fatal()
@@ -76,7 +76,7 @@ func TestType_String(t *testing.T) {
 		Type field.Type
 		Want string
 	}{
-		{field.Num, "Num"},
+		{field.Value, "Value"},
 		{field.Run, "Run"},
 		{99, "Type(99)"},
 	}

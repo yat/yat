@@ -39,7 +39,7 @@ func (r *Reader) ReadTag() (tag Tag, err error) {
 	return
 }
 
-func (r *Reader) ReadNum() (value uint64, err error) {
+func (r *Reader) ReadValue() (value uint64, err error) {
 	if r.e != nil {
 		err = r.e
 		return
@@ -69,7 +69,7 @@ func (r *Reader) ReadRun() (run []byte, err error) {
 		return
 	}
 
-	rlen, err := r.ReadNum()
+	rlen, err := r.ReadValue()
 	if err != nil {
 		return
 	}
@@ -91,7 +91,7 @@ func (r *Reader) Discard(t Tag) error {
 	}
 
 	// num value or run len
-	val, err := r.ReadNum()
+	val, err := r.ReadValue()
 	if err != nil {
 		return err
 	}

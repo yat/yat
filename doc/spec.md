@@ -120,21 +120,21 @@ Field sets are designed for structs with a small number of fields containing uns
 Repeated fields and nested structs are not supported.
 
 A field is a 1 byte tag followed by an encoded value.
-The MSB of the tag is the field type, **Num** (0) or **Run** (1).
+The MSB of the tag is the field type, **Value** (0) or **Run** (1).
 The least significant 7 bits of the tag are the field number, 0-127.
 
-#### Field Values
+#### Field Types
 
-Num values hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
+Values hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
 
-Run values hold a run of bytes encoded as an nv len followed by len bytes.
+Runs hold a run of bytes encoded as an nv len followed by len bytes.
 
 #### Encoding and Decoding Fields
 
 Fields may appear in any order.
 Duplicate fields may appear.
 
-Only fields with nonzero values should be encoded. A field's value is nonzero if it contains a Num > 0 or a Run of > 0 bytes.
+Fields with zero values and runs of 0 bytes should not be encoded.
 
 When decoding, unknown fields should be discarded.
 When decoding multiple fields with the same number, the latest field wins.
