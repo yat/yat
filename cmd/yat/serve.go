@@ -14,6 +14,8 @@ import (
 
 type serveCmd struct {
 	DevDir string
+
+	InsecureAllowAllActions bool
 }
 
 func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig, args []string) error {
@@ -59,7 +61,7 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 		TLSConfig: tlsConfig,
 		Logger:    logger,
 
-		InsecureAllowAllActions: true,
+		InsecureAllowAllActions: cmd.InsecureAllowAllActions,
 	})
 
 	if err != nil {
@@ -74,4 +76,5 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 
 func (cmd *serveCmd) SetupFlags(fs *flagset.Set) {
 	fs.String(&cmd.DevDir, "dev")
+	fs.Bool(&cmd.InsecureAllowAllActions, "insecure-allow-all-actions")
 }
