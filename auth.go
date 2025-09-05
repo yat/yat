@@ -58,12 +58,28 @@ compiling:
 			}
 		}
 
-		grants = append(grants, r.Grants...)
+		for _, g := range r.Grants {
+			if g.Topic.IsZero() || g.Action == 0 {
+				continue
+			}
+
+			grants = append(grants, g)
+		}
 	}
 
 	return func(p topic.Path, a Action) bool {
+		if p.IsZero() || a == 0 {
+			return false
+		}
+
+		sys := p.Bytes()[0] == '$'
+
 		var aa Action
 		for _, g := range grants {
+			if sys && g.Topic.Bytes()[0] != '$' {
+				continue
+			}
+
 			if g.Topic.Match(p) {
 				aa |= g.Action
 			}
