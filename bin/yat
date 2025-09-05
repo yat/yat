@@ -5,8 +5,8 @@ set -eu
 
 bin/build
 
-export YAT_TLS_CA_FILE=tmp/pki/root.crt
-export YAT_TLS_CERT_FILE=tmp/pki/client.crt
-export YAT_TLS_KEY_FILE=tmp/pki/client.key
+export YAT_TLS_CA_FILE=tmp/dev/tls/ca.crt
+export YAT_TLS_CERT_FILE=tmp/dev/tls/client.crt
+export YAT_TLS_KEY_FILE=tmp/dev/tls/client.key
 
 exec ./yat "$@"
