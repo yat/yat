@@ -5,8 +5,9 @@ set -eu
 
 bin/build
 
-export YAT_TLS_CA_FILE=tmp/dev/tls/ca.crt
-export YAT_TLS_CERT_FILE=tmp/dev/tls/server.crt
-export YAT_TLS_KEY_FILE=tmp/dev/tls/server.key
+unset YAT_TLS_CA_FILE
+unset YAT_TLS_CERT_FILE
+unset YAT_TLS_KEY_FILE
 
-exec go tool logfmt -x time ./yat serve "$@"
+exec go tool logfmt -x time \
+  ./yat serve -dev tmp/dev "$@"

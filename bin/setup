@@ -1,6 +1,0 @@
-#!/bin/sh
-# (re)generate dev creds
-
-set -eu
-
-exec go run ./cmd/setup

@@ -13,7 +13,7 @@ import (
 // GenerateCreds writes client and server development credentials to files under dir.
 // The files are tls/ca.crt, tls/server.crt, tls/server.key, tls/client.crt, and tls/client.key.
 // If any file is missing, all of the files are regenerated.
-func GenerateCreds(dir string, hostname string) error {
+func GenerateCreds(dir string, hostname string) (generated bool, err error) {
 	var (
 		tlsDir            = filepath.Join(dir, "tls")
 		tlsCAFile         = filepath.Join(tlsDir, "ca.crt")
@@ -41,16 +41,16 @@ func GenerateCreds(dir string, hostname string) error {
 
 	if !tlsOK {
 		if err := os.RemoveAll(tlsDir); err != nil {
-			return err
+			return false, err
 		}
 
 		if err := os.MkdirAll(tlsDir, 0755); err != nil {
-			return err
+			return false, err
 		}
 
 		caCrt, caKey, err := pkigen.NewRoot()
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		var san pkigen.CertOpt
@@ -66,36 +66,38 @@ func GenerateCreds(dir string, hostname string) error {
 
 		svrCrt, svrKey, err := pkigen.NewLeaf(caCrt, caKey, san)
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		clientCrt, clientKey, err := pkigen.NewLeaf(caCrt, caKey, pkigen.CN("yat client"))
 		if err != nil {
-			return err
+			return false, err
 		}
 
 		if err := writeCertFile(tlsCAFile, caCrt); err != nil {
-			return err
+			return false, err
 		}
 
 		if err := writeCertFile(tlsSvrCertFile, svrCrt); err != nil {
-			return err
+			return false, err
 		}
 
 		if err := writePrivateKeyFile(tlsSvrKeyFile, svrKey); err != nil {
-			return err
+			return false, err
 		}
 
 		if err := writeCertFile(tlsClientCertFile, clientCrt); err != nil {
-			return err
+			return false, err
 		}
 
 		if err := writePrivateKeyFile(tlsClientKeyFile, clientKey); err != nil {
-			return err
+			return false, err
 		}
+
+		generated = true
 	}
 
-	return nil
+	return
 }
 
 // writeCertFile PEM-encodes the certificates and writes them to the named file.
