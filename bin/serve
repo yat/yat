@@ -9,4 +9,4 @@ export YAT_TLS_CA_FILE=tmp/pki/root.crt
 export YAT_TLS_CERT_FILE=tmp/pki/server.crt
 export YAT_TLS_KEY_FILE=tmp/pki/server.key
 
-exec ./yat serve "$@"
+exec go tool logfmt -x time ./yat serve "$@"
