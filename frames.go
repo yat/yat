@@ -87,19 +87,19 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 1:
-			f.Num, err = parseNumField(tag, r)
+			f.Num, err = readValueField(tag, r)
 
 		case 2:
-			f.Sel.Topic, err = parseTopicField(tag, r)
+			f.Sel.Topic, err = readTopicField(tag, r)
 
 		case 3:
-			f.Sel.Limit, err = parseIntField(tag, r)
+			f.Sel.Limit, err = readIntField(tag, r)
 
 		case 4:
-			f.Sel.Group, err = parseGroupField(tag, r)
+			f.Sel.Group, err = readGroupField(tag, r)
 
 		case 5:
-			f.Sel.Flags, err = parseSelFlagsField(tag, r)
+			f.Sel.Flags, err = readSelFlagsField(tag, r)
 
 		default:
 			err = r.Discard(tag)
@@ -133,7 +133,7 @@ func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 1:
-			f.Num, err = parseNumField(tag, r)
+			f.Num, err = readValueField(tag, r)
 
 		default:
 			err = r.Discard(tag)
@@ -167,24 +167,24 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 127:
-			f.Num, err = parseNumField(tag, r)
+			f.Num, err = readValueField(tag, r)
 
 		// copied from Msg.parseFields
 
 		case 1:
-			f.Msg.Topic, err = parseTopicField(tag, r)
+			f.Msg.Topic, err = readTopicField(tag, r)
 
 		case 2:
-			f.Msg.Inbox, err = parseTopicField(tag, r)
+			f.Msg.Inbox, err = readTopicField(tag, r)
 
 		case 3:
-			f.Msg.Data, err = parseRunField(tag, r)
+			f.Msg.Data, err = readRunField(tag, r)
 
 		case 4:
-			f.Msg.Meta, err = parseRunField(tag, r)
+			f.Msg.Meta, err = readRunField(tag, r)
 
 		case 5:
-			f.Msg.Deadline, err = parseTimeField(tag, r)
+			f.Msg.Deadline, err = readTimeField(tag, r)
 
 		default:
 			err = r.Discard(tag)
@@ -196,8 +196,17 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 	}
 }
 
-func parseTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {
-	raw, err := parseRunField(t, r)
+// just casts
+func readSelFlagsField(t field.Tag, r *field.Reader) (SelFlags, error) {
+	v, err := readValueField(t, r)
+	if err != nil {
+		return 0, err
+	}
+	return SelFlags(v), nil
+}
+
+func readTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {
+	raw, err := readRunField(t, r)
 	if err != nil {
 		return
 	}
@@ -205,8 +214,8 @@ func parseTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error
 	return
 }
 
-func parseTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
-	ns, err := parseNumField(t, r)
+func readTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
+	ns, err := readValueField(t, r)
 	if err != nil {
 		return
 	}
@@ -215,39 +224,30 @@ func parseTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) 
 }
 
 // just casts
-func parseIntField(t field.Tag, r *field.Reader) (int, error) {
-	v, err := parseNumField(t, r)
+func readIntField(t field.Tag, r *field.Reader) (int, error) {
+	v, err := readValueField(t, r)
 	if err != nil {
 		return 0, err
 	}
 	return int(v), nil
 }
 
-// just casts
-func parseSelFlagsField(t field.Tag, r *field.Reader) (SelFlags, error) {
-	v, err := parseNumField(t, r)
-	if err != nil {
-		return 0, err
-	}
-	return SelFlags(v), nil
-}
-
-func parseNumField(t field.Tag, r *field.Reader) (uint64, error) {
-	if t.Type() != field.Value {
-		return 0, errFieldType
-	}
-	return r.ReadValue()
-}
-
-func parseGroupField(t field.Tag, r *field.Reader) (DeliveryGroup, error) {
-	b, err := parseRunField(t, r)
+func readGroupField(t field.Tag, r *field.Reader) (DeliveryGroup, error) {
+	b, err := readRunField(t, r)
 	if err != nil {
 		return DeliveryGroup{}, err
 	}
 	return Group(b), nil
 }
 
-func parseRunField(t field.Tag, r *field.Reader) ([]byte, error) {
+func readValueField(t field.Tag, r *field.Reader) (uint64, error) {
+	if t.Type() != field.Value {
+		return 0, errFieldType
+	}
+	return r.ReadValue()
+}
+
+func readRunField(t field.Tag, r *field.Reader) ([]byte, error) {
 	if t.Type() != field.Run {
 		return nil, errFieldType
 	}

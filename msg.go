@@ -131,19 +131,19 @@ func (m *Msg) parseFields(r *field.Reader) error {
 		// these cases are duplicated in pkgFrameBody.ParseFields
 
 		case 1:
-			m.Topic, err = parseTopicField(tag, r)
+			m.Topic, err = readTopicField(tag, r)
 
 		case 2:
-			m.Inbox, err = parseTopicField(tag, r)
+			m.Inbox, err = readTopicField(tag, r)
 
 		case 3:
-			m.Data, err = parseRunField(tag, r)
+			m.Data, err = readRunField(tag, r)
 
 		case 4:
-			m.Meta, err = parseRunField(tag, r)
+			m.Meta, err = readRunField(tag, r)
 
 		case 5:
-			m.Deadline, err = parseTimeField(tag, r)
+			m.Deadline, err = readTimeField(tag, r)
 
 		default:
 			err = r.Discard(tag)
