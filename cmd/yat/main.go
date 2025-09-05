@@ -17,14 +17,11 @@ import (
 )
 
 type sharedConfig struct {
-	LogLevel slog.Level
-
-	TLSCAFile   string
-	TLSCertFile string
-	TLSKeyFile  string
-
-	// client flags
-	Server string
+	Address     string     `json:"address"`
+	LogLevel    slog.Level `json:"log-level"`
+	TLSCAFile   string     `json:"tls-ca-file,omitempty"`
+	TLSCertFile string     `json:"tls-cert-file,omitempty"`
+	TLSKeyFile  string     `json:"tls-key-file,omitempty"`
 }
 
 type exitError struct {
@@ -52,8 +49,8 @@ func main() {
 
 func run() error {
 	shared := sharedConfig{
+		Address:  "[::1]:8765",
 		LogLevel: slog.LevelError,
-		Server:   "[::1]:8765",
 	}
 
 	if err := parseEnv(&shared); err != nil {
@@ -65,7 +62,7 @@ func run() error {
 	gflags.String(&shared.TLSCAFile, "tls-ca-file")
 	gflags.String(&shared.TLSCertFile, "tls-cert-file")
 	gflags.String(&shared.TLSKeyFile, "tls-key-file")
-	gflags.String(&shared.Server, "server")
+	gflags.String(&shared.Address, "address", "addr")
 
 	args, err := gflags.Parse(os.Args[1:])
 	if err != nil {
@@ -95,9 +92,7 @@ func run() error {
 		cmd = &subCmd{}
 
 	case "serve", "server":
-		cmd = &serveCmd{
-			Address: "[::1]:8765",
-		}
+		cmd = &serveCmd{}
 
 	case "env", "environ", "environment":
 		cmd = &envCmd{}
@@ -140,18 +135,15 @@ func run() error {
 		return err
 	}
 
-	logger.Debug("logger initialized",
-		"log-level", shared.LogLevel)
-
 	logger.Debug("run",
-		"command", name)
+		"command", name, "config", shared)
 
 	return cmd.Run(context.Background(), logger, shared, args)
 }
 
 func (cfg sharedConfig) NewClient(logger *slog.Logger) (*yat.Client, error) {
 	dial := func(ctx context.Context) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Server)
+		return (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Address)
 	}
 
 	tlsConfig, err := cfg.loadClientTLSConfig()
@@ -166,7 +158,7 @@ func (cfg sharedConfig) NewClient(logger *slog.Logger) (*yat.Client, error) {
 }
 
 func (cfg sharedConfig) loadClientTLSConfig() (*tls.Config, error) {
-	sn, _, err := net.SplitHostPort(cfg.Server)
+	sn, _, err := net.SplitHostPort(cfg.Address)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +227,10 @@ func (cfg sharedConfig) loadServerTLSConfig() (*tls.Config, error) {
 }
 
 func parseEnv(shared *sharedConfig) error {
+	if svr, ok := os.LookupEnv("YAT_ADDRESS"); ok {
+		shared.Address = svr
+	}
+
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
 		if err := shared.LogLevel.UnmarshalText([]byte(ll)); err != nil {
 			return fmt.Errorf("parse YAT_LOG_LEVEL: %v", err)
@@ -251,10 +247,6 @@ func parseEnv(shared *sharedConfig) error {
 
 	if f, ok := os.LookupEnv("YAT_TLS_KEY_FILE"); ok {
 		shared.TLSKeyFile = f
-	}
-
-	if svr, ok := os.LookupEnv("YAT_SERVER"); ok {
-		shared.Server = svr
 	}
 
 	return nil

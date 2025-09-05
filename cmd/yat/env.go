@@ -9,6 +9,7 @@ import (
 type envCmd struct{}
 
 func (cmd envCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig, args []string) error {
+	fmt.Printf("YAT_ADDRESS=%v\n", cfg.Address)
 	fmt.Printf("YAT_LOG_LEVEL=%v\n", cfg.LogLevel)
 
 	if len(cfg.TLSCAFile) > 0 {
@@ -21,10 +22,6 @@ func (cmd envCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 
 	if len(cfg.TLSKeyFile) > 0 {
 		fmt.Printf("YAT_TLS_KEY_FILE=%v\n", cfg.TLSKeyFile)
-	}
-
-	if len(cfg.Server) > 0 {
-		fmt.Printf("YAT_SERVER=%v\n", cfg.Server)
 	}
 
 	return nil

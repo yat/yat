@@ -5,9 +5,5 @@ set -eu
 
 bin/build
 
-unset YAT_TLS_CA_FILE
-unset YAT_TLS_CERT_FILE
-unset YAT_TLS_KEY_FILE
-
 exec go tool logfmt -x time \
   ./yat serve -dev tmp/dev "$@"
