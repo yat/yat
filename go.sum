@@ -4,6 +4,8 @@ github.com/jbarnette/logfmt v0.0.0-20210215204359-2a4c73d46ba5 h1:nhiQKUpJ1PnLcm
 github.com/jbarnette/logfmt v0.0.0-20210215204359-2a4c73d46ba5/go.mod h1:ZewkXta2bh72X4wu4DtkBsVLznzib7eWiIxdHt3HaA8=
 github.com/jbarnette/logfmt v0.0.1 h1:sjisFsEYs/a8p55dSCxmuZwaVvnbL/DQb9AYvfl1Vt0=
 github.com/jbarnette/logfmt v0.0.1/go.mod h1:P7VjAmhB9BYXEiOIw5FnlXp30VKAxp1T2DRUwg7w64g=
+github.com/jbarnette/logfmt v0.0.2 h1:QKXV8Pwt7BnJIZOIsQ6wYvjDSnoLZK+Gr4ZMYdf784o=
+github.com/jbarnette/logfmt v0.0.2/go.mod h1:P7VjAmhB9BYXEiOIw5FnlXp30VKAxp1T2DRUwg7w64g=
 github.com/mattn/go-isatty v0.0.12 h1:wuysRhFDzyxgEmMf5xjvJ2M9dZoWAXNNr5LSBS7uHXY=
 github.com/mattn/go-isatty v0.0.12/go.mod h1:cbi8OIDigv2wuxKPP5vlRcQ1OAZbq2CE4Kysco4FUpU=
 golang.org/x/sync v0.16.0 h1:ycBJEhp9p4vXvUZNszeOq0kGTPghopOL8q0fq3vstxw=

@@ -225,7 +225,9 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return err
 	}
 
-	logger.DebugContext(ctx, "msg frame", "msg", body.Msg)
+	if logger.Enabled(ctx, slog.LevelDebug-1) {
+		logger.Log(ctx, slog.LevelDebug-1, "msg frame", "msg", body.Msg)
+	}
 
 	if body.Msg.Topic.IsZero() {
 		return nil
@@ -235,6 +237,7 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
+	start := time.Now()
 	sc.mu.Lock()
 
 	if !sc.allowMu(body.Msg.Topic, PUB) {
@@ -245,7 +248,12 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 
 	m := body.Msg
 	m.fields = &rawBody
-	sc.bus.deliver(m)
+	n := sc.bus.deliver(m)
+
+	if logger.Enabled(ctx, slog.LevelDebug-1) {
+		logger.Log(ctx, slog.LevelDebug-1, "msg delivered",
+			"n", n, "elapsed", time.Since(start))
+	}
 
 	return nil
 }
