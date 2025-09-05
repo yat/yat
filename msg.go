@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"bytes"
 	"slices"
 	"time"
 
@@ -23,6 +24,14 @@ type Msg struct {
 
 	// Deadline is the instant when the message expires.
 	Deadline time.Time `json:"deadline,omitzero"`
+
+	// fields is set by the server when it decodes a message frame, or by the bus when
+	// a message is published directly. When the message is delivered, the referenced
+	// slice is appended to each subscribing connection's write buffer list instead of
+	// copying or re-encoding the message for each subscriber.
+	//
+	// It is a pointer to keep Msg in Go's 128-byte allocation size class.
+	fields *[]byte
 }
 
 // Topic creates a topic path from a raw value.
@@ -34,6 +43,15 @@ func Topic[V ~[]byte | ~string](raw V) topic.Path {
 		panic(err)
 	}
 	return p
+}
+
+// Equal returns true if the messages are equal.
+func (m Msg) Equal(other Msg) bool {
+	return m.Topic.Equal(other.Topic) &&
+		m.Inbox.Equal(other.Inbox) &&
+		bytes.Equal(m.Data, other.Data) &&
+		bytes.Equal(m.Meta, other.Meta) &&
+		m.Deadline.Equal(other.Deadline)
 }
 
 // IsExpired returns true if the message deadline has passed.

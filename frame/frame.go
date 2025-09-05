@@ -21,12 +21,13 @@ type Header struct {
 
 type Type uint16
 
+// HeaderLen is the length of a frame header in bytes.
+const HeaderLen = 8
+
 // NoType is the zero frame type.
 const NoType = 0
 
-const headerLen = 8
-
-var ByteOrder = binary.LittleEndian
+var le = binary.LittleEndian
 
 // BodyAppender is the interface called by Append to append a frame's body to a buffer.
 type BodyAppender interface {
@@ -46,21 +47,21 @@ func Append(b []byte, typ Type, body BodyAppender) []byte {
 	b = body.AppendBody(b)
 
 	// update the frame len
-	ByteOrder.PutUint32(b[i:], uint32(len(b)-i))
+	le.PutUint32(b[i:], uint32(len(b)-i))
 
 	return b
 }
 
 func AppendHeader(b []byte, typ Type, bodyLen int) []byte {
-	b = ByteOrder.AppendUint32(b, uint32(headerLen+bodyLen))
-	b = ByteOrder.AppendUint16(b, uint16(typ))
+	b = le.AppendUint32(b, uint32(HeaderLen+bodyLen))
+	b = le.AppendUint16(b, uint16(typ))
 	b = append(b, 0, 0) // reserved
 	return b
 }
 
 // BodyLen returns the length of the frame body in bytes.
 func (h Header) BodyLen() int {
-	return int(h.Len - headerLen)
+	return int(h.Len - HeaderLen)
 }
 
 type Bytes []byte

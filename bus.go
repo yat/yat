@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"yat.io/yat/field"
 	"yat.io/yat/topic"
 )
 
@@ -16,12 +17,24 @@ type Bus struct {
 	tt topic.Tree[*subscription]
 }
 
-// Publish delivers m to all interested subscribers before returning.
+// Publish delivers a copy of m to all interested subscribers before returning.
 // It returns an error to satisfy [Publisher], but the error is always nil.
 func (b *Bus) Publish(m Msg) error {
-	for _, s := range b.route(m) {
-		s.Deliver(m, m.appendFields(nil))
+	if m.Topic.IsZero() {
+		return nil
 	}
+
+	var copy Msg
+	fields := m.appendFields(nil)
+	if err := copy.parseFields(field.NewReader(fields)); err != nil {
+		panic(err)
+	}
+
+	copy.fields = &fields
+	for _, s := range b.route(copy) {
+		s.Deliver(copy)
+	}
+
 	return nil
 }
 
@@ -32,11 +45,9 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 		return zeroSub{}, nil
 	}
 
-	sub := newSub(sel, func(m Msg, _ []byte) { go f(m) }, func(sub *subscription) {
-		b.del(sub)
-	})
-
+	sub := newSub(sel, f, b.del)
 	b.ins(sub, nil)
+
 	return sub, nil
 }
 
@@ -91,25 +102,23 @@ func (b *Bus) ins(s *subscription, del *subscription) {
 	b.tt.Ins(s.sel.Topic, s)
 }
 
-func (b *Bus) del(ss ...*subscription) {
+func (b *Bus) del(s *subscription) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, s := range ss {
-		b.tt.Del(s.sel.Topic, s)
-	}
+	b.tt.Del(s.sel.Topic, s)
 }
 
 type subscription struct {
 	sel Sel
 
-	deliver    func(Msg, []byte)
+	deliver    func(Msg)
 	deliveries atomic.Uint64
 
 	stop  func()
 	stopC chan struct{}
 }
 
-func newSub(sel Sel, deliver func(Msg, []byte), cleanup func(*subscription)) *subscription {
+func newSub(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscription {
 	sub := &subscription{
 		sel:     sel,
 		deliver: deliver,
@@ -124,13 +133,13 @@ func newSub(sel Sel, deliver func(Msg, []byte), cleanup func(*subscription)) *su
 	return sub
 }
 
-func (s *subscription) Deliver(m Msg, fields []byte) {
+func (s *subscription) Deliver(m Msg) {
 	n := s.deliveries.Add(1)
 	lim := uint64(s.sel.Limit)
 	ltd := lim > 0
 
 	if !ltd || n <= lim {
-		s.deliver(m, fields)
+		s.deliver(m)
 	}
 
 	if ltd && n >= lim {

@@ -159,7 +159,7 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 	num := c.op
 	c.op++
 
-	sub := newSub(sel, func(m Msg, _ []byte) { deliver(m) }, func(sub *subscription) {
+	sub := newSub(sel, deliver, func(sub *subscription) {
 		c.mu.Lock()
 		delete(c.subs, num)
 

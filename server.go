@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"yat.io/yat/field"
 	"yat.io/yat/frame"
+	"yat.io/yat/nv"
 	"yat.io/yat/topic"
 )
 
@@ -262,8 +263,8 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
-	deliver := func(m Msg, fields []byte) {
-		sc.deliver(body.Num, m, fields)
+	deliver := func(m Msg) {
+		sc.deliver(body.Num, m)
 	}
 
 	cleanup := func(sub *subscription) {
@@ -357,7 +358,27 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 	}
 }
 
-func (sc *svrConn) deliver(num uint64, m Msg, fields []byte) {}
+func (sc *svrConn) deliver(num uint64, m Msg) {
+	sc.mu.Lock()
+
+	// add 1 pkg frame to the write buffer list in 2 buffers
+	// 1. a prefix buffer for the frame header and the subscription number
+	// 2. the existing message fields buffer
+
+	bodyLen := 1 + nv.Len(num) + len(*m.fields)
+	prefix := make([]byte, 0, frame.HeaderLen+bodyLen)
+	prefix = frame.AppendHeader(prefix, pkgFrame, bodyLen)
+	prefix = field.AppendTag(prefix, field.Num, 127)
+	prefix = nv.Append(prefix, num)
+	sc.wbuf = append(sc.wbuf, prefix, *m.fields)
+
+	sc.mu.Unlock()
+
+	select {
+	case sc.wbufC <- struct{}{}:
+	default:
+	}
+}
 
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
