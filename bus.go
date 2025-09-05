@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"iter"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -105,6 +106,14 @@ func (b *Bus) del(s *subscription) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.tt.Del(s.sel.Topic, s)
+}
+
+func (b *Bus) delseq(ss iter.Seq[*subscription]) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for s := range ss {
+		b.tt.Del(s.sel.Topic, s)
+	}
 }
 
 type subscription struct {

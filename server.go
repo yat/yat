@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -128,6 +129,11 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 		wbufC: make(chan struct{}, 1),
 	}
 
+	defer func() {
+		// clean up stragglers
+		bus.delseq(maps.Values(sc.subs))
+	}()
+
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
@@ -226,7 +232,7 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	if logger.Enabled(ctx, slog.LevelDebug-1) {
-		logger.Log(ctx, slog.LevelDebug-1, "msg frame", "msg", body.Msg)
+		logger.Log(ctx, slog.LevelDebug-1, "msg frame received", "message", body.Msg)
 	}
 
 	if body.Msg.Topic.IsZero() {
@@ -264,7 +270,7 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return err
 	}
 
-	logger.DebugContext(ctx, "sub frame",
+	logger.DebugContext(ctx, "sub frame received",
 		"num", body.Num,
 		"sel", body.Sel)
 
@@ -306,7 +312,7 @@ func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *f
 		return err
 	}
 
-	logger.DebugContext(ctx, "unsub frame",
+	logger.DebugContext(ctx, "unsub frame received",
 		"num", body.Num)
 
 	sc.mu.Lock()

@@ -8,10 +8,10 @@ import (
 )
 
 type Sel struct {
-	Topic topic.Path // * **
-	Limit int
-	Group DeliveryGroup
-	Flags SelFlags
+	Topic topic.Path    `json:"topic,omitzero"`
+	Limit int           `json:"limit,omitzero"`
+	Group DeliveryGroup `json:"group,omitzero"`
+	Flags SelFlags      `json:"flags,omitzero"`
 }
 
 type DeliveryGroup struct {

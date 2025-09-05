@@ -7,5 +7,6 @@
 
 The `yat` program logs JSON lines to stderr.
 The default log level is `ERROR`: Other levels are `WARN`, `INFO`, and `DEBUG`.
+Logs at the `WARN` and `DEBUG` levels may contain sensitive information like message topics.
 Pass the `-log-level` flag or set the `YAT_LOG_LEVEL` environment variable to change the log level.
 Connection and protocol logs are written at `DEBUG-1`.
