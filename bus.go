@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"yat.io/yat/field"
 	"yat.io/yat/topic"
 )
 
@@ -24,16 +23,7 @@ func (b *Bus) Publish(m Msg) error {
 		return nil
 	}
 
-	var copy Msg
-	fields := m.appendFields(nil)
-	if err := copy.parseFields(field.NewReader(fields)); err != nil {
-		panic(err)
-	}
-
-	copy.fields = &fields
-	for _, s := range b.route(copy) {
-		s.Deliver(copy)
-	}
+	b.deliver(m.Clone())
 
 	return nil
 }
@@ -45,10 +35,19 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 		return zeroSub{}, nil
 	}
 
-	sub := newSub(sel, f, b.del)
+	sub := newSub(sel, func(m Msg) { go f(m) }, b.del)
 	b.ins(sub, nil)
 
 	return sub, nil
+}
+
+func (b *Bus) deliver(m Msg) (n int) {
+	ss := b.route(m)
+	for _, s := range ss {
+		s.Deliver(m)
+	}
+
+	return len(ss)
 }
 
 func (b *Bus) route(m Msg) []*subscription {

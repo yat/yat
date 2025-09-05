@@ -189,7 +189,7 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 			return err
 		}
 
-		var handle func(context.Context, *slog.Logger, *field.Reader) error
+		var handle func(context.Context, *slog.Logger, *field.Reader, []byte) error
 
 		switch hdr.Type {
 		case msgFrame:
@@ -200,15 +200,18 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 
 		case unsubFrame:
 			handle = sc.readUnsubFrame
+
+		default:
+			continue
 		}
 
-		body := make([]byte, hdr.BodyLen())
-		if _, err := io.ReadFull(frames, body); err != nil {
+		rawBody := make([]byte, hdr.BodyLen())
+		if _, err := io.ReadFull(frames, rawBody); err != nil {
 			return err
 		}
 
-		fields.Reset(body)
-		if err := handle(ctx, logger, fields); err != nil {
+		fields.Reset(rawBody)
+		if err := handle(ctx, logger, fields, rawBody); err != nil {
 			logger.ErrorContext(ctx, "frame handler failed",
 				"type", hdr.Type,
 				"error", err)
@@ -216,7 +219,7 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, rawBody []byte) error {
 	var body msgFrameBody
 	if err := body.ParseFields(r); err != nil {
 		return err
@@ -233,16 +236,21 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 
 	if !sc.allowMu(body.Msg.Topic, PUB) {
 		return nil
 	}
 
+	sc.mu.Unlock()
+
+	m := body.Msg
+	m.fields = &rawBody
+	sc.bus.deliver(m)
+
 	return nil
 }
 
-func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, _ []byte) error {
 	var body subFrameBody
 	if err := body.ParseFields(r); err != nil {
 		return err
@@ -257,9 +265,9 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 
 	if !sc.allowMu(body.Sel.Topic, SUB) {
+		sc.mu.Unlock()
 		return nil
 	}
 
@@ -284,7 +292,7 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	return nil
 }
 
-func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, _ []byte) error {
 	var body unsubFrameBody
 	if err := body.ParseFields(r); err != nil {
 		return err
@@ -292,6 +300,15 @@ func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *f
 
 	logger.DebugContext(ctx, "unsub frame",
 		"num", body.Num)
+
+	sc.mu.Lock()
+	sub := sc.subs[body.Num]
+	delete(sc.subs, body.Num)
+	sc.mu.Unlock()
+
+	if sub != nil {
+		sc.bus.del(sub)
+	}
 
 	return nil
 }
@@ -361,7 +378,7 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 func (sc *svrConn) deliver(num uint64, m Msg) {
 	sc.mu.Lock()
 
-	// add 1 pkg frame to the write buffer list in 2 buffers
+	// add a pkg frame to the write buffer list in 2 buffers
 	// 1. a prefix buffer for the frame header and the subscription number
 	// 2. the existing message fields buffer
 

@@ -2,9 +2,12 @@ package yat
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"slices"
 	"time"
 
+	"yat.io/yat/field"
 	"yat.io/yat/topic"
 )
 
@@ -61,11 +64,93 @@ func (m Msg) IsExpired() bool {
 
 // Clone returns a copy of the message.
 func (m Msg) Clone() Msg {
-	return Msg{
-		Topic:    m.Topic.Clone(),
-		Inbox:    m.Inbox.Clone(),
-		Data:     slices.Clone(m.Data),
-		Meta:     slices.Clone(m.Meta),
-		Deadline: m.Deadline,
+	var raw []byte
+
+	switch {
+	case m.fields != nil:
+		raw = slices.Clone(*m.fields)
+
+	default:
+		raw = m.appendFields(nil)
+	}
+
+	var c Msg
+	if err := c.parseFields(field.NewReader(raw)); err != nil {
+		panic(err)
+	}
+
+	return c
+}
+
+func (m Msg) appendFields(b []byte) []byte {
+	if m.fields != nil {
+		return append(b, *m.fields...)
+	}
+
+	if !m.Topic.IsZero() {
+		b = field.AppendTag(b, field.Run, 1)
+		b = field.AppendRun(b, m.Topic.Bytes())
+	}
+
+	if !m.Inbox.IsZero() {
+		b = field.AppendTag(b, field.Run, 2)
+		b = field.AppendRun(b, m.Inbox.Bytes())
+	}
+
+	if len(m.Data) > 0 {
+		b = field.AppendTag(b, field.Run, 3)
+		b = field.AppendRun(b, m.Data)
+	}
+
+	if len(m.Meta) > 0 {
+		b = field.AppendTag(b, field.Run, 4)
+		b = field.AppendRun(b, m.Meta)
+	}
+
+	if !m.Deadline.IsZero() {
+		b = field.AppendTag(b, field.Value, 5)
+		b = field.AppendValue(b, uint64(m.Deadline.UnixNano()))
+	}
+
+	return b
+}
+
+func (m *Msg) parseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+
+		// these cases are duplicated in pkgFrameBody.ParseFields
+
+		case 1:
+			m.Topic, err = parseTopicField(tag, r)
+
+		case 2:
+			m.Inbox, err = parseTopicField(tag, r)
+
+		case 3:
+			m.Data, err = parseRunField(tag, r)
+
+		case 4:
+			m.Meta, err = parseRunField(tag, r)
+
+		case 5:
+			m.Deadline, err = parseTimeField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse message field %d: %v", tag.Field(), err)
+		}
 	}
 }
