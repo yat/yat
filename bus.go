@@ -41,7 +41,9 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	}
 
 	deliver := func(m Msg) { go f(m) }
-	return b.replace(nil, sel, deliver, nil), nil
+	sub := b.newSub(sel, deliver, nil)
+	b.replace(nil, sub)
+	return sub, nil
 }
 
 func (b *Bus) route(m Msg) []*bsub {
@@ -84,7 +86,8 @@ func (b *Bus) route(m Msg) []*bsub {
 	})
 }
 
-func (b *Bus) replace(old *bsub, sel Sel, deliver func(Msg), stop func()) *bsub {
+// call replace to add the returned sub to the bus
+func (b *Bus) newSub(sel Sel, deliver func(Msg), stop func()) *bsub {
 	bs := &bsub{
 		rcv:   newReceiver(sel.Limit, deliver),
 		sel:   sel,
@@ -99,6 +102,10 @@ func (b *Bus) replace(old *bsub, sel Sel, deliver func(Msg), stop func()) *bsub 
 		}
 	}
 
+	return bs
+}
+
+func (b *Bus) replace(old, new *bsub) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -106,8 +113,7 @@ func (b *Bus) replace(old *bsub, sel Sel, deliver func(Msg), stop func()) *bsub 
 		b.tt.Del(old.sel.Topic, old)
 	}
 
-	b.tt.Ins(sel.Topic, bs)
-	return bs
+	b.tt.Ins(new.sel.Topic, new)
 }
 
 func (b *Bus) del(bs *bsub) {

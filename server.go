@@ -274,29 +274,31 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 
 	if !sc.allowMu(body.Sel.Topic, SUB) {
+		sc.mu.Unlock()
 		return nil
 	}
 
+	num := body.Num
 	deliver := func(m Msg) {
-		sc.deliver(body.Num, m)
+		sc.deliver(num, m)
 	}
 
 	stop := func() {
 		sc.mu.Lock()
 		defer sc.mu.Unlock()
-		delete(sc.subs, body.Num)
+		delete(sc.subs, num)
 	}
 
-	old := sc.subs[body.Num]
+	old := sc.subs[num]
+	delete(sc.subs, num)
 
-	// FIX: I don't like that this is holding sc.mu while it calls the bus.
-	// I feel like it could slow down buffer flushes in an unpleasant way when the bus is hot.
-	// Maybe it should be newBsub and replace as two different things.
-	// That's what it was like before the sub type split.
-	sc.subs[body.Num] = sc.bus.replace(old, body.Sel, deliver, stop)
+	bs := sc.bus.newSub(body.Sel, deliver, stop)
+	sc.subs[num] = bs
+	sc.mu.Unlock()
+
+	sc.bus.replace(old, bs)
 
 	return nil
 }
