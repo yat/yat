@@ -18,6 +18,7 @@ import (
 	"yat.io/yat/frame"
 	"yat.io/yat/nv"
 	"yat.io/yat/topic"
+	"yat.io/yat/uid"
 )
 
 type Server struct {
@@ -58,6 +59,10 @@ type ServerConfig struct {
 	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
 	// The [AuthFunc] returned by Identify is ignored.
 	InsecureAllowAllActions bool
+
+	// UniqueID uniquely identifies this individual server.
+	// If it is not set (the usual case), a random ID is generated.
+	UniqueID uid.ID
 }
 
 // IdentifyFunc is called by the server to identify a connection.
@@ -151,20 +156,6 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 	}
 
 	return eg.Wait()
-}
-
-func (cfg ServerConfig) withDefaults() ServerConfig {
-	if cfg.Identify == nil {
-		cfg.Identify = func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error) {
-			return Identity{}, func(topic.Path, Action) bool { return false }, nil
-		}
-	}
-
-	if cfg.Logger == nil {
-		cfg.Logger = slog.New(slog.DiscardHandler)
-	}
-
-	return cfg
 }
 
 type svrConn struct {
@@ -414,4 +405,22 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
 	return sc.cfg.InsecureAllowAllActions || sc.auth != nil && sc.auth(p, a)
+}
+
+func (cfg ServerConfig) withDefaults() ServerConfig {
+	if cfg.Identify == nil {
+		cfg.Identify = func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error) {
+			return Identity{}, func(topic.Path, Action) bool { return false }, nil
+		}
+	}
+
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	if cfg.UniqueID == (uid.ID{}) {
+		cfg.UniqueID = uid.New()
+	}
+
+	return cfg
 }
