@@ -130,7 +130,7 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 		conn:  conn,
 		bus:   bus,
 		cfg:   cfg,
-		subs:  map[uint64]*subscription{},
+		subs:  map[uint64]*bsub{},
 		wbufC: make(chan struct{}, 1),
 	}
 
@@ -166,7 +166,7 @@ type svrConn struct {
 
 	mu      sync.Mutex
 	auth    func(topic.Path, Action) bool
-	subs    map[uint64]*subscription
+	subs    map[uint64]*bsub
 	wbuf    net.Buffers
 	wbufC   chan struct{}
 	flushed time.Time
@@ -245,11 +245,15 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 
 	m := body.Msg
 	m.fields = &rawBody
-	n := sc.bus.deliver(m)
+
+	ss := sc.bus.route(m)
+	for _, s := range ss {
+		s.Deliver(m)
+	}
 
 	if logger.Enabled(ctx, slog.LevelDebug-1) {
-		logger.Log(ctx, slog.LevelDebug-1, "msg delivered",
-			"n", n, "elapsed", time.Since(start))
+		logger.Log(ctx, slog.LevelDebug-1, "message delivered",
+			"n", len(ss), "elapsed", time.Since(start))
 	}
 
 	return nil
@@ -270,9 +274,9 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	}
 
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 
 	if !sc.allowMu(body.Sel.Topic, SUB) {
-		sc.mu.Unlock()
 		return nil
 	}
 
@@ -280,19 +284,19 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		sc.deliver(body.Num, m)
 	}
 
-	cleanup := func(sub *subscription) {
+	stop := func() {
 		sc.mu.Lock()
+		defer sc.mu.Unlock()
 		delete(sc.subs, body.Num)
-		sc.mu.Unlock()
-		sc.bus.del(sub)
 	}
 
-	sub := newSubscription(body.Sel, deliver, cleanup)
 	old := sc.subs[body.Num]
-	sc.subs[body.Num] = sub
-	sc.mu.Unlock()
 
-	sc.bus.ins(sub, old)
+	// FIX: I don't like that this is holding sc.mu while it calls the bus.
+	// I feel like it could slow down buffer flushes in an unpleasant way when the bus is hot.
+	// Maybe it should be newBsub and replace as two different things.
+	// That's what it was like before the sub type split.
+	sc.subs[body.Num] = sc.bus.replace(old, body.Sel, deliver, stop)
 
 	return nil
 }

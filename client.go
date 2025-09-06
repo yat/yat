@@ -27,7 +27,7 @@ type Client struct {
 	// The value before incrementing is used as the subscription number.
 	op uint64
 
-	subs map[uint64]*subscription
+	subs map[uint64]*csub
 
 	wbuf  []byte
 	wbufC chan struct{}
@@ -91,7 +91,7 @@ func NewClient(dial DialFunc, cfg ClientConfig) (*Client, error) {
 		cfg:   cfg.withDefaults(),
 		doneC: make(chan struct{}),
 		connC: make(chan struct{}),
-		subs:  map[uint64]*subscription{},
+		subs:  map[uint64]*csub{},
 		wbufC: make(chan struct{}, 1),
 		bops:  map[uint64]struct{}{},
 	}
@@ -157,13 +157,13 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 
 	if sel.Topic.IsZero() || deliver == nil {
 		c.mu.Unlock()
-		return zeroSub{}, nil
+		return zsub{}, nil
 	}
 
 	num := c.op
 	c.op++
 
-	sub := newSubscription(sel, deliver, func(sub *subscription) {
+	sub := newCsub(sel, deliver, func(sub *csub) {
 		c.mu.Lock()
 		delete(c.subs, num)
 
@@ -494,4 +494,42 @@ func (cfg ClientConfig) withDefaults() ClientConfig {
 	}
 
 	return cfg
+}
+
+type csub struct {
+	rcv *receiver
+	sel Sel
+
+	stop  func()
+	stopC chan struct{}
+}
+
+func newCsub(sel Sel, deliver func(Msg), cleanup func(*csub)) *csub {
+	rcv := newReceiver(sel.Limit, deliver)
+	sub := &csub{
+		rcv:   rcv,
+		sel:   sel,
+		stopC: make(chan struct{}),
+	}
+
+	sub.stop = sync.OnceFunc(func() {
+		close(sub.stopC)
+		cleanup(sub)
+	})
+
+	return sub
+}
+
+func (s *csub) Deliver(m Msg) {
+	if !s.rcv.Deliver(m) {
+		s.Stop()
+	}
+}
+
+func (s *csub) Stop() {
+	s.stop()
+}
+
+func (s *csub) Stopped() <-chan struct{} {
+	return s.stopC
 }

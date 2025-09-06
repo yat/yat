@@ -13,7 +13,7 @@ import (
 // It is safe to call Bus methods from multiple goroutines simultaneously.
 type Bus struct {
 	mu sync.RWMutex
-	tt topic.Tree[*subscription]
+	tt topic.Tree[*bsub]
 }
 
 // Publish delivers a copy of m to all interested subscribers before returning.
@@ -23,7 +23,12 @@ func (b *Bus) Publish(m Msg) error {
 		return nil
 	}
 
-	b.deliver(m.Clone())
+	if ss := b.route(m); len(ss) > 0 {
+		copy := m.Clone()
+		for _, s := range ss {
+			s.Deliver(copy)
+		}
+	}
 
 	return nil
 }
@@ -32,25 +37,14 @@ func (b *Bus) Publish(m Msg) error {
 // It returns an error to satisfy [Subscriber], but the error is always nil.
 func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 	if sel.Topic.IsZero() || f == nil {
-		return zeroSub{}, nil
+		return zsub{}, nil
 	}
 
-	sub := newSubscription(sel, func(m Msg) { go f(m) }, b.del)
-	b.ins(sub, nil)
-
-	return sub, nil
+	deliver := func(m Msg) { go f(m) }
+	return b.replace(nil, sel, deliver, nil), nil
 }
 
-func (b *Bus) deliver(m Msg) (n int) {
-	ss := b.route(m)
-	for _, s := range ss {
-		s.Deliver(m)
-	}
-
-	return len(ss)
-}
-
-func (b *Bus) route(m Msg) []*subscription {
+func (b *Bus) route(m Msg) []*bsub {
 	if m.Topic.IsZero() {
 		return nil
 	}
@@ -73,8 +67,8 @@ func (b *Bus) route(m Msg) []*subscription {
 	})
 
 	var dg map[DeliveryGroup]struct{}
-	return slices.DeleteFunc(ss, func(s *subscription) bool {
-		if g := s.sel.Group; !g.IsZero() {
+	return slices.DeleteFunc(ss, func(bs *bsub) bool {
+		if g := bs.sel.Group; !g.IsZero() {
 			if _, ok := dg[g]; ok {
 				return true
 			}
@@ -86,79 +80,83 @@ func (b *Bus) route(m Msg) []*subscription {
 			dg[g] = struct{}{}
 		}
 
-		return flags&s.sel.Flags != s.sel.Flags
+		return flags&bs.sel.Flags != bs.sel.Flags
 	})
 }
 
-func (b *Bus) ins(s *subscription, del *subscription) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if del != nil {
-		b.tt.Del(del.sel.Topic, del)
+func (b *Bus) replace(old *bsub, sel Sel, deliver func(Msg), stop func()) *bsub {
+	bs := &bsub{
+		rcv:   newReceiver(sel.Limit, deliver),
+		sel:   sel,
+		stopC: make(chan struct{}),
+		stop:  b.del,
 	}
 
-	b.tt.Ins(s.sel.Topic, s)
-}
+	if stop != nil {
+		bs.stop = func(bs *bsub) {
+			b.del(bs)
+			stop()
+		}
+	}
 
-func (b *Bus) del(s *subscription) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.tt.Del(s.sel.Topic, s)
+
+	if old != nil {
+		b.tt.Del(old.sel.Topic, old)
+	}
+
+	b.tt.Ins(sel.Topic, bs)
+	return bs
 }
 
-func (b *Bus) delseq(ss iter.Seq[*subscription]) {
+func (b *Bus) del(bs *bsub) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for s := range ss {
-		b.tt.Del(s.sel.Topic, s)
+	b.tt.Del(bs.sel.Topic, bs)
+}
+
+func (b *Bus) delseq(ss iter.Seq[*bsub]) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for bs := range ss {
+		b.tt.Del(bs.sel.Topic, bs)
 	}
 }
 
-type subscription struct {
+// bsub is a bus subscription.
+type bsub struct {
 	rcv *receiver
 	sel Sel
 
-	stop  func()
+	once  sync.Once
 	stopC chan struct{}
+	stop  func(*bsub)
 }
 
-func newSubscription(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscription {
-	rcv := newReceiver(sel.Limit, deliver)
-	sub := &subscription{
-		rcv:   rcv,
-		sel:   sel,
-		stopC: make(chan struct{}),
+func (bs *bsub) Deliver(m Msg) {
+	if !bs.rcv.Deliver(m) {
+		bs.Stop()
 	}
+}
 
-	sub.stop = sync.OnceFunc(func() {
-		close(sub.stopC)
-		cleanup(sub)
+func (bs *bsub) Stop() {
+	bs.once.Do(func() {
+		close(bs.stopC)
+		bs.stop(bs)
 	})
-
-	return sub
 }
 
-func (s *subscription) Deliver(m Msg) {
-	if !s.rcv.Deliver(m) {
-		s.Stop()
-	}
+func (bs *bsub) Stopped() <-chan struct{} {
+	return bs.stopC
 }
 
-func (s *subscription) Stop() {
-	s.stop()
-}
+// zsub is a stopped subscription.
+type zsub struct{}
 
-func (s *subscription) Stopped() <-chan struct{} {
-	return s.stopC
-}
+func (zsub) Stop() {}
 
-// zeroSub is a stopped subscription.
-type zeroSub struct{}
-
-func (zeroSub) Stop() {}
-
-func (zeroSub) Stopped() <-chan struct{} {
+func (zsub) Stopped() <-chan struct{} {
 	return nil
 }
 
