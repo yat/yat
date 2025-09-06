@@ -9,7 +9,7 @@ import (
 
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/flagset"
-	"yat.io/yat/devyat"
+	"yat.io/yat/dev"
 )
 
 type serveCmd struct {
@@ -38,7 +38,7 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 			return err
 		}
 
-		generated, err := devyat.GenerateCreds(cmd.DevDir, host)
+		generated, err := dev.GenerateCreds(cmd.DevDir, host)
 		if err != nil {
 			return err
 		}

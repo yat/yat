@@ -1,4 +1,4 @@
-package devyat
+package dev
 
 import (
 	"crypto"
