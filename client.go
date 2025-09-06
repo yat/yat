@@ -55,14 +55,18 @@ type ClientConfig struct {
 	// If it is not set, client logs are discarded.
 	Logger *slog.Logger
 
+	// DialTimeout is the amount of time the client waits for a connection.
+	// If it is not set, the default dial timeout is 1 second.
+	DialTimeout time.Duration
+
 	// If ReadTimeout is set, reads will time out.
 	ReadTimeout time.Duration
 
 	// If WriteTimeout is set, writes will time out.
 	WriteTimeout time.Duration
 
-	// If KeepaliveInterval is set, the client will write a keepalive frame
-	// if the interval passes without a write.
+	// If KeepaliveInterval is set, the client writes a keepalive frame
+	// when the interval passes without a write.
 	KeepaliveInterval time.Duration
 }
 
@@ -256,11 +260,10 @@ func (c *Client) Close() error {
 func (c *Client) connect(ctx context.Context, dial DialFunc) {
 	for {
 		if ctx.Err() != nil {
-			return // closed
+			return
 		}
 
-		// FIX: ClientConfig.DialTimeout
-		dctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		dctx, cancel := context.WithTimeout(context.Background(), c.cfg.DialTimeout)
 		conn, err := dial(dctx)
 		cancel()
 
@@ -484,6 +487,10 @@ func (c *Client) flush() {
 func (cfg ClientConfig) withDefaults() ClientConfig {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	if cfg.DialTimeout <= 0 {
+		cfg.DialTimeout = 1 * time.Second
 	}
 
 	return cfg
