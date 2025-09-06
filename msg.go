@@ -37,11 +37,10 @@ type Msg struct {
 	fields *[]byte
 }
 
-// Topic creates a topic path from a raw value.
-// If the value is a byte slice, it is aliased by the returned path.
+// Topic creates a topic path from a string.
 // If the path is invalid, Topic panics.
-func Topic[V ~[]byte | ~string](raw V) topic.Path {
-	p, _, err := topic.Parse(raw)
+func Topic(s string) topic.Path {
+	p, _, err := topic.Parse(s)
 	if err != nil {
 		panic(err)
 	}

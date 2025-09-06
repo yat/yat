@@ -14,13 +14,13 @@ type Path struct {
 	buf []byte
 }
 
-// New return a Path backed by b, which must hold a valid path.
+// New returns a Path aliasing b, which must be well-formed.
 func New(b []byte) Path {
 	return Path{b}
 }
 
-// Bytes returns a byte slice aliasing the path.
-// It is an error to modify the contents of the slice.
+// Bytes returns the path's backing bytes.
+// Modifying these bytes is not allowed.
 func (p Path) Bytes() []byte {
 	return p.buf
 }
