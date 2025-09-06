@@ -163,12 +163,12 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 	num := c.op
 	c.op++
 
-	sub := newSub(sel, deliver, func(sub *subscription) {
+	sub := newSubscription(sel, deliver, func(sub *subscription) {
 		c.mu.Lock()
 		delete(c.subs, num)
 
-		// only if the server hasn't cleaned up already
-		unsub := sel.Limit <= 0 || sub.deliveries.Load() < uint64(sel.Limit)
+		unsub := !sub.rcv.LimitReached()
+
 		if unsub {
 			c.wbuf = frame.Append(c.wbuf, unsubFrame, unsubFrameBody{
 				Num: num,
@@ -295,7 +295,7 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 			if _, pending := c.bops[num]; !pending {
 				sel := sub.sel
 				if sel.Limit > 0 {
-					sel.Limit -= int(sub.deliveries.Load())
+					sel.Limit -= sub.rcv.NMsg()
 				}
 
 				c.wbuf = frame.Append(c.wbuf, subFrame, subFrameBody{

@@ -287,7 +287,7 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 		sc.bus.del(sub)
 	}
 
-	sub := newSub(body.Sel, deliver, cleanup)
+	sub := newSubscription(body.Sel, deliver, cleanup)
 	old := sc.subs[body.Num]
 	sc.subs[body.Num] = sub
 	sc.mu.Unlock()

@@ -5,7 +5,6 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"yat.io/yat/topic"
 )
@@ -36,7 +35,7 @@ func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
 		return zeroSub{}, nil
 	}
 
-	sub := newSub(sel, func(m Msg) { go f(m) }, b.del)
+	sub := newSubscription(sel, func(m Msg) { go f(m) }, b.del)
 	b.ins(sub, nil)
 
 	return sub, nil
@@ -117,20 +116,19 @@ func (b *Bus) delseq(ss iter.Seq[*subscription]) {
 }
 
 type subscription struct {
+	rcv *receiver
 	sel Sel
-
-	deliver    func(Msg)
-	deliveries atomic.Uint64
 
 	stop  func()
 	stopC chan struct{}
 }
 
-func newSub(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscription {
+func newSubscription(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscription {
+	rcv := newReceiver(sel.Limit, deliver)
 	sub := &subscription{
-		sel:     sel,
-		deliver: deliver,
-		stopC:   make(chan struct{}),
+		rcv:   rcv,
+		sel:   sel,
+		stopC: make(chan struct{}),
 	}
 
 	sub.stop = sync.OnceFunc(func() {
@@ -142,15 +140,7 @@ func newSub(sel Sel, deliver func(Msg), cleanup func(*subscription)) *subscripti
 }
 
 func (s *subscription) Deliver(m Msg) {
-	n := s.deliveries.Add(1)
-	lim := uint64(s.sel.Limit)
-	ltd := lim > 0
-
-	if !ltd || n <= lim {
-		s.deliver(m)
-	}
-
-	if ltd && n >= lim {
+	if !s.rcv.Deliver(m) {
 		s.Stop()
 	}
 }
@@ -170,4 +160,47 @@ func (zeroSub) Stop() {}
 
 func (zeroSub) Stopped() <-chan struct{} {
 	return nil
+}
+
+type receiver struct {
+	limit int
+
+	mu      sync.Mutex
+	count   int
+	deliver func(Msg)
+}
+
+// newReceiver returns a new receiver with the given limit and deliver func.
+// If the limit is <= 0, deliveries are unlimited.
+func newReceiver(limit int, deliver func(Msg)) *receiver {
+	return &receiver{limit: limit, deliver: deliver}
+}
+
+func (d *receiver) Deliver(m Msg) (ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	hasLimit := d.limit > 0
+	if !hasLimit || d.count < d.limit {
+		d.count++
+		d.deliver(m)
+	}
+
+	// the limit has not been reached
+	ok = !hasLimit || d.count < d.limit
+
+	return
+}
+
+func (d *receiver) LimitReached() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.limit > 0 && d.count >= d.limit
+}
+
+// NMsg returns the number of delivered messages.
+func (d *receiver) NMsg() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.count
 }
