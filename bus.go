@@ -89,17 +89,11 @@ func (b *Bus) route(m Msg) []*bsub {
 // call replace to add the returned sub to the bus
 func (b *Bus) newSub(sel Sel, deliver func(Msg), stop func()) *bsub {
 	bs := &bsub{
-		rcv:   newReceiver(sel.Limit, deliver),
+		bus:   b,
 		sel:   sel,
+		rcv:   newReceiver(sel.Limit, deliver),
 		stopC: make(chan struct{}),
-		stop:  b.del,
-	}
-
-	if stop != nil {
-		bs.stop = func(bs *bsub) {
-			b.del(bs)
-			stop()
-		}
+		stop:  stop,
 	}
 
 	return bs
@@ -130,14 +124,13 @@ func (b *Bus) delseq(ss iter.Seq[*bsub]) {
 	}
 }
 
-// bsub is a bus subscription.
 type bsub struct {
-	rcv *receiver
-	sel Sel
-
+	bus   *Bus
+	sel   Sel
+	rcv   *receiver
 	once  sync.Once
 	stopC chan struct{}
-	stop  func(*bsub)
+	stop  func()
 }
 
 func (bs *bsub) Deliver(m Msg) {
@@ -148,8 +141,11 @@ func (bs *bsub) Deliver(m Msg) {
 
 func (bs *bsub) Stop() {
 	bs.once.Do(func() {
+		bs.bus.del(bs)
 		close(bs.stopC)
-		bs.stop(bs)
+		if bs.stop != nil {
+			bs.stop()
+		}
 	})
 }
 

@@ -163,24 +163,13 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 	num := c.op
 	c.op++
 
-	sub := newCsub(sel, deliver, func(sub *csub) {
-		c.mu.Lock()
-		delete(c.subs, num)
-
-		unsub := !sub.rcv.LimitReached()
-
-		if unsub {
-			c.wbuf = frame.Append(c.wbuf, unsubFrame, unsubFrameBody{
-				Num: num,
-			})
-		}
-
-		c.mu.Unlock()
-
-		if unsub {
-			c.flush()
-		}
-	})
+	sub := &csub{
+		client: c,
+		num:    num,
+		sel:    sel,
+		rcv:    newReceiver(sel.Limit, deliver),
+		stopC:  make(chan struct{}),
+	}
 
 	c.subs[num] = sub
 	c.bops[num] = struct{}{}
@@ -484,6 +473,22 @@ func (c *Client) flush() {
 	}
 }
 
+// called by [csub.Stop]
+func (c *Client) stop(cs *csub) {
+	unsub := !cs.rcv.LimitReached()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if unsub {
+		c.wbuf = frame.Append(c.wbuf, unsubFrame, unsubFrameBody{
+			Num: cs.num,
+		})
+
+		c.flush()
+	}
+}
+
 func (cfg ClientConfig) withDefaults() ClientConfig {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
@@ -497,27 +502,12 @@ func (cfg ClientConfig) withDefaults() ClientConfig {
 }
 
 type csub struct {
-	rcv *receiver
-	sel Sel
-
-	stop  func()
-	stopC chan struct{}
-}
-
-func newCsub(sel Sel, deliver func(Msg), cleanup func(*csub)) *csub {
-	rcv := newReceiver(sel.Limit, deliver)
-	sub := &csub{
-		rcv:   rcv,
-		sel:   sel,
-		stopC: make(chan struct{}),
-	}
-
-	sub.stop = sync.OnceFunc(func() {
-		close(sub.stopC)
-		cleanup(sub)
-	})
-
-	return sub
+	client *Client
+	num    uint64
+	sel    Sel
+	rcv    *receiver
+	once   sync.Once
+	stopC  chan struct{}
 }
 
 func (s *csub) Deliver(m Msg) {
@@ -526,8 +516,11 @@ func (s *csub) Deliver(m Msg) {
 	}
 }
 
-func (s *csub) Stop() {
-	s.stop()
+func (cs *csub) Stop() {
+	cs.once.Do(func() {
+		cs.client.stop(cs)
+		close(cs.stopC)
+	})
 }
 
 func (s *csub) Stopped() <-chan struct{} {

@@ -296,8 +296,8 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 
 	bs := sc.bus.newSub(body.Sel, deliver, stop)
 	sc.subs[num] = bs
-	sc.mu.Unlock()
 
+	sc.mu.Unlock()
 	sc.bus.replace(old, bs)
 
 	return nil
