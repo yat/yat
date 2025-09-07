@@ -13,10 +13,8 @@ import (
 )
 
 type subCmd struct {
-	Group        string
-	Limit        int
-	RequireInbox bool
-	RequireData  bool
+	Group string
+	Limit int
 }
 
 func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig, args []string) error {
@@ -29,21 +27,10 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 		return err
 	}
 
-	var flags yat.SelFlags
-
-	if cmd.RequireInbox {
-		flags |= yat.INBOX
-	}
-
-	if cmd.RequireData {
-		flags |= yat.DATA
-	}
-
 	sel := yat.Sel{
 		Topic: top,
 		Limit: cmd.Limit,
 		Group: yat.Group(cmd.Group),
-		Flags: flags,
 	}
 
 	client, err := cfg.NewClient(logger)
@@ -76,6 +63,4 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 func (cmd *subCmd) SetupFlags(fs *flagset.Set) {
 	fs.String(&cmd.Group, "group", "g")
 	fs.Int(&cmd.Limit, "limit", "n")
-	fs.Bool(&cmd.RequireInbox, "require-inbox", "I")
-	fs.Bool(&cmd.RequireData, "require-data", "D")
 }

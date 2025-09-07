@@ -66,11 +66,6 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 		b = field.AppendRun(b, []byte(f.Sel.Group.String()))
 	}
 
-	if f.Sel.Flags > 0 {
-		b = field.AppendTag(b, field.Value, 5)
-		b = field.AppendValue(b, uint64(f.Sel.Flags))
-	}
-
 	return b
 }
 
@@ -97,9 +92,6 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 
 		case 4:
 			f.Sel.Group, err = readGroupField(tag, r)
-
-		case 5:
-			f.Sel.Flags, err = readSelFlagsField(tag, r)
 
 		default:
 			err = r.Discard(tag)
@@ -194,15 +186,6 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 			return fmt.Errorf("parse pkg frame field %d: %v", tag.Field(), err)
 		}
 	}
-}
-
-// just casts
-func readSelFlagsField(t field.Tag, r *field.Reader) (SelFlags, error) {
-	v, err := readValueField(t, r)
-	if err != nil {
-		return 0, err
-	}
-	return SelFlags(v), nil
 }
 
 func readTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {

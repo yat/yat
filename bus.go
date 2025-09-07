@@ -51,15 +51,6 @@ func (b *Bus) route(m Msg) []*bsub {
 		return nil
 	}
 
-	var flags SelFlags
-	if len(m.Data) > 0 {
-		flags |= DATA
-	}
-
-	if !m.Inbox.IsZero() {
-		flags |= INBOX
-	}
-
 	b.mu.RLock()
 	ss := slices.Collect(b.tt.Matches(m.Topic))
 	b.mu.RUnlock()
@@ -82,7 +73,7 @@ func (b *Bus) route(m Msg) []*bsub {
 			dg[g] = struct{}{}
 		}
 
-		return flags&bs.sel.Flags != bs.sel.Flags
+		return false
 	})
 }
 

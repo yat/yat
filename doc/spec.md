@@ -29,15 +29,13 @@ A Yat client can subscribe to a stream of messages matching a selector. When any
 
 #### Selector
 
-A selector describes the messages a subscriber wants to receive. It has 4 optional fields:
+A selector describes the messages a subscriber wants to receive. It has 3 optional fields:
 
 - **Topic** selects messages with a matching topic. It supports wildcards: `*` matches any single path element and `**` matches all trailing elements.
 
-- **Limit** sets the maximum number of messages the subscriber wants to receive. If a subscription reaches its limit, it is automatically stopped.
+- **Limit** selects the maximum number of messages the subscriber will receive. If a subscription reaches its limit, it is automatically stopped.
 
 - **Group** groups the subscriber with others who selected the same group value. When a matching message is published, it is delivered to a random member of the group.
-
-- **Flags** is a set of selector flags. The `DATA` flag selects messages with at least 1 byte of data. The `INBOX` flag selects messages with an inbox path.
 
 An empty selector is valid, matching nothing.
 
@@ -98,7 +96,6 @@ A Sub frame (type 3) contains a field set describing a subscription.
 | 2 | Topic | Run | Topic pattern |
 | 3 | Limit | Num | Max deliveries |
 | 4 | Group | Run | Delivery group name |
-| 5 | Flags | Num | Selector flags |
 
 If a Sub frame is missing a topic field, it is discarded by the server.
 

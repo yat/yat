@@ -73,7 +73,6 @@ func Test_subFrameBodyFields(t *testing.T) {
 			Topic: Topic("topic"),
 			Limit: 1,
 			Group: Group("group"),
-			Flags: DATA,
 		},
 	}
 
