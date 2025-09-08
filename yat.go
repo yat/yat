@@ -29,7 +29,7 @@ type Msg struct {
 	// Topic is the address of the message.
 	Topic topic.Path `json:"topic,omitzero"`
 
-	// Inbox is a path where responses can be published.
+	// Inbox is an address where responses can be published.
 	Inbox topic.Path `json:"inbox,omitzero"`
 
 	// Data holds opaque message data.
