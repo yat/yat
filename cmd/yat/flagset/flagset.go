@@ -7,6 +7,7 @@ import (
 	"flag"
 	"io"
 	"strings"
+	"time"
 )
 
 type Set struct {
@@ -53,6 +54,12 @@ func (fs *Set) Split() (command string, args []string) {
 func (fs *Set) Bool(p *bool, names ...string) {
 	for _, name := range names {
 		fs.set.BoolVar(p, name, *p, "")
+	}
+}
+
+func (fs *Set) Duration(d *time.Duration, names ...string) {
+	for _, name := range names {
+		fs.set.DurationVar(d, name, *d, "")
 	}
 }
 
