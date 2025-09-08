@@ -18,7 +18,6 @@ import (
 	"yat.io/yat/frame"
 	"yat.io/yat/nv"
 	"yat.io/yat/topic"
-	"yat.io/yat/uid"
 )
 
 type Server struct {
@@ -59,10 +58,6 @@ type ServerConfig struct {
 	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
 	// The [AuthFunc] returned by Identify is ignored.
 	InsecureAllowAllActions bool
-
-	// UniqueID uniquely identifies this individual server.
-	// If it is not set (the usual case), a random ID is generated.
-	UniqueID uid.ID
 }
 
 // IdentifyFunc is called by the server to identify a connection.
@@ -422,10 +417,6 @@ func (cfg ServerConfig) withDefaults() ServerConfig {
 
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
-	}
-
-	if cfg.UniqueID == (uid.ID{}) {
-		cfg.UniqueID = uid.New()
 	}
 
 	return cfg
