@@ -56,7 +56,8 @@ A client connection is wrapped by a bi-directional stream of typed frames. The c
 
 ### Wire Frames
 
-A frame is encoded as an 8 byte header followed by a [field set](#field-sets) of varying length.
+A frame is encoded as an 8 byte header followed by a body of varying length.
+Most frame bodies contain a [field set](#field-sets).
 
 ```
 type FrameHeader struct {
@@ -78,7 +79,7 @@ Frame type 1 is reserved.
 
 #### Msg Frame
 
-A Msg frame (type 2) contains a message field set.
+A Msg frame contains a message field set.
 
 | Field | Name | Type | Description |
 | -- | -- | -- | -- |
@@ -93,7 +94,7 @@ A Msg frame with a deadline in the past is discarded by the server.
 
 #### Sub Frame
 
-A Sub frame (type 3) contains a field set describing a subscription.
+A Sub frame contains a field set describing a subscription.
 
 | Field | Name | Type | Description |
 | -- | -- | -- | -- |
@@ -101,12 +102,13 @@ A Sub frame (type 3) contains a field set describing a subscription.
 | 2 | Topic | Run | Topic pattern |
 | 3 | Limit | Num | Max deliveries |
 | 4 | Group | Run | Delivery group name |
+| 5 | Flags | Num | Subscription flags |
 
 If a Sub frame is missing a topic field, it is discarded by the server.
 
 #### Unsub Frame
 
-An Unsub frame (type 4) contains a single Num field (1) identifying the subscription.
+An Unsub frame contains a single field (1) identifying the subscription.
 
 #### Pkg Frame
 
