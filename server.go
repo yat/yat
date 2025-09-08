@@ -189,13 +189,13 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 		var handle func(context.Context, *slog.Logger, *field.Reader, []byte) error
 
 		switch hdr.Type {
-		case msgFrame:
+		case fMSG:
 			handle = sc.readMsgFrame
 
-		case subFrame:
+		case fSUB:
 			handle = sc.readSubFrame
 
-		case unsubFrame:
+		case fUNSUB:
 			handle = sc.readUnsubFrame
 
 		default:
@@ -294,7 +294,7 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	old := sc.subs[num]
 	delete(sc.subs, num)
 
-	bs := sc.bus.newSub(body.Sel, deliver, stop)
+	bs := newBsub(sc.bus, body.Sel, body.Flags, deliver, stop)
 	sc.subs[num] = bs
 
 	sc.mu.Unlock()
@@ -395,7 +395,7 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 
 	bodyLen := 1 + nv.Len(num) + len(*m.fields)
 	prefix := make([]byte, 0, frame.HeaderLen+bodyLen)
-	prefix = frame.AppendHeader(prefix, pkgFrame, bodyLen)
+	prefix = frame.AppendHeader(prefix, fPKG, bodyLen)
 	prefix = field.AppendTag(prefix, field.Value, 127)
 	prefix = field.AppendValue(prefix, num)
 	sc.wbuf = append(sc.wbuf, prefix, *m.fields)

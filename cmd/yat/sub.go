@@ -40,7 +40,7 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 
 	defer client.Close()
 
-	sub, err := client.Subscribe(sel, func(m yat.Msg) {
+	sub, err := client.Subscribe(sel, 0, func(m yat.Msg) {
 		data, _ := json.Marshal(m)
 		fmt.Println(string(data))
 	})

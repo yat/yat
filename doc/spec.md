@@ -17,7 +17,7 @@ Along with a topic path, a message may also include:
 - An **inbox** path where responses can be published
 - A **data** payload containing opaque bytes
 - A **metadata** payload containing opaque bytes
-- A **deadline** after which the message is disavowed
+- A **deadline** after which the message is late
 
 #### Topic Path
 
@@ -27,7 +27,7 @@ A topic path is the matter of a message. `Hello` and `a/b/c` are valid topic pat
 
 A Yat client can subscribe to a stream of messages matching a selector. When anyone connected to the same server publishes a matching message, the client receives a copy. If the client loses interest, it can end the subscription. If the client is disconnected from the server, it automatically resubscribes after reconnecting.
 
-#### Selector
+#### Selecting Messages
 
 A selector describes the messages a subscriber wants to receive. It has 3 optional fields:
 
@@ -38,6 +38,11 @@ A selector describes the messages a subscriber wants to receive. It has 3 option
 - **Group** groups the subscriber with others who selected the same group value. When a matching message is published, it is delivered to a random member of the group.
 
 An empty selector is valid, matching nothing.
+
+#### Subscription Flags
+
+A subscription may also include a set of special flags.
+The only current flag is `SubFlagResponder` (1), which tells the server that the subscription intends to publish a response to every message it receives. When this flag is set, the server will only deliver messages to the subscription if they have an inbox.
 
 ### Limits
 

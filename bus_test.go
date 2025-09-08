@@ -28,7 +28,7 @@ func testPublishSubscriber(t *testing.T, new func() publishSubscriber) {
 		}
 
 		mC := make(chan yat.Msg, 1)
-		_, err := ps.Subscribe(sel, func(m yat.Msg) { mC <- m.Clone() })
+		_, err := ps.Subscribe(sel, 0, func(m yat.Msg) { mC <- m.Clone() })
 		if err != nil {
 			t.Fatal(err)
 		}

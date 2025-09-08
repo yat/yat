@@ -35,13 +35,13 @@ func (b *Bus) Publish(m Msg) error {
 
 // Subscribe arranges for f to be called in a new goroutine when a message matching sel is published.
 // It returns an error to satisfy [Subscriber], but the error is always nil.
-func (b *Bus) Subscribe(sel Sel, f func(Msg)) (Subscription, error) {
+func (b *Bus) Subscribe(sel Sel, flags SubFlags, f func(Msg)) (Subscription, error) {
 	if sel.Topic.IsZero() || f == nil {
 		return zsub{}, nil
 	}
 
 	deliver := func(m Msg) { go f(m) }
-	sub := b.newSub(sel, deliver, nil)
+	sub := newBsub(b, sel, flags, deliver, nil)
 	b.replace(nil, sub)
 	return sub, nil
 }
@@ -61,6 +61,10 @@ func (b *Bus) route(m Msg) []*bsub {
 
 	var dg map[DeliveryGroup]struct{}
 	return slices.DeleteFunc(ss, func(bs *bsub) bool {
+		if bs.flags&SubFlagResponder == SubFlagResponder && m.Inbox.IsZero() {
+			return true
+		}
+
 		if g := bs.sel.Group; !g.IsZero() {
 			if _, ok := dg[g]; ok {
 				return true
@@ -75,19 +79,6 @@ func (b *Bus) route(m Msg) []*bsub {
 
 		return false
 	})
-}
-
-// call replace to add the returned sub to the bus
-func (b *Bus) newSub(sel Sel, deliver func(Msg), stop func()) *bsub {
-	bs := &bsub{
-		bus:   b,
-		sel:   sel,
-		rcv:   newReceiver(sel.Limit, deliver),
-		stopC: make(chan struct{}),
-		stop:  stop,
-	}
-
-	return bs
 }
 
 func (b *Bus) replace(old, new *bsub) {
@@ -118,10 +109,25 @@ func (b *Bus) delseq(ss iter.Seq[*bsub]) {
 type bsub struct {
 	bus   *Bus
 	sel   Sel
+	flags SubFlags
 	rcv   *receiver
 	once  sync.Once
 	stopC chan struct{}
 	stop  func()
+}
+
+// call replace to add the returned sub to the bus
+func newBsub(bus *Bus, sel Sel, flags SubFlags, deliver func(Msg), stop func()) *bsub {
+	bs := &bsub{
+		bus:   bus,
+		sel:   sel,
+		flags: flags,
+		rcv:   newReceiver(sel.Limit, deliver),
+		stopC: make(chan struct{}),
+		stop:  stop,
+	}
+
+	return bs
 }
 
 func (bs *bsub) Deliver(m Msg) {

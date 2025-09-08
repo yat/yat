@@ -129,7 +129,7 @@ func (c *Client) Publish(m Msg) error {
 	default:
 	}
 
-	c.wbuf = frame.Append(c.wbuf, msgFrame, msgFrameBody{
+	c.wbuf = frame.Append(c.wbuf, fMSG, msgFrameBody{
 		Msg: m,
 	})
 
@@ -145,7 +145,7 @@ func (c *Client) Publish(m Msg) error {
 //
 // The message passed to deliver aliases internal buffers.
 // It is an error to modify it or retain its fields after deliver returns.
-func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
+func (c *Client) Subscribe(sel Sel, flags SubFlags, deliver func(Msg)) (Subscription, error) {
 	c.mu.Lock()
 
 	select {
@@ -167,6 +167,7 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 		client: c,
 		num:    num,
 		sel:    sel,
+		flags:  flags,
 		rcv:    newReceiver(sel.Limit, deliver),
 		stopC:  make(chan struct{}),
 	}
@@ -174,9 +175,10 @@ func (c *Client) Subscribe(sel Sel, deliver func(Msg)) (Subscription, error) {
 	c.subs[num] = sub
 	c.bops[num] = struct{}{}
 
-	c.wbuf = frame.Append(c.wbuf, subFrame, subFrameBody{
-		Num: num,
-		Sel: sel,
+	c.wbuf = frame.Append(c.wbuf, fSUB, subFrameBody{
+		Num:   num,
+		Sel:   sel,
+		Flags: flags,
 	})
 
 	c.mu.Unlock()
@@ -287,9 +289,10 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 					sel.Limit -= sub.rcv.NMsg()
 				}
 
-				c.wbuf = frame.Append(c.wbuf, subFrame, subFrameBody{
-					Num: num,
-					Sel: sel,
+				c.wbuf = frame.Append(c.wbuf, fSUB, subFrameBody{
+					Num:   num,
+					Sel:   sel,
+					Flags: sub.flags,
 				})
 
 				resubs++
@@ -344,7 +347,7 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 		var handle func(context.Context, *slog.Logger, *field.Reader) error
 
 		switch hdr.Type {
-		case pkgFrame:
+		case fPKG:
 			handle = c.readPkgFrame
 		}
 
@@ -481,7 +484,7 @@ func (c *Client) stop(cs *csub) {
 	defer c.mu.Unlock()
 
 	if unsub {
-		c.wbuf = frame.Append(c.wbuf, unsubFrame, unsubFrameBody{
+		c.wbuf = frame.Append(c.wbuf, fUNSUB, unsubFrameBody{
 			Num: cs.num,
 		})
 
@@ -505,6 +508,7 @@ type csub struct {
 	client *Client
 	num    uint64
 	sel    Sel
+	flags  SubFlags
 	rcv    *receiver
 	once   sync.Once
 	stopC  chan struct{}

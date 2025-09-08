@@ -15,8 +15,9 @@ type msgFrameBody struct {
 }
 
 type subFrameBody struct {
-	Num uint64
-	Sel Sel
+	Num   uint64
+	Sel   Sel
+	Flags SubFlags
 }
 
 type unsubFrameBody struct {
@@ -29,10 +30,10 @@ type pkgFrameBody struct {
 }
 
 const (
-	msgFrame   = 2
-	subFrame   = 3
-	unsubFrame = 4
-	pkgFrame   = 128
+	fMSG   = 2
+	fSUB   = 3
+	fUNSUB = 4
+	fPKG   = 128
 )
 
 // The parse methods in this file don't clear self before parsing.
@@ -66,6 +67,11 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 		b = field.AppendRun(b, []byte(f.Sel.Group.String()))
 	}
 
+	if f.Flags != 0 {
+		b = field.AppendTag(b, field.Value, 5)
+		b = field.AppendValue(b, uint64(f.Flags))
+	}
+
 	return b
 }
 
@@ -92,6 +98,9 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 
 		case 4:
 			f.Sel.Group, err = readGroupField(tag, r)
+
+		case 5:
+			f.Flags, err = readSubFlagsField(tag, r)
 
 		default:
 			err = r.Discard(tag)
@@ -186,6 +195,88 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 			return fmt.Errorf("parse pkg frame field %d: %v", tag.Field(), err)
 		}
 	}
+}
+
+func (m Msg) appendFields(b []byte) []byte {
+	if m.fields != nil {
+		return append(b, *m.fields...)
+	}
+
+	if !m.Topic.IsZero() {
+		b = field.AppendTag(b, field.Run, 1)
+		b = field.AppendRun(b, m.Topic.Bytes())
+	}
+
+	if !m.Inbox.IsZero() {
+		b = field.AppendTag(b, field.Run, 2)
+		b = field.AppendRun(b, m.Inbox.Bytes())
+	}
+
+	if len(m.Data) > 0 {
+		b = field.AppendTag(b, field.Run, 3)
+		b = field.AppendRun(b, m.Data)
+	}
+
+	if len(m.Meta) > 0 {
+		b = field.AppendTag(b, field.Run, 4)
+		b = field.AppendRun(b, m.Meta)
+	}
+
+	if !m.Deadline.IsZero() {
+		b = field.AppendTag(b, field.Value, 5)
+		b = field.AppendValue(b, uint64(m.Deadline.UnixNano()))
+	}
+
+	return b
+}
+
+func (m *Msg) parseFields(r *field.Reader) error {
+	for {
+		tag, err := r.ReadTag()
+		if err == io.EOF {
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		switch tag.Field() {
+
+		// these cases are duplicated in pkgFrameBody.ParseFields
+
+		case 1:
+			m.Topic, err = readTopicField(tag, r)
+
+		case 2:
+			m.Inbox, err = readTopicField(tag, r)
+
+		case 3:
+			m.Data, err = readRunField(tag, r)
+
+		case 4:
+			m.Meta, err = readRunField(tag, r)
+
+		case 5:
+			m.Deadline, err = readTimeField(tag, r)
+
+		default:
+			err = r.Discard(tag)
+		}
+
+		if err != nil {
+			return fmt.Errorf("parse message field %d: %v", tag.Field(), err)
+		}
+	}
+}
+
+// just casts
+func readSubFlagsField(t field.Tag, r *field.Reader) (SubFlags, error) {
+	v, err := readValueField(t, r)
+	if err != nil {
+		return 0, err
+	}
+	return SubFlags(v), nil
 }
 
 func readTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {

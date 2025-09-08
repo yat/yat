@@ -74,6 +74,7 @@ func Test_subFrameBodyFields(t *testing.T) {
 			Limit: 1,
 			Group: Group("group"),
 		},
+		Flags: SubFlagResponder,
 	}
 
 	b := f.AppendBody(nil)
