@@ -212,6 +212,8 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 }
 
 func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, rawBody []byte) error {
+	start := time.Now()
+
 	var body msgFrameBody
 	if err := body.ParseFields(r); err != nil {
 		return err
@@ -229,14 +231,13 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 		return nil
 	}
 
-	start := time.Now()
 	sc.mu.Lock()
+	allowed := sc.allowMu(body.Msg.Topic, PUB)
+	sc.mu.Unlock()
 
-	if !sc.allowMu(body.Msg.Topic, PUB) {
+	if !allowed {
 		return nil
 	}
-
-	sc.mu.Unlock()
 
 	m := body.Msg
 	m.fields = &rawBody
