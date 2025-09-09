@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"yat.io/yat/field"
+	"yat.io/yat/nv"
 	"yat.io/yat/topic"
 )
 
@@ -148,56 +149,17 @@ func (f *unsubFrameBody) ParseFields(s field.Set) error {
 }
 
 func (f pkgFrameBody) AppendBody(b []byte) []byte {
-	s := field.Set(b)
-	if f.Num > 0 {
-		s = s.AppendValueField(127, f.Num)
-	}
-	return f.Msg.appendFields(s)
+	return f.Msg.appendFields(nv.Append(b, f.Num))
 }
 
 func (f *pkgFrameBody) ParseFields(s field.Set) error {
-	var tag field.Tag
-	var err error
-
-	for {
-		s, tag, err = s.ReadTag()
-		if err == io.EOF {
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		switch tag.Field() {
-		case 127:
-			s, f.Num, err = readValueField(tag, s)
-
-		// copied from Msg.parseFields
-
-		case 1:
-			s, f.Msg.Topic, err = readTopicField(tag, s)
-
-		case 2:
-			s, f.Msg.Inbox, err = readTopicField(tag, s)
-
-		case 3:
-			s, f.Msg.Data, err = readRunField(tag, s)
-
-		case 4:
-			s, f.Msg.Meta, err = readRunField(tag, s)
-
-		case 5:
-			s, f.Msg.Deadline, err = readTimeField(tag, s)
-
-		default:
-			s, err = s.Discard(tag)
-		}
-
-		if err != nil {
-			return fmt.Errorf("parse pkg frame field %d: %v", tag.Field(), err)
-		}
+	num, n := nv.Parse(s)
+	if n <= 0 {
+		panic("FIX: malformed pkg frame body")
 	}
+
+	f.Num = num
+	return f.Msg.parseFields(s[n:])
 }
 
 func (m Msg) appendFields(s field.Set) []byte {
@@ -244,8 +206,6 @@ func (m *Msg) parseFields(s field.Set) error {
 		}
 
 		switch tag.Field() {
-
-		// these cases are duplicated in pkgFrameBody.ParseFields
 
 		case 1:
 			s, m.Topic, err = readTopicField(tag, s)

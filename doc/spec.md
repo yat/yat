@@ -112,9 +112,9 @@ An Unsub frame contains a single field (1) identifying the subscription.
 
 #### Pkg Frame
 
-A Pkg frame (type 128) contains the same field set as a [Msg frame](#msg-frame), plus an additional field 127 containing the subscription number.
-If a Pkg frame is missing a topic field, it is discarded by the client.
-If a Pkg frame has a deadline in the past, it is discarded by the client.
+A Pkg frame contains an [nv](#integer-encoding) subscription number followed by the same field set as a [Msg frame](#msg-frame).
+If the message has no topic, it is discarded by the client.
+If the message has a deadline in the past, it is discarded by the client.
 
 ### Field Sets
 

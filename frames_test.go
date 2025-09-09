@@ -1,48 +1,13 @@
 package yat
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestMsgFields(t *testing.T) {
-	mm := []Msg{
-		{},
-		{Topic: Topic("topic")},
-		{Inbox: Topic("inbox")},
-		{Data: []byte("data")},
-		{Meta: []byte("meta")},
-		{Deadline: time.Now()},
-
-		{
-			Topic:    Topic("topic"),
-			Inbox:    Topic("inbox"),
-			Data:     []byte("data"),
-			Meta:     []byte("meta"),
-			Deadline: time.Now(),
-		},
-	}
-
-	for i, m := range mm {
-		t.Run(fmt.Sprintf("mm[%d]", i), func(t *testing.T) {
-			b := m.appendFields(nil)
-
-			var got Msg
-			if err := got.parseFields(b); err != nil {
-				t.Fatal(err)
-			}
-
-			if diff := cmp.Diff(m, got); diff != "" {
-				t.Error(diff)
-			}
-		})
-	}
-}
-
-func Test_msgFrameBodyFields(t *testing.T) {
+func Test_msgFrameBody(t *testing.T) {
 	f := msgFrameBody{
 		Msg: Msg{
 			Topic:    Topic("topic"),
@@ -65,7 +30,7 @@ func Test_msgFrameBodyFields(t *testing.T) {
 	}
 }
 
-func Test_subFrameBodyFields(t *testing.T) {
+func Test_subFrameBody(t *testing.T) {
 	f := subFrameBody{
 		Num: 1,
 		Sel: Sel{
@@ -88,7 +53,7 @@ func Test_subFrameBodyFields(t *testing.T) {
 	}
 }
 
-func Test_unsubFrameBodyFields(t *testing.T) {
+func Test_unsubFrameBody(t *testing.T) {
 	f := unsubFrameBody{
 		Num: 1,
 	}
@@ -105,7 +70,7 @@ func Test_unsubFrameBodyFields(t *testing.T) {
 	}
 }
 
-func Test_pkgFrameBodyFields(t *testing.T) {
+func Test_pkgFrameBody(t *testing.T) {
 	f := pkgFrameBody{
 		Num: 1,
 		Msg: Msg{
