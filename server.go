@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"yat.io/yat/field"
 	"yat.io/yat/frame"
 	"yat.io/yat/nv"
 	"yat.io/yat/topic"
@@ -376,10 +375,7 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 	// 1. a prefix buffer for the frame header and the subscription number
 	// 2. the existing message fields buffer
 
-	bodyLen := 1 + nv.Len(num) + len(*m.fields)
-	prefix := make([]byte, 0, frame.HeaderLen+bodyLen)
-	prefix = frame.AppendHeader(prefix, fPKG, bodyLen)
-	prefix = field.Set(prefix).AppendValField(127, num)
+	prefix := nv.Append(frame.AppendHeader(nil, fPKG, nv.Len(num)+len(*m.fields)), num)
 	sc.wbuf = append(sc.wbuf, prefix, *m.fields)
 
 	sc.mu.Unlock()
