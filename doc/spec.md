@@ -87,7 +87,7 @@ A Msg frame contains a message field set.
 | 2 | Inbox | Run | The inbox path bytes |
 | 3 | Data | Run | Message data |
 | 4 | Meta | Run | Message metadata |
-| 5 | Deadline | Num | In Unix nanos |
+| 5 | Deadline | Val | In Unix nanos |
 
 A Msg frame without a topic is discarded by the server.
 A Msg frame with a deadline in the past is discarded by the server.
@@ -98,11 +98,11 @@ A Sub frame contains a field set describing a subscription.
 
 | Field | Name | Type | Description |
 | -- | -- | -- | -- |
-| 1 | Number | Num | Subscription number |
+| 1 | Number | Val | Subscription number |
 | 2 | Topic | Run | Topic pattern |
-| 3 | Limit | Num | Max deliveries |
+| 3 | Limit | Val | Max deliveries |
 | 4 | Group | Run | Delivery group name |
-| 5 | Flags | Num | Subscription flags |
+| 5 | Flags | Val | Subscription flags |
 
 If a Sub frame is missing a topic field, it is discarded by the server.
 
@@ -143,7 +143,7 @@ Fields with zero values and runs of 0 bytes should not be encoded.
 When decoding, unknown fields should be discarded.
 When decoding multiple fields with the same number, the latest field wins.
 
-Two errors can occur during decoding: A short field or a Num overflow.
+Two errors can occur during decoding: A short field or a value overflow.
 
 #### Field Set Limitations
 
@@ -157,4 +157,4 @@ It is 1-65 bytes long, with a range of +- (2^512)-1.
 
 The first byte of an nv is tagged.
 If the most significant bit (b7) is 0, the entire value 0-127 is encoded in the lower 7 bits of the tagged byte.
-If b7 is 1, b6 is a sign flag (1=-) and b5-b0 encode the number-1 of following bytes, which contain the little-endian magnitude.
+If b7 is 1, b6 is a sign flag (1=-) and b5-b0 encode the count-1 of following bytes, which contain the little-endian magnitude.
