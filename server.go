@@ -62,7 +62,7 @@ type IdentifyFunc func(ctx context.Context, conn net.Conn, token []byte) (Identi
 
 func NewServer(bus *Bus, tlsConfig *tls.Config, cfg ServerConfig) (*Server, error) {
 	if !slices.Contains(tlsConfig.NextProtos, "yat") {
-		return nil, errors.New("invalid server configuration: TLSConfig.NextProtos does not include yat")
+		return nil, errors.New("invalid server TLS configuration: NextProtos does not include yat")
 	}
 
 	return &Server{bus, tlsConfig, cfg.withDefaults()}, nil

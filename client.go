@@ -77,7 +77,7 @@ func NewClient(dial DialFunc, tlsConfig *tls.Config, cfg ClientConfig) (*Client,
 	}
 
 	if !slices.Contains(tlsConfig.NextProtos, "yat") {
-		return nil, errors.New("invalid client configuration: TLSConfig.NextProtos does not include yat")
+		return nil, errors.New("invalid client TLS configuration: NextProtos does not include yat")
 	}
 
 	c := &Client{
