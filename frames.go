@@ -42,42 +42,41 @@ func (f msgFrameBody) AppendBody(b []byte) []byte {
 	return f.Msg.appendFields(b)
 }
 
-func (f *msgFrameBody) ParseFields(r *field.Reader) error {
-	return f.Msg.parseFields(r)
+func (f *msgFrameBody) ParseFields(s field.Set) error {
+	return f.Msg.parseFields(s)
 }
 
 func (f subFrameBody) AppendBody(b []byte) []byte {
+	s := field.Set(b)
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Value, 1)
-		b = field.AppendValue(b, f.Num)
+		s = s.AppendValueField(1, f.Num)
 	}
 
 	if !f.Sel.Topic.IsZero() {
-		b = field.AppendTag(b, field.Run, 2)
-		b = field.AppendRun(b, f.Sel.Topic.Bytes())
+		s = s.AppendRunField(2, f.Sel.Topic.Bytes())
 	}
 
 	if f.Sel.Limit > 0 {
-		b = field.AppendTag(b, field.Value, 3)
-		b = field.AppendValue(b, uint64(f.Sel.Limit))
+		s = s.AppendValueField(3, uint64(f.Sel.Limit))
 	}
 
 	if !f.Sel.Group.IsZero() {
-		b = field.AppendTag(b, field.Run, 4)
-		b = field.AppendRun(b, []byte(f.Sel.Group.String()))
+		s = s.AppendRunField(4, []byte(f.Sel.Group.String()))
 	}
 
 	if f.Flags != 0 {
-		b = field.AppendTag(b, field.Value, 5)
-		b = field.AppendValue(b, uint64(f.Flags))
+		s = s.AppendValueField(5, uint64(f.Flags))
 	}
 
-	return b
+	return s
 }
 
-func (f *subFrameBody) ParseFields(r *field.Reader) error {
+func (f *subFrameBody) ParseFields(s field.Set) error {
+	var tag field.Tag
+	var err error
+
 	for {
-		tag, err := r.ReadTag()
+		s, tag, err = s.ReadTag()
 		if err == io.EOF {
 			return nil
 		}
@@ -88,22 +87,22 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 1:
-			f.Num, err = readValueField(tag, r)
+			s, f.Num, err = readValueField(tag, s)
 
 		case 2:
-			f.Sel.Topic, err = readTopicField(tag, r)
+			s, f.Sel.Topic, err = readTopicField(tag, s)
 
 		case 3:
-			f.Sel.Limit, err = readIntField(tag, r)
+			s, f.Sel.Limit, err = readIntField(tag, s)
 
 		case 4:
-			f.Sel.Group, err = readGroupField(tag, r)
+			s, f.Sel.Group, err = readGroupField(tag, s)
 
 		case 5:
-			f.Flags, err = readSubFlagsField(tag, r)
+			s, f.Flags, err = readSubFlagsField(tag, s)
 
 		default:
-			err = r.Discard(tag)
+			s, err = s.Discard(tag)
 		}
 
 		if err != nil {
@@ -113,17 +112,19 @@ func (f *subFrameBody) ParseFields(r *field.Reader) error {
 }
 
 func (f unsubFrameBody) AppendBody(b []byte) []byte {
+	s := field.Set(b)
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Value, 1)
-		b = field.AppendValue(b, f.Num)
+		s = s.AppendValueField(1, f.Num)
 	}
-
-	return b
+	return s
 }
 
-func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
+func (f *unsubFrameBody) ParseFields(s field.Set) error {
+	var tag field.Tag
+	var err error
+
 	for {
-		tag, err := r.ReadTag()
+		s, tag, err = s.ReadTag()
 		if err == io.EOF {
 			return nil
 		}
@@ -134,10 +135,10 @@ func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 1:
-			f.Num, err = readValueField(tag, r)
+			s, f.Num, err = readValueField(tag, s)
 
 		default:
-			err = r.Discard(tag)
+			s, err = s.Discard(tag)
 		}
 
 		if err != nil {
@@ -147,17 +148,19 @@ func (f *unsubFrameBody) ParseFields(r *field.Reader) error {
 }
 
 func (f pkgFrameBody) AppendBody(b []byte) []byte {
+	s := field.Set(b)
 	if f.Num > 0 {
-		b = field.AppendTag(b, field.Value, 127)
-		b = field.AppendValue(b, f.Num)
+		s = s.AppendValueField(127, f.Num)
 	}
-
-	return f.Msg.appendFields(b)
+	return f.Msg.appendFields(s)
 }
 
-func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
+func (f *pkgFrameBody) ParseFields(s field.Set) error {
+	var tag field.Tag
+	var err error
+
 	for {
-		tag, err := r.ReadTag()
+		s, tag, err = s.ReadTag()
 		if err == io.EOF {
 			return nil
 		}
@@ -168,27 +171,27 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 
 		switch tag.Field() {
 		case 127:
-			f.Num, err = readValueField(tag, r)
+			s, f.Num, err = readValueField(tag, s)
 
 		// copied from Msg.parseFields
 
 		case 1:
-			f.Msg.Topic, err = readTopicField(tag, r)
+			s, f.Msg.Topic, err = readTopicField(tag, s)
 
 		case 2:
-			f.Msg.Inbox, err = readTopicField(tag, r)
+			s, f.Msg.Inbox, err = readTopicField(tag, s)
 
 		case 3:
-			f.Msg.Data, err = readRunField(tag, r)
+			s, f.Msg.Data, err = readRunField(tag, s)
 
 		case 4:
-			f.Msg.Meta, err = readRunField(tag, r)
+			s, f.Msg.Meta, err = readRunField(tag, s)
 
 		case 5:
-			f.Msg.Deadline, err = readTimeField(tag, r)
+			s, f.Msg.Deadline, err = readTimeField(tag, s)
 
 		default:
-			err = r.Discard(tag)
+			s, err = s.Discard(tag)
 		}
 
 		if err != nil {
@@ -197,42 +200,41 @@ func (f *pkgFrameBody) ParseFields(r *field.Reader) error {
 	}
 }
 
-func (m Msg) appendFields(b []byte) []byte {
+func (m Msg) appendFields(s field.Set) []byte {
 	if m.fields != nil {
-		return append(b, *m.fields...)
+		return append(s, *m.fields...)
 	}
 
 	if !m.Topic.IsZero() {
-		b = field.AppendTag(b, field.Run, 1)
-		b = field.AppendRun(b, m.Topic.Bytes())
+		s = s.AppendRunField(1, m.Topic.Bytes())
 	}
 
 	if !m.Inbox.IsZero() {
-		b = field.AppendTag(b, field.Run, 2)
-		b = field.AppendRun(b, m.Inbox.Bytes())
+		s = s.AppendRunField(2, m.Inbox.Bytes())
 	}
 
 	if len(m.Data) > 0 {
-		b = field.AppendTag(b, field.Run, 3)
-		b = field.AppendRun(b, m.Data)
+		s = s.AppendRunField(3, m.Data)
 	}
 
 	if len(m.Meta) > 0 {
-		b = field.AppendTag(b, field.Run, 4)
-		b = field.AppendRun(b, m.Meta)
+		s = s.AppendRunField(4, m.Meta)
 	}
 
 	if !m.Deadline.IsZero() {
-		b = field.AppendTag(b, field.Value, 5)
-		b = field.AppendValue(b, uint64(m.Deadline.UnixNano()))
+		s = s.AppendValueField(5, uint64(m.Deadline.UnixNano()))
 	}
 
-	return b
+	return s
 }
 
-func (m *Msg) parseFields(r *field.Reader) error {
+func (m *Msg) parseFields(s field.Set) error {
+
+	var tag field.Tag
+	var err error
+
 	for {
-		tag, err := r.ReadTag()
+		s, tag, err = s.ReadTag()
 		if err == io.EOF {
 			return nil
 		}
@@ -246,22 +248,22 @@ func (m *Msg) parseFields(r *field.Reader) error {
 		// these cases are duplicated in pkgFrameBody.ParseFields
 
 		case 1:
-			m.Topic, err = readTopicField(tag, r)
+			s, m.Topic, err = readTopicField(tag, s)
 
 		case 2:
-			m.Inbox, err = readTopicField(tag, r)
+			s, m.Inbox, err = readTopicField(tag, s)
 
 		case 3:
-			m.Data, err = readRunField(tag, r)
+			s, m.Data, err = readRunField(tag, s)
 
 		case 4:
-			m.Meta, err = readRunField(tag, r)
+			s, m.Meta, err = readRunField(tag, s)
 
 		case 5:
-			m.Deadline, err = readTimeField(tag, r)
+			s, m.Deadline, err = readTimeField(tag, s)
 
 		default:
-			err = r.Discard(tag)
+			s, err = s.Discard(tag)
 		}
 
 		if err != nil {
@@ -271,25 +273,30 @@ func (m *Msg) parseFields(r *field.Reader) error {
 }
 
 // just casts
-func readSubFlagsField(t field.Tag, r *field.Reader) (SubFlags, error) {
-	v, err := readValueField(t, r)
+func readSubFlagsField(t field.Tag, s field.Set) (field.Set, SubFlags, error) {
+	s, v, err := readValueField(t, s)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
-	return SubFlags(v), nil
+	return s, SubFlags(v), nil
 }
 
-func readTopicField(t field.Tag, r *field.Reader) (parsed topic.Path, err error) {
-	raw, err := readRunField(t, r)
+func readTopicField(t field.Tag, s field.Set) (rest field.Set, parsed topic.Path, err error) {
+	rest, raw, err := readRunField(t, s)
 	if err != nil {
 		return
 	}
+
 	parsed, _, err = topic.Parse(raw)
+	if err != nil {
+		rest = nil
+	}
+
 	return
 }
 
-func readTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
-	ns, err := readValueField(t, r)
+func readTimeField(t field.Tag, s field.Set) (rest field.Set, parsed time.Time, err error) {
+	rest, ns, err := readValueField(t, s)
 	if err != nil {
 		return
 	}
@@ -298,34 +305,34 @@ func readTimeField(t field.Tag, r *field.Reader) (parsed time.Time, err error) {
 }
 
 // just casts
-func readIntField(t field.Tag, r *field.Reader) (int, error) {
-	v, err := readValueField(t, r)
+func readIntField(t field.Tag, s field.Set) (field.Set, int, error) {
+	s, v, err := readValueField(t, s)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
-	return int(v), nil
+	return s, int(v), nil
 }
 
-func readGroupField(t field.Tag, r *field.Reader) (DeliveryGroup, error) {
-	b, err := readRunField(t, r)
+func readGroupField(t field.Tag, s field.Set) (field.Set, DeliveryGroup, error) {
+	s, b, err := readRunField(t, s)
 	if err != nil {
-		return DeliveryGroup{}, err
+		return nil, DeliveryGroup{}, err
 	}
-	return Group(b), nil
+	return s, Group(b), nil
 }
 
-func readValueField(t field.Tag, r *field.Reader) (uint64, error) {
+func readValueField(t field.Tag, s field.Set) (field.Set, uint64, error) {
 	if t.Type() != field.Value {
-		return 0, errFieldType
+		return nil, 0, errFieldType
 	}
-	return r.ReadValue()
+	return s.ReadValue()
 }
 
-func readRunField(t field.Tag, r *field.Reader) ([]byte, error) {
+func readRunField(t field.Tag, s field.Set) (field.Set, []byte, error) {
 	if t.Type() != field.Run {
-		return nil, errFieldType
+		return nil, nil, errFieldType
 	}
-	return r.ReadRun()
+	return s.ReadRun()
 }
 
 var errFieldType = errors.New("invalid type")

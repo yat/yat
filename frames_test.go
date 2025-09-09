@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"yat.io/yat/field"
 )
 
 func TestMsgFields(t *testing.T) {
@@ -32,7 +31,7 @@ func TestMsgFields(t *testing.T) {
 			b := m.appendFields(nil)
 
 			var got Msg
-			if err := got.parseFields(field.NewReader(b)); err != nil {
+			if err := got.parseFields(b); err != nil {
 				t.Fatal(err)
 			}
 
@@ -57,7 +56,7 @@ func Test_msgFrameBodyFields(t *testing.T) {
 	b := f.AppendBody(nil)
 
 	var got msgFrameBody
-	if err := got.ParseFields(field.NewReader(b)); err != nil {
+	if err := got.ParseFields(b); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,7 +79,7 @@ func Test_subFrameBodyFields(t *testing.T) {
 	b := f.AppendBody(nil)
 
 	var got subFrameBody
-	if err := got.ParseFields(field.NewReader(b)); err != nil {
+	if err := got.ParseFields(b); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,7 +96,7 @@ func Test_unsubFrameBodyFields(t *testing.T) {
 	b := f.AppendBody(nil)
 
 	var got unsubFrameBody
-	if err := got.ParseFields(field.NewReader(b)); err != nil {
+	if err := got.ParseFields(b); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,7 +120,7 @@ func Test_pkgFrameBodyFields(t *testing.T) {
 	b := f.AppendBody(nil)
 
 	var got pkgFrameBody
-	if err := got.ParseFields(field.NewReader(b)); err != nil {
+	if err := got.ParseFields(b); err != nil {
 		t.Fatal(err)
 	}
 

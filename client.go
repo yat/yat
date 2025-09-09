@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
-	"yat.io/yat/field"
 	"yat.io/yat/frame"
 )
 
@@ -332,7 +331,6 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 
 func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
 	frames := frame.NewReader(conn)
-	fields := field.NewReader(nil)
 
 	for {
 		if to := c.cfg.ReadTimeout; to != 0 {
@@ -344,7 +342,7 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 			return err
 		}
 
-		var handle func(context.Context, *slog.Logger, *field.Reader) error
+		var handle func(context.Context, *slog.Logger, []byte) error
 
 		switch hdr.Type {
 		case fPKG:
@@ -356,8 +354,7 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 			return err
 		}
 
-		fields.Reset(body)
-		if err := handle(ctx, logger, fields); err != nil {
+		if err := handle(ctx, logger, body); err != nil {
 			logger.ErrorContext(ctx, "frame handler failed",
 				"type", hdr.Type,
 				"error", err)
@@ -365,9 +362,9 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 	}
 }
 
-func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader) error {
+func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
 	var body pkgFrameBody
-	if err := body.ParseFields(r); err != nil {
+	if err := body.ParseFields(rawBody); err != nil {
 		return err
 	}
 

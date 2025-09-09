@@ -32,10 +32,14 @@
 package field
 
 import (
+	"errors"
 	"fmt"
+	"io"
 
 	"yat.io/yat/nv"
 )
+
+type Set []byte
 
 // Tag is the first byte of an encoded field.
 // It contains the field's type, cardinality, and number.
@@ -46,7 +50,7 @@ const (
 	numBits = 0b01111111
 )
 
-// Type is the type of a field, [Num] or [Run].
+// Type is the type of a field, [Value] or [Run].
 type Type byte
 
 const (
@@ -58,19 +62,77 @@ const (
 	MaxTagNum = 127
 )
 
-// AppendTag appends a tag byte to b and returns the extended slice.
-// The field number must be in the range 0-127:
-// Larger numbers are reduced to their least significant 7 bits.
-func AppendTag(b []byte, typ Type, field int) []byte {
-	return append(b, byte(typ)|byte(field&numBits))
+var ErrShort = errors.New("short field")
+var ErrOverflow = errors.New("value overflows 64 bits")
+
+func (s Set) AppendValueField(num int, value uint64) Set {
+	return nv.Append(s.appendTag(Value, num), value)
 }
 
-func AppendValue(b []byte, value uint64) []byte {
-	return nv.Append(b, value)
+func (s Set) AppendRunField(num int, run []byte) Set {
+	return append(nv.Append(s.appendTag(Run, num), uint64(len(run))), run...)
 }
 
-func AppendRun(b []byte, data []byte) []byte {
-	return append(nv.Append(b, uint64(len(data))), data...)
+func (s Set) appendTag(typ Type, field int) Set {
+	return append(s, byte(typ)|byte(field&numBits))
+}
+
+func (s Set) ReadTag() (Set, Tag, error) {
+	if len(s) == 0 {
+		return nil, 0, io.EOF
+	}
+
+	tag := Tag(s[0])
+	s = s[1:]
+
+	return s, tag, nil
+}
+
+func (s Set) ReadValue() (Set, uint64, error) {
+	v, n := nv.Parse(s)
+	if n == 0 {
+		return nil, 0, ErrShort
+	}
+
+	if n < 0 {
+		return nil, 0, ErrOverflow
+	}
+
+	s = s[n:]
+
+	return s, v, nil
+}
+
+func (s Set) ReadRun() (Set, []byte, error) {
+	s, rlen, err := s.ReadValue()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if uint64(len(s)) < rlen {
+		return nil, nil, ErrShort
+	}
+
+	run := s[:rlen]
+	s = s[rlen:]
+
+	return s, run, nil
+}
+
+func (s Set) Discard(t Tag) (Set, error) {
+	s, v, err := s.ReadValue()
+	if err != nil {
+		return nil, err
+	}
+
+	if t.Type() == Run {
+		if uint64(len(s)) < v {
+			return nil, ErrShort
+		}
+		s = s[v:]
+	}
+
+	return s, nil
 }
 
 // Type returns the field type.

@@ -169,7 +169,6 @@ type svrConn struct {
 
 func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 	frames := frame.NewReader(sc.conn)
-	fields := field.NewReader(nil)
 
 	for {
 		if to := sc.cfg.ReadTimeout; to != 0 {
@@ -181,7 +180,7 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 			return err
 		}
 
-		var handle func(context.Context, *slog.Logger, *field.Reader, []byte) error
+		var handle func(context.Context, *slog.Logger, []byte) error
 
 		switch hdr.Type {
 		case fMSG:
@@ -197,13 +196,12 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 			continue
 		}
 
-		rawBody := make([]byte, hdr.BodyLen())
-		if _, err := io.ReadFull(frames, rawBody); err != nil {
+		body := make([]byte, hdr.BodyLen())
+		if _, err := io.ReadFull(frames, body); err != nil {
 			return err
 		}
 
-		fields.Reset(rawBody)
-		if err := handle(ctx, logger, fields, rawBody); err != nil {
+		if err := handle(ctx, logger, body); err != nil {
 			logger.ErrorContext(ctx, "frame handler failed",
 				"type", hdr.Type,
 				"error", err)
@@ -211,11 +209,11 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, rawBody []byte) error {
+func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
 	start := time.Now()
 
 	var body msgFrameBody
-	if err := body.ParseFields(r); err != nil {
+	if err := body.ParseFields(rawBody); err != nil {
 		return err
 	}
 
@@ -255,9 +253,9 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, r *fie
 	return nil
 }
 
-func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, _ []byte) error {
+func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
 	var body subFrameBody
-	if err := body.ParseFields(r); err != nil {
+	if err := body.ParseFields(rawBody); err != nil {
 		return err
 	}
 
@@ -299,9 +297,9 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, r *fie
 	return nil
 }
 
-func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, r *field.Reader, _ []byte) error {
+func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
 	var body unsubFrameBody
-	if err := body.ParseFields(r); err != nil {
+	if err := body.ParseFields(rawBody); err != nil {
 		return err
 	}
 
@@ -392,8 +390,7 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 	bodyLen := 1 + nv.Len(num) + len(*m.fields)
 	prefix := make([]byte, 0, frame.HeaderLen+bodyLen)
 	prefix = frame.AppendHeader(prefix, fPKG, bodyLen)
-	prefix = field.AppendTag(prefix, field.Value, 127)
-	prefix = field.AppendValue(prefix, num)
+	prefix = field.Set(prefix).AppendValueField(127, num)
 	sc.wbuf = append(sc.wbuf, prefix, *m.fields)
 
 	sc.mu.Unlock()

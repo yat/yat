@@ -7,7 +7,6 @@ import (
 	"time"
 	"unique"
 
-	"yat.io/yat/field"
 	"yat.io/yat/topic"
 )
 
@@ -95,7 +94,7 @@ func (m Msg) Clone() Msg {
 	}
 
 	var c Msg
-	if err := c.parseFields(field.NewReader(raw)); err != nil {
+	if err := c.parseFields(raw); err != nil {
 		panic(err)
 	}
 
