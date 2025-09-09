@@ -379,7 +379,7 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 	bodyLen := 1 + nv.Len(num) + len(*m.fields)
 	prefix := make([]byte, 0, frame.HeaderLen+bodyLen)
 	prefix = frame.AppendHeader(prefix, fPKG, bodyLen)
-	prefix = field.Set(prefix).AppendValueField(127, num)
+	prefix = field.Set(prefix).AppendValField(127, num)
 	sc.wbuf = append(sc.wbuf, prefix, *m.fields)
 
 	sc.mu.Unlock()

@@ -50,7 +50,7 @@ func (f *msgFrameBody) ParseFields(s field.Set) error {
 func (f subFrameBody) AppendBody(b []byte) []byte {
 	s := field.Set(b)
 	if f.Num > 0 {
-		s = s.AppendValueField(1, f.Num)
+		s = s.AppendValField(1, f.Num)
 	}
 
 	if !f.Sel.Topic.IsZero() {
@@ -58,7 +58,7 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 	}
 
 	if f.Sel.Limit > 0 {
-		s = s.AppendValueField(3, uint64(f.Sel.Limit))
+		s = s.AppendValField(3, uint64(f.Sel.Limit))
 	}
 
 	if !f.Sel.Group.IsZero() {
@@ -66,7 +66,7 @@ func (f subFrameBody) AppendBody(b []byte) []byte {
 	}
 
 	if f.Flags != 0 {
-		s = s.AppendValueField(5, uint64(f.Flags))
+		s = s.AppendValField(5, uint64(f.Flags))
 	}
 
 	return s
@@ -115,7 +115,7 @@ func (f *subFrameBody) ParseFields(s field.Set) error {
 func (f unsubFrameBody) AppendBody(b []byte) []byte {
 	s := field.Set(b)
 	if f.Num > 0 {
-		s = s.AppendValueField(1, f.Num)
+		s = s.AppendValField(1, f.Num)
 	}
 	return s
 }
@@ -184,7 +184,7 @@ func (m Msg) appendFields(s field.Set) []byte {
 	}
 
 	if !m.Deadline.IsZero() {
-		s = s.AppendValueField(5, uint64(m.Deadline.UnixNano()))
+		s = s.AppendValField(5, uint64(m.Deadline.UnixNano()))
 	}
 
 	return s
@@ -282,10 +282,10 @@ func readGroupField(t field.Tag, s field.Set) (field.Set, DeliveryGroup, error) 
 }
 
 func readValueField(t field.Tag, s field.Set) (field.Set, uint64, error) {
-	if t.Type() != field.Value {
+	if t.Type() != field.Val {
 		return nil, 0, errFieldType
 	}
-	return s.ReadValue()
+	return s.ReadVal()
 }
 
 func readRunField(t field.Tag, s field.Set) (field.Set, []byte, error) {

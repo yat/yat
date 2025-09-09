@@ -8,12 +8,12 @@
 // A field set is a run of bytes containing zero or more encoded fields.
 //
 // A field is a 1 byte tag followed by an encoded value.
-// The MSB of the tag is the field type, Value (0) or Run (1).
+// The MSB of the tag is the field type, Val (0) or Run (1).
 // The least significant 7 bits of the tag are the field number, 0-127.
 //
 // # Types
 //
-//   - Values hold a uint64 encoded as a 1-9 byte nv.
+//   - Vals hold a uint64 encoded as a 1-9 byte nv.
 //     For encoding details, see the internal/nv package.
 //   - Runs hold a run of bytes encoded as an nv len followed by len bytes.
 //
@@ -42,20 +42,20 @@ import (
 type Set []byte
 
 // Tag is the first byte of an encoded field.
-// It contains the field's type, cardinality, and number.
+// It contains the field's type and number.
 type Tag byte
 
 const (
-	typeBit = 0b10000000
-	numBits = 0b01111111
+	typeBit   = 0b10000000
+	fieldBits = 0b01111111
 )
 
-// Type is the type of a field, [Value] or [Run].
+// Type is the type of a field, [Val] or [Run].
 type Type byte
 
 const (
-	Value = Type(0)
-	Run   = Type(typeBit)
+	Val = Type(0)
+	Run = Type(typeBit)
 )
 
 const (
@@ -65,8 +65,8 @@ const (
 var ErrShort = errors.New("short field")
 var ErrOverflow = errors.New("value overflows 64 bits")
 
-func (s Set) AppendValueField(num int, value uint64) Set {
-	return nv.Append(s.appendTag(Value, num), value)
+func (s Set) AppendValField(num int, value uint64) Set {
+	return nv.Append(s.appendTag(Val, num), value)
 }
 
 func (s Set) AppendRunField(num int, run []byte) Set {
@@ -74,7 +74,7 @@ func (s Set) AppendRunField(num int, run []byte) Set {
 }
 
 func (s Set) appendTag(typ Type, field int) Set {
-	return append(s, byte(typ)|byte(field&numBits))
+	return append(s, byte(typ)|byte(field&fieldBits))
 }
 
 func (s Set) ReadTag() (Set, Tag, error) {
@@ -88,7 +88,7 @@ func (s Set) ReadTag() (Set, Tag, error) {
 	return s, tag, nil
 }
 
-func (s Set) ReadValue() (Set, uint64, error) {
+func (s Set) ReadVal() (Set, uint64, error) {
 	v, n := nv.Parse(s)
 	if n == 0 {
 		return nil, 0, ErrShort
@@ -104,7 +104,7 @@ func (s Set) ReadValue() (Set, uint64, error) {
 }
 
 func (s Set) ReadRun() (Set, []byte, error) {
-	s, rlen, err := s.ReadValue()
+	s, rlen, err := s.ReadVal()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -120,7 +120,7 @@ func (s Set) ReadRun() (Set, []byte, error) {
 }
 
 func (s Set) Discard(t Tag) (Set, error) {
-	s, v, err := s.ReadValue()
+	s, v, err := s.ReadVal()
 	if err != nil {
 		return nil, err
 	}
@@ -142,15 +142,15 @@ func (t Tag) Type() Type {
 
 // Num returns the field number, 0-127.
 func (t Tag) Field() int {
-	return int(t & numBits)
+	return int(t & fieldBits)
 }
 
-// String returns the name of the type, "Value" or "Run".
-// If the value is invalid String returns "Type(value)".
+// String returns the name of the type, "Val" or "Run".
+// If the type is invalid String returns "Type(t)".
 func (t Type) String() string {
 	switch t {
-	case Value:
-		return "Value"
+	case Val:
+		return "Val"
 	case Run:
 		return "Run"
 	default:

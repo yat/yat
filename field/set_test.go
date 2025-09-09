@@ -8,7 +8,7 @@ import (
 )
 
 func TestSetRoundtrip(t *testing.T) {
-	s := field.Set(nil).AppendValueField(1, 1)
+	s := field.Set(nil).AppendValField(1, 1)
 	s = s.AppendRunField(2, []byte("hello"))
 
 	s, tag, err := s.ReadTag()
@@ -20,11 +20,11 @@ func TestSetRoundtrip(t *testing.T) {
 		t.Errorf("field 0 tag %d != %d", got, want)
 	}
 
-	if got, want := tag.Type(), field.Value; got != want {
+	if got, want := tag.Type(), field.Val; got != want {
 		t.Errorf("field 0 type %v != %v", got, want)
 	}
 
-	s, v, err := s.ReadValue()
+	s, v, err := s.ReadVal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSet_ReadRun(t *testing.T) {
 
 func TestSet_Discard(t *testing.T) {
 	good := map[string]field.Set{
-		"value": field.Set(nil).AppendValueField(1, 1),
+		"value": field.Set(nil).AppendValField(1, 1),
 		"run":   field.Set(nil).AppendRunField(2, []byte("x")),
 	}
 
@@ -139,7 +139,7 @@ func TestType_String(t *testing.T) {
 		Type field.Type
 		Want string
 	}{
-		{field.Value, "Value"},
+		{field.Val, "Value"},
 		{field.Run, "Run"},
 		{99, "Type(99)"},
 	}
