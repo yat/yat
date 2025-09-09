@@ -16,6 +16,7 @@ import (
 )
 
 type Client struct {
+	tls *tls.Config
 	cfg ClientConfig
 
 	mu    sync.Mutex
@@ -47,9 +48,6 @@ type Client struct {
 // ClientConfig holds optional client configuration.
 type ClientConfig struct {
 
-	// TLSConfig is the client's TLS configuration.
-	TLSConfig *tls.Config
-
 	// Logger is where the client writes logs.
 	// If it is not set, client logs are discarded.
 	Logger *slog.Logger
@@ -73,20 +71,17 @@ type ClientConfig struct {
 // It may be called many times from different goroutines.
 type DialFunc func(context.Context) (net.Conn, error)
 
-func NewClient(dial DialFunc, cfg ClientConfig) (*Client, error) {
+func NewClient(dial DialFunc, tlsConfig *tls.Config, cfg ClientConfig) (*Client, error) {
 	if dial == nil {
 		return nil, errors.New("dial func is nil")
 	}
 
-	if cfg.TLSConfig == nil {
-		return nil, errors.New("invalid client configuration: TLSConfig is nil")
-	}
-
-	if !slices.Contains(cfg.TLSConfig.NextProtos, "yat") {
+	if !slices.Contains(tlsConfig.NextProtos, "yat") {
 		return nil, errors.New("invalid client configuration: TLSConfig.NextProtos does not include yat")
 	}
 
 	c := &Client{
+		tls:   tlsConfig,
 		cfg:   cfg.withDefaults(),
 		doneC: make(chan struct{}),
 		connC: make(chan struct{}),
@@ -270,7 +265,7 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 		}
 
 		start := time.Now()
-		conn = tls.Client(conn, c.cfg.TLSConfig)
+		conn = tls.Client(conn, c.tls)
 
 		logger := c.cfg.Logger.With(
 			"local", conn.LocalAddr().String(),

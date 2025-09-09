@@ -88,9 +88,8 @@ func TestClient(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, nw, addr)
 	}
 
-	client, err := yat.NewClient(dial, yat.ClientConfig{
-		TLSConfig: clientTLSConfig,
-		Logger:    logger.With("part", "client"),
+	client, err := yat.NewClient(dial, clientTLSConfig, yat.ClientConfig{
+		Logger: logger.With("part", "client"),
 	})
 
 	if err != nil {

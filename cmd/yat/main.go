@@ -151,9 +151,8 @@ func (cfg sharedConfig) NewClient(logger *slog.Logger) (*yat.Client, error) {
 		return nil, err
 	}
 
-	return yat.NewClient(dial, yat.ClientConfig{
-		TLSConfig: tlsConfig,
-		Logger:    logger,
+	return yat.NewClient(dial, tlsConfig, yat.ClientConfig{
+		Logger: logger,
 	})
 }
 
