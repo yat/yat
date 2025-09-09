@@ -98,6 +98,7 @@ func (m Msg) Clone() Msg {
 		panic(err)
 	}
 
+	c.fields = &raw
 	return c
 }
 
