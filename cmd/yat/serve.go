@@ -13,9 +13,8 @@ import (
 )
 
 type serveCmd struct {
-	DevDir string
-
-	InsecureAllowAllActions bool
+	DevDir      string
+	DisableAuth bool
 }
 
 func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig, args []string) error {
@@ -57,11 +56,9 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 		return err
 	}
 
-	svr, err := yat.NewServer(&yat.Bus{}, yat.ServerConfig{
-		TLSConfig: tlsConfig,
-		Logger:    logger,
-
-		InsecureAllowAllActions: cmd.InsecureAllowAllActions,
+	svr, err := yat.NewServer(&yat.Bus{}, tlsConfig, yat.ServerConfig{
+		Logger:      logger,
+		DisableAuth: cmd.DisableAuth,
 	})
 
 	if err != nil {
@@ -76,5 +73,5 @@ func (cmd serveCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConf
 
 func (cmd *serveCmd) SetupFlags(fs *flagset.Set) {
 	fs.String(&cmd.DevDir, "dev")
-	fs.Bool(&cmd.InsecureAllowAllActions, "insecure-allow-all-actions")
+	fs.Bool(&cmd.DisableAuth, "disable-auth")
 }

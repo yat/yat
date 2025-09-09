@@ -8,5 +8,5 @@ bin/build
 exec go tool logfmt -x time \
   ./yat serve \
     -dev tmp/dev \
-    -log-level info \
-    -insecure-allow-all-actions "$@"
+    -disable-auth \
+    -log-level info "$@"

@@ -22,6 +22,7 @@ import (
 
 type Server struct {
 	bus *Bus
+	tls *tls.Config
 	cfg ServerConfig
 }
 
@@ -38,9 +39,6 @@ type ServerConfig struct {
 	// set InsecureAllowAllActions.
 	Identify IdentifyFunc
 
-	// TLSConfig is the server's TLS configuration.
-	TLSConfig *tls.Config
-
 	// Logger is where the server writes logs.
 	// If it is not set, server logs are discarded.
 	Logger *slog.Logger
@@ -55,28 +53,20 @@ type ServerConfig struct {
 	// if the interval passes without a write.
 	KeepaliveInterval time.Duration
 
-	// InsecureAllowAllActions, if set, allows all clients to perform all actions.
+	// DisableAuth, if set, allows all clients to perform all actions.
 	// The [AuthFunc] returned by Identify is ignored.
-	InsecureAllowAllActions bool
+	DisableAuth bool
 }
 
 // IdentifyFunc is called by the server to identify a connection.
 type IdentifyFunc func(ctx context.Context, conn net.Conn, token []byte) (Identity, AuthFunc, error)
 
-func NewServer(bus *Bus, cfg ServerConfig) (*Server, error) {
-	if cfg.Identify == nil && !cfg.InsecureAllowAllActions {
-		return nil, errors.New("invalid server configuration: set Identify or InsecureAllowAllActions")
-	}
-
-	if cfg.TLSConfig == nil {
-		return nil, errors.New("invalid server configuration: TLSConfig is nil")
-	}
-
-	if !slices.Contains(cfg.TLSConfig.NextProtos, "yat") {
+func NewServer(bus *Bus, tlsConfig *tls.Config, cfg ServerConfig) (*Server, error) {
+	if !slices.Contains(tlsConfig.NextProtos, "yat") {
 		return nil, errors.New("invalid server configuration: TLSConfig.NextProtos does not include yat")
 	}
 
-	return &Server{bus, cfg.withDefaults()}, nil
+	return &Server{bus, tlsConfig, cfg.withDefaults()}, nil
 }
 
 func (s *Server) Serve(l net.Listener) error {
@@ -88,12 +78,11 @@ func (s *Server) Serve(l net.Listener) error {
 		},
 	}
 
-	tl := tls.NewListener(l, s.cfg.TLSConfig)
+	tl := tls.NewListener(l, s.tls)
 	return hs.Serve(tl)
 }
 
 // ServeConn serves bus to conn according to cfg.
-// Any TLS configuration is ignored: ServeConn expects the caller to handle it.
 func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (err error) {
 	cfg = cfg.withDefaults()
 
@@ -403,7 +392,7 @@ func (sc *svrConn) deliver(num uint64, m Msg) {
 
 // the caller must hold sc.mu
 func (sc *svrConn) allowMu(p topic.Path, a Action) bool {
-	return sc.cfg.InsecureAllowAllActions || sc.auth != nil && sc.auth(p, a)
+	return sc.cfg.DisableAuth || sc.auth != nil && sc.auth(p, a)
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {

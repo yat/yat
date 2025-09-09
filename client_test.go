@@ -71,11 +71,9 @@ func TestClient(t *testing.T) {
 
 	defer l.Close()
 
-	svr, err := yat.NewServer(bus, yat.ServerConfig{
-		TLSConfig: svrTLSConfig,
-		Logger:    logger.With("part", "server"),
-
-		InsecureAllowAllActions: true,
+	svr, err := yat.NewServer(bus, svrTLSConfig, yat.ServerConfig{
+		Logger:      logger.With("part", "server"),
+		DisableAuth: true,
 	})
 
 	if err != nil {
