@@ -27,7 +27,8 @@ type Client struct {
 	// The value before incrementing is used as the subscription number.
 	op uint64
 
-	subs map[uint64]*csub
+	calls map[uint64]chan<- result
+	subs  map[uint64]*csub
 
 	wbuf  []byte
 	wbufC chan struct{}
@@ -71,6 +72,11 @@ type ClientConfig struct {
 // It may be called many times from different goroutines.
 type DialFunc func(context.Context) (net.Conn, error)
 
+type result struct {
+	Error error
+	Msg   Msg
+}
+
 func NewClient(dial DialFunc, tlsConfig *tls.Config, cfg ClientConfig) (*Client, error) {
 	if dial == nil {
 		return nil, errors.New("dial func is nil")
@@ -85,6 +91,7 @@ func NewClient(dial DialFunc, tlsConfig *tls.Config, cfg ClientConfig) (*Client,
 		cfg:   cfg.withDefaults(),
 		doneC: make(chan struct{}),
 		connC: make(chan struct{}),
+		calls: map[uint64]chan<- result{},
 		subs:  map[uint64]*csub{},
 		wbufC: make(chan struct{}, 1),
 		bops:  map[uint64]struct{}{},
@@ -154,8 +161,8 @@ func (c *Client) Subscribe(sel Sel, flags SubFlags, deliver func(Msg)) (Subscrip
 		return zsub{}, nil
 	}
 
-	num := c.op
 	c.op++
+	num := c.op
 
 	sub := &csub{
 		client: c,
@@ -179,6 +186,68 @@ func (c *Client) Subscribe(sel Sel, flags SubFlags, deliver func(Msg)) (Subscrip
 	c.flush()
 
 	return sub, nil
+}
+
+func (c *Client) Call(ctx context.Context, in Msg, callback func(out Msg) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if in.Topic.IsZero() {
+		return EINVAL
+	}
+
+	if dl := in.Deadline; !dl.IsZero() && time.Now().After(dl) {
+		return ETIME
+	}
+
+	if in.Inbox.IsZero() {
+		panic("FIX: need an inbox for now, but this should be a server thing")
+	}
+
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return net.ErrClosed
+	default:
+	}
+
+	c.op++
+	num := c.op
+
+	retC := make(chan result)
+	c.bops[num] = struct{}{}
+	c.calls[num] = retC
+
+	c.wbuf = frame.Append(c.wbuf, fCALL, callFrameBody{
+		Num: num,
+		Msg: in,
+	})
+
+	c.mu.Unlock()
+	c.flush()
+
+	var ret result
+
+	select {
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.calls, num)
+		c.mu.Unlock()
+		return ctx.Err()
+
+	case <-c.doneC:
+		return net.ErrClosed
+
+	case ret = <-retC:
+		if ret.Error != nil {
+			return ret.Error
+		}
+	}
+
+	return callback(ret.Msg)
 }
 
 // Flush waits until the client is connected, then blocks until the outbound message buffer is written.
@@ -275,6 +344,16 @@ func (c *Client) connect(ctx context.Context, dial DialFunc) {
 
 		c.mu.Lock()
 
+		for num, ch := range c.calls {
+			if _, pending := c.bops[num]; !pending {
+				delete(c.calls, num)
+				select {
+				case ch <- result{Error: net.ErrClosed}:
+				default:
+				}
+			}
+		}
+
 		var resubs int
 		for num, sub := range c.subs {
 			if _, pending := c.bops[num]; !pending {
@@ -342,6 +421,9 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 		switch hdr.Type {
 		case fPKG:
 			handle = c.readPkgFrame
+
+		case fRET:
+			handle = c.readRetFrame
 		}
 
 		body := make([]byte, hdr.BodyLen())
@@ -383,6 +465,39 @@ func (c *Client) readPkgFrame(ctx context.Context, logger *slog.Logger, rawBody 
 
 	return nil
 
+}
+
+func (c *Client) readRetFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
+	var body retFrameBody
+	if err := body.ParseFields(rawBody); err != nil {
+		return err
+	}
+
+	logger.Log(ctx, slog.LevelDebug-1, "ret frame received", "body", body)
+
+	c.mu.Lock()
+	retC := c.calls[body.Num]
+	delete(c.calls, body.Num)
+	c.mu.Unlock()
+
+	if retC != nil {
+		var ret result
+
+		switch {
+		case body.Err > 0:
+			ret.Error = body.Err
+
+		default:
+			ret.Msg = body.Msg
+		}
+
+		select {
+		case retC <- ret:
+		default:
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) writeFrames(ctx context.Context, conn net.Conn) error {

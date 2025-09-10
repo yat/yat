@@ -2,6 +2,7 @@ package yat
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -16,6 +17,10 @@ type Publisher interface {
 
 type Subscriber interface {
 	Subscribe(Sel, SubFlags, func(Msg)) (Subscription, error)
+}
+
+type Caller interface {
+	Call(ctx context.Context, in Msg, callback func(out Msg) error) error
 }
 
 type Subscription interface {
@@ -65,6 +70,16 @@ type SubFlags uint64
 
 const (
 	SubFlagResponder = SubFlags(1 << iota) // will respond, needs an inbox
+)
+
+// Errno describes the status of an RPC.
+type Errno int
+
+const (
+	EPERM  = Errno(1)   // permission denied
+	ENOENT = Errno(2)   // no responder
+	EINVAL = Errno(22)  // invalid message
+	ETIME  = Errno(101) // message expired
 )
 
 // Equal returns true if the messages are equal.
@@ -149,5 +164,46 @@ func (f SubFlags) String() string {
 
 	default:
 		return fmt.Sprintf("SubFlags(%d)", f)
+	}
+}
+
+// Error returns a string describing the error.
+func (e Errno) Error() string {
+	switch e {
+	case EPERM:
+		return "permission denied"
+
+	case ENOENT:
+		return "no responder"
+
+	case EINVAL:
+		return "invalid message"
+
+	case ETIME:
+		return "message expired"
+
+	default:
+		return e.String()
+	}
+}
+
+// String returns the name of the errno.
+// If the value is unknown, String returns "Errno(x)".
+func (e Errno) String() string {
+	switch e {
+	case EPERM:
+		return "EPERM"
+
+	case ENOENT:
+		return "ENOENT"
+
+	case EINVAL:
+		return "EINVAL"
+
+	case ETIME:
+		return "ETIME"
+
+	default:
+		return fmt.Sprintf("Errno(%d)", e)
 	}
 }

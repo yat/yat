@@ -25,8 +25,19 @@ type unsubFrameBody struct {
 	Num uint64
 }
 
+type callFrameBody struct {
+	Num uint64
+	Msg Msg
+}
+
 type pkgFrameBody struct {
 	Num uint64
+	Msg Msg
+}
+
+type retFrameBody struct {
+	Num uint64
+	Err Errno
 	Msg Msg
 }
 
@@ -34,7 +45,9 @@ const (
 	fMSG   = 2
 	fSUB   = 3
 	fUNSUB = 4
+	fCALL  = 5
 	fPKG   = 128
+	fRET   = 129
 )
 
 // The parse methods in this file don't clear self before parsing.
@@ -148,6 +161,20 @@ func (f *unsubFrameBody) ParseFields(s field.Set) error {
 	}
 }
 
+func (f callFrameBody) AppendBody(b []byte) []byte {
+	return f.Msg.appendFields(nv.Append(b, f.Num))
+}
+
+func (f *callFrameBody) ParseFields(s field.Set) error {
+	num, n := nv.Parse(s)
+	if n <= 0 {
+		panic("FIX: malformed call frame body")
+	}
+
+	f.Num = num
+	return f.Msg.parseFields(s[n:])
+}
+
 func (f pkgFrameBody) AppendBody(b []byte) []byte {
 	return f.Msg.appendFields(nv.Append(b, f.Num))
 }
@@ -160,6 +187,33 @@ func (f *pkgFrameBody) ParseFields(s field.Set) error {
 
 	f.Num = num
 	return f.Msg.parseFields(s[n:])
+}
+
+func (f retFrameBody) AppendBody(b []byte) []byte {
+	b = nv.Append(b, f.Num)
+	b = nv.Append(b, uint64(f.Err))
+	b = f.Msg.appendFields(b)
+	return b
+}
+
+func (f *retFrameBody) ParseFields(b []byte) error {
+	num, n := nv.Parse(b)
+	if n <= 0 {
+		panic("FIX: malformed ret frame body: parse num")
+	}
+
+	f.Num = num
+	b = b[n:]
+
+	e, n := nv.Parse(b)
+	if n <= 0 {
+		panic("FIX: malformed ret frame body: parse errno")
+	}
+
+	f.Err = Errno(e)
+	b = b[n:]
+
+	return f.Msg.parseFields(b)
 }
 
 func (m Msg) appendFields(s field.Set) []byte {
@@ -191,13 +245,15 @@ func (m Msg) appendFields(s field.Set) []byte {
 }
 
 func (m *Msg) parseFields(s field.Set) error {
-
 	var tag field.Tag
 	var err error
+
+	fields := []byte(s)
 
 	for {
 		s, tag, err = s.ReadTag()
 		if err == io.EOF {
+			m.fields = &fields
 			return nil
 		}
 
@@ -206,7 +262,6 @@ func (m *Msg) parseFields(s field.Set) error {
 		}
 
 		switch tag.Field() {
-
 		case 1:
 			s, m.Topic, err = readTopicField(tag, s)
 

@@ -84,12 +84,16 @@ func run() error {
 
 	switch name {
 	case "pub", "publish":
-		cmd = &pubCmd{
-			File: "/dev/stdin",
-		}
+		cmd = &pubCmd{File: "/dev/stdin"}
 
 	case "sub", "subscribe":
 		cmd = &subCmd{}
+
+	case "call":
+		cmd = &callCmd{}
+
+	case "respond":
+		cmd = &respondCmd{}
 
 	case "serve", "server":
 		cmd = &serveCmd{}

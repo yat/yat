@@ -15,6 +15,7 @@ import (
 
 var _ yat.Publisher = (*yat.Client)(nil)
 var _ yat.Subscriber = (*yat.Client)(nil)
+var _ yat.Caller = (*yat.Client)(nil)
 
 func TestClient(t *testing.T) {
 	rootCrt, rootKey, err := pkigen.NewRoot()
