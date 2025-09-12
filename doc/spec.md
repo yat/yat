@@ -124,12 +124,12 @@ Field sets are designed for structs with a small number of fields containing uns
 Repeated fields and nested structs are not supported.
 
 A field is a 1 byte tag followed by an encoded value.
-The MSB of the tag is the field type, **Value** (0) or **Run** (1).
+The MSB of the tag is the field type, **Val** (0) or **Run** (1).
 The least significant 7 bits of the tag are the field number, 0-127.
 
 #### Field Types
 
-Values hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
+Vals hold a uint64 encoded as a 1-9 byte [nv](#integer-encoding).
 
 Runs hold a run of bytes encoded as an nv len followed by len bytes.
 
@@ -158,3 +158,6 @@ It is 1-65 bytes long, with a range of +- (2^512)-1.
 The first byte of an nv is tagged.
 If the most significant bit (b7) is 0, the entire value 0-127 is encoded in the lower 7 bits of the tagged byte.
 If b7 is 1, b6 is a sign flag (1=-) and b5-b0 encode the count-1 of following bytes, which contain the little-endian magnitude.
+
+Non-canonical encodings are not allowed.
+Values must be encoded using the smallest possible number of bytes.

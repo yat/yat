@@ -1,5 +1,4 @@
 // Package nv implements a wire encoding for integers.
-// The encoding is not always as space-efficient as a varint, but it is easier to decode.
 //
 // An nv is 1-65 bytes long, with a range of +- (2^512)-1.
 // The [Append], [Put], [Parse], and [Len] functions support uint64 values,
@@ -9,6 +8,9 @@
 // the entire value 0-127 is encoded in the remaining 7 bits of the tagged byte.
 // If b7 is 1, b6 is a sign flag (1=-) and b0-b5 encode the number-1 of following bytes,
 // which contain the little-endian magnitude.
+//
+// Non-canonical encodings are not allowed.
+// Values must be encoded using the smallest possible number of bytes.
 package nv
 
 import "math/bits"
