@@ -10,8 +10,6 @@ import (
 var _ yat.Publisher = (*yat.Bus)(nil)
 var _ yat.Subscriber = (*yat.Bus)(nil)
 
-// var _ yat.Caller = (*yat.Bus)(nil)
-
 func TestBus(t *testing.T) {
 	testPublishSubscriber(t, func() publishSubscriber { return &yat.Bus{} })
 }

@@ -102,27 +102,3 @@ func TestSubFlags_String(t *testing.T) {
 		}
 	}
 }
-
-func TestErrno_Error(t *testing.T) {
-	e := yat.Errno(9999) // invalid
-	if got, want := e.Error(), e.String(); got != want {
-		t.Errorf("9999: %q != %q", got, want)
-	}
-}
-
-func TestErrno_String(t *testing.T) {
-	tcs := map[yat.Errno]string{
-		0:          "Errno(0)",
-		yat.EPERM:  "EPERM",
-		yat.ENOENT: "ENOENT",
-		yat.EINVAL: "EINVAL",
-		yat.ETIME:  "ETIME",
-		9999:       "Errno(9999)",
-	}
-
-	for e, want := range tcs {
-		if got := e.String(); got != want {
-			t.Errorf("%d: %q != %q", e, got, want)
-		}
-	}
-}

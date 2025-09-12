@@ -180,9 +180,6 @@ func (sc *svrConn) readFrames(ctx context.Context, logger *slog.Logger) error {
 		case fUNSUB:
 			handle = sc.readUnsubFrame
 
-		case fCALL:
-			handle = sc.readCallFrame
-
 		default:
 			continue
 		}
@@ -228,9 +225,12 @@ func (sc *svrConn) readMsgFrame(ctx context.Context, logger *slog.Logger, rawBod
 		return nil
 	}
 
-	ss := sc.bus.route(body.Msg)
+	m := body.Msg
+	m.fields = &rawBody
+
+	ss := sc.bus.route(m)
 	for _, s := range ss {
-		s.Deliver(body.Msg)
+		s.Deliver(m)
 	}
 
 	if logger.Enabled(ctx, slog.LevelDebug-1) {
@@ -264,7 +264,7 @@ func (sc *svrConn) readSubFrame(ctx context.Context, logger *slog.Logger, rawBod
 
 	num := body.Num
 	deliver := func(m Msg) {
-		sc.pkg(num, m)
+		sc.deliver(num, m)
 	}
 
 	stop := func() {
@@ -301,88 +301,6 @@ func (sc *svrConn) readUnsubFrame(ctx context.Context, logger *slog.Logger, rawB
 
 	if sub != nil {
 		sc.bus.del(sub)
-	}
-
-	return nil
-}
-
-func (sc *svrConn) readCallFrame(ctx context.Context, logger *slog.Logger, rawBody []byte) error {
-	var body callFrameBody
-	if err := body.ParseFields(rawBody); err != nil {
-		return err
-	}
-
-	logger.DebugContext(ctx, "call frame received",
-		"num", body.Num, "message", body.Msg)
-
-	if body.Msg.Topic.IsZero() {
-		sc.ret(body.Num, EINVAL, Msg{})
-		return nil
-	}
-
-	if dl := body.Msg.Deadline; !dl.IsZero() && time.Now().After(dl) {
-		sc.ret(body.Num, ETIME, Msg{})
-		return nil
-	}
-
-	sc.mu.Lock()
-	allowed := sc.allowMu(body.Msg.Topic, PUB)
-	sc.mu.Unlock()
-
-	if !allowed {
-		sc.ret(body.Num, EPERM, Msg{})
-		return nil
-	}
-
-	// FIX: generate one and append a field to rawBody
-	// (and update body.Msg.Inbox to reference it, might be a little tricky)
-	if body.Msg.Inbox.IsZero() {
-		sc.ret(body.Num, EINVAL, Msg{})
-		return nil
-	}
-
-	ss := sc.bus.route(body.Msg)
-	foundResponder := slices.ContainsFunc(ss, func(bs *bsub) bool {
-		return bs.flags&SubFlagResponder != 0
-	})
-
-	if !foundResponder {
-		sc.ret(body.Num, ENOENT, Msg{})
-		return nil
-	}
-
-	// FIX: I don't like taking this lock again
-	// we already acquired and released it to check auth above
-	// also, this critical section is largely copied from readSubFrame
-	sc.mu.Lock()
-
-	num := body.Num
-	deliver := func(m Msg) {
-		sc.ret(num, 0, m)
-	}
-
-	stop := func() {
-		sc.mu.Lock()
-		defer sc.mu.Unlock()
-		delete(sc.subs, num)
-	}
-
-	old := sc.subs[num]
-	delete(sc.subs, num)
-
-	sel := Sel{
-		Topic: body.Msg.Inbox,
-		Limit: 1,
-	}
-
-	bs := newBsub(sc.bus, sel, 0, deliver, stop)
-	sc.subs[num] = bs
-
-	sc.mu.Unlock()
-	sc.bus.replace(old, bs)
-
-	for _, s := range ss {
-		s.Deliver(body.Msg)
 	}
 
 	return nil
@@ -450,7 +368,7 @@ func (sc *svrConn) keepalive(ctx context.Context) error {
 	}
 }
 
-func (sc *svrConn) pkg(num uint64, m Msg) {
+func (sc *svrConn) deliver(num uint64, m Msg) {
 	sc.mu.Lock()
 
 	// add a pkg frame to the write buffer list in 2 buffers
@@ -459,23 +377,6 @@ func (sc *svrConn) pkg(num uint64, m Msg) {
 
 	prefix := nv.Append(frame.AppendHeader(nil, fPKG, nv.Len(num)+len(*m.fields)), num)
 	sc.wbuf = append(sc.wbuf, prefix, *m.fields)
-
-	sc.mu.Unlock()
-
-	select {
-	case sc.wbufC <- struct{}{}:
-	default:
-	}
-}
-
-func (sc *svrConn) ret(num uint64, errno Errno, out Msg) {
-	sc.mu.Lock()
-
-	sc.wbuf = append(sc.wbuf, frame.Append(nil, fRET, retFrameBody{
-		Num: num,
-		Err: errno,
-		Msg: out,
-	}))
 
 	sc.mu.Unlock()
 

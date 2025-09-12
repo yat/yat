@@ -41,7 +41,8 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 	defer client.Close()
 
 	sub, err := client.Subscribe(sel, 0, func(m yat.Msg) {
-		printmln(m)
+		data, _ := json.Marshal(m)
+		fmt.Println(string(data))
 	})
 
 	if err != nil {
@@ -62,9 +63,4 @@ func (cmd subCmd) Run(ctx context.Context, logger *slog.Logger, cfg sharedConfig
 func (cmd *subCmd) SetupFlags(fs *flagset.Set) {
 	fs.String(&cmd.Group, "group", "g")
 	fs.Int(&cmd.Limit, "limit", "n")
-}
-
-func printmln(m yat.Msg) (n int, err error) {
-	data, _ := json.Marshal(m)
-	return fmt.Println(string(data))
 }

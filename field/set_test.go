@@ -139,7 +139,7 @@ func TestType_String(t *testing.T) {
 		Type field.Type
 		Want string
 	}{
-		{field.Val, "Val"},
+		{field.Val, "Value"},
 		{field.Run, "Run"},
 		{99, "Type(99)"},
 	}
