@@ -154,8 +154,8 @@ func (c *Client) Subscribe(sel Sel, flags SubFlags, deliver func(Msg)) (Subscrip
 		return zsub{}, nil
 	}
 
-	num := c.op
 	c.op++
+	num := c.op
 
 	sub := &csub{
 		client: c,

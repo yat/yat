@@ -54,6 +54,10 @@ func (b *Bus) route(m Msg) []*bsub {
 	ss := slices.Collect(b.tt.Matches(m.Topic))
 	b.mu.RUnlock()
 
+	if len(ss) == 0 {
+		return nil
+	}
+
 	rand.Shuffle(len(ss), func(i, j int) {
 		ss[i], ss[j] = ss[j], ss[i]
 	})

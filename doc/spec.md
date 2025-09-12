@@ -33,7 +33,7 @@ A selector describes the messages a subscriber wants to receive. It has 3 option
 
 - **Topic** selects messages with a matching topic. It supports wildcards: `*` matches any single path element and `**` matches all trailing elements.
 
-- **Limit** selects the maximum number of messages the subscriber will receive. If a subscription reaches its limit, it is automatically stopped.
+- **Limit** sets the maximum number of selected messages. If a subscription reaches its limit, it is automatically stopped.
 
 - **Group** groups the subscriber with others who selected the same group value. When a matching message is published, it is delivered to a random member of the group.
 
