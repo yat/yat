@@ -119,7 +119,7 @@ func ServeConn(ctx context.Context, conn net.Conn, bus *Bus, cfg ServerConfig) (
 
 	defer func() {
 		// clean up stragglers
-		bus.delseq(maps.Values(sc.subs))
+		bus.mdel(slices.Collect(maps.Values(sc.subs)))
 	}()
 
 	eg, ctx := errgroup.WithContext(ctx)

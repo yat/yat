@@ -1,7 +1,6 @@
 package yat
 
 import (
-	"iter"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -81,6 +80,8 @@ func (b *Bus) route(m Msg) []*bsub {
 	})
 }
 
+// replace inserts a new subscription.
+// If old is not nil, it is deleted first.
 func (b *Bus) replace(old, new *bsub) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -92,16 +93,23 @@ func (b *Bus) replace(old, new *bsub) {
 	b.tt.Ins(new.sel.Topic, new)
 }
 
+// del deletes a single subscription.
 func (b *Bus) del(bs *bsub) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.tt.Del(bs.sel.Topic, bs)
 }
 
-func (b *Bus) delseq(ss iter.Seq[*bsub]) {
+// mdel deletes multiple subscriptions.
+// It is faster than calling [Bus.del] for each subscription.
+func (b *Bus) mdel(ss []*bsub) {
+	if len(ss) == 0 {
+		return
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for bs := range ss {
+	for _, bs := range ss {
 		b.tt.Del(bs.sel.Topic, bs)
 	}
 }
