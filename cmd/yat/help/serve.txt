@@ -1,0 +1,12 @@
+Serve runs an instance of the Yat server.
+
+Usage:
+
+  yat serve [flags]
+
+Flags:
+
+  -bind HOST:PORT
+      Local TCP address for the server to announce.
+      Normally the server announces the address set by
+      the YAT_ADDR env var or the -addr shared flag.

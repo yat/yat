@@ -1,0 +1,20 @@
+Subscribe prints a stream of matching messages to stdout.
+
+Usage:
+
+  yat subscribe [flags] PATTERN
+
+Flags:
+
+  -limit, -n 0
+      Unsubscribe after n deliveries.
+
+  -duration 0s
+      Unsubscribe after this much time.
+      Duration is expressed as Nunit, like
+      1ms, 1s, 1h. The largest unit is h.
+
+  -format "data" | "json"
+      The format used to print delivered messages to stdout.
+      The default format prints message data with no delimiter.
+      The json format prints messages as JSON objects, one per line.

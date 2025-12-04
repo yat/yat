@@ -1,0 +1,26 @@
+Yat is a command-line client and server for Yat.
+
+Usage:
+
+  yat command [args]
+
+Commands:
+
+  publish     publish a message
+  subscribe   receive messages
+  request     publish a request
+  respond     respond to requests
+  serve       run the server
+  help        print command help
+  version     print Yat version
+
+Run 'yat help command' for more information about a command.
+
+Shared flags:
+
+  -addr localhost:63197 ($YAT_ADDR)
+      TCP address of the server.
+
+  -log-level error ($YAT_LOG_LEVEL)
+      Set the log level to debug, info, warn, or error.
+      Logs are printed to stderr as JSON lines.

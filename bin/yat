@@ -1,0 +1,8 @@
+#!/bin/sh
+# yat runs the dev client CLI.
+# usage: bin/yat [args]
+
+set -eu
+
+bin/build
+exec ./yat "$@"

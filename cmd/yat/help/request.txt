@@ -1,0 +1,17 @@
+Request publishes a request and awaits a response.
+It reads request data from stdin by default.
+
+Usage:
+
+  yat request [flags] PATTERN
+
+Flags:
+
+  -file, -f /dev/stdin
+      A file of request data.
+
+  -empty, -e
+      Publish an empty request.
+
+  -timeout 0s
+      Exit nonzero if a response takes too long.

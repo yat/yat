@@ -1,0 +1,7 @@
+#!/bin/sh
+# build compiles yat.
+# usage: bin/build
+
+set -eu
+
+go build -o ./yat ./cmd/yat

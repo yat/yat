@@ -1,0 +1,17 @@
+Publish publishes a message.
+It reads message data from stdin by default.
+
+Usage:
+
+  yat publish [flags] PATH
+
+Flags:
+
+  -file, -f /dev/stdin
+      A file of message data.
+
+  -empty, -e
+      Publish an empty message.
+
+  -reply, -r PATH
+      An optional reply path.

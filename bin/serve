@@ -1,0 +1,11 @@
+#!/bin/sh
+# serve runs the dev server.
+# usage: bin/serve [args]
+
+set -eu
+
+bin/build
+
+export YAT_LOG_LEVEL=debug
+
+exec go tool logfmt -x time ./yat serve "$@"
