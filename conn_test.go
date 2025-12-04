@@ -210,6 +210,17 @@ func TestConnReqRes(t *testing.T) {
 		}
 	})
 
+	t.Run("@path", func(t *testing.T) {
+		cc := newConn(t)
+		err := cc.Request(t.Context(), yat.NewPath("@path"), nil, func(yat.Msg) error {
+			panic("response received")
+		})
+
+		if err != yat.EINVAL {
+			t.Error(err)
+		}
+	})
+
 	t.Run("ctx canceled", func(t *testing.T) {
 		cc := newConn(t)
 

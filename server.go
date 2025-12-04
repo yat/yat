@@ -193,7 +193,7 @@ func (sc *serverConn) handlePubFrame(ctx context.Context, b []byte) error {
 		return err
 	}
 
-	if isAtPath(m.Reply) {
+	if isReplyPath(m.Reply) {
 		return errAtPath
 	}
 
@@ -215,13 +215,11 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 
 	path, _, err := ParsePath(body.Path)
 	if err != nil {
-		// FIX: EINVAL?
-		return err
+		return sc.fail(body.ID, EINVAL)
 	}
 
-	if isAtPath(path) {
-		// FIX: EINVAL?
-		return errAtPath
+	if isReplyPath(path) {
+		return sc.fail(body.ID, EINVAL)
 	}
 
 	b = b[:n]
@@ -240,18 +238,7 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 	subs := sc.rr.route(rm.Msg)
 
 	if len(subs) == 0 {
-		sc.mu.Lock()
-
-		sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FPKG,
-			wire.PkgFrameBody{
-				ID:    body.ID,
-				Errno: uint32(ENOENT),
-			}.Encode))
-
-		sc.mu.Unlock()
-		sc.wnotify()
-
-		return nil
+		return sc.fail(body.ID, ENOENT)
 	}
 
 	sc.rr.deliver(subs, rm)
@@ -275,7 +262,7 @@ func (sc *serverConn) handleSubFrame(ctx context.Context, b []byte) error {
 		return err
 	}
 
-	if isAtPath(sel.Path) {
+	if isReplyPath(sel.Path) {
 		return errAtPath
 	}
 
@@ -351,6 +338,88 @@ func (sc *serverConn) wnotify() {
 	}
 }
 
+// deliver is called by the router when a message is delivered to one of the conn's subscriptions.
+func (sc *serverConn) deliver(id uint32, rm rmsg) {
+	fh := wire.FrameHdr{
+		Len:  uint32(16 + len(rm.Buf)),
+		Type: wire.FPKG,
+	}
+
+	sc.mu.Lock()
+
+	// frame header + id + errno + msg buf == a pkg frame
+	prefix := binary.LittleEndian.AppendUint32(fh.Encode(nil), id)
+	prefix = append(prefix, 0, 0, 0, 0)
+	sc.wbufs = append(sc.wbufs, prefix, rm.Buf)
+
+	sc.mu.Unlock()
+	sc.wnotify()
+}
+
+// forget is called by the router when a subscription is done.
+func (sc *serverConn) forget(id uint32) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	delete(sc.subs, id)
+}
+
+// reply is the delivery callback for the conn's reply wildcard subscription.
+// Since the reply sub was created internally, it doesn't have an id.
+// Instead, the request id for each reply is decrypted from the message path.
+// If the path is malformed, unverifiable, or too old, the reply is dropped.
+func (sc *serverConn) reply(_ uint32, rm rmsg) {
+	b64, found := bytes.CutPrefix(rm.Msg.Path.data, sc.replyPrefix)
+	if !found {
+		return
+	}
+
+	buf, err := base64.RawURLEncoding.AppendDecode(nil, b64)
+	if err != nil {
+		return
+	}
+
+	nsz := sc.replyAEAD.NonceSize()
+	if len(buf) < nsz {
+		return
+	}
+
+	nonce := buf[:nsz]
+	buf = buf[nsz:]
+	payload, err := sc.replyAEAD.Open(nil, nonce, buf, sc.replyPrefix)
+	if err != nil {
+		return
+	}
+
+	if len(payload) != 12 {
+		return
+	}
+
+	id := binary.LittleEndian.Uint32(payload)
+	nsec := int64(binary.LittleEndian.Uint64(payload[4:]))
+	exp := time.Unix(0, nsec)
+
+	if time.Now().After(exp) {
+		return
+	}
+
+	sc.deliver(id, rm)
+}
+
+// fail writes a pkg frame with an errno and no message to the buffer and notifies the writer.
+func (sc *serverConn) fail(id uint32, errno Errno) error {
+	sc.mu.Lock()
+
+	sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FPKG,
+		wire.PkgFrameBody{
+			ID:    id,
+			Errno: uint32(errno),
+		}.Encode))
+
+	sc.mu.Unlock()
+	sc.wnotify()
+	return nil
+}
+
 // appendReplyPath generates and appends an encrypted reply path to b, returning the extended buffer.
 // The path is in the form "@/$b64(rr.id)/$b64(sc.id)/$b64(encrypt(id, exp))",
 // using the raw URL base64 encoding. The path expires after serverReplyPathTimeout.
@@ -402,72 +471,5 @@ func (sc *serverConn) appendReplyPath(b []byte, id uint32) []byte {
 	return b64.AppendEncode(append(b, sc.replyPrefix...), enc)
 }
 
-// router callbacks
-
-func (sc *serverConn) deliver(id uint32, rm rmsg) {
-	fh := wire.FrameHdr{
-		Len:  uint32(16 + len(rm.Buf)),
-		Type: wire.FPKG,
-	}
-
-	sc.mu.Lock()
-
-	// frame header + id + errno + msg buf == a pkg frame
-	prefix := binary.LittleEndian.AppendUint32(fh.Encode(nil), id)
-	prefix = append(prefix, 0, 0, 0, 0)
-	sc.wbufs = append(sc.wbufs, prefix, rm.Buf)
-
-	sc.mu.Unlock()
-	sc.wnotify()
-}
-
-func (sc *serverConn) forget(id uint32) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	delete(sc.subs, id)
-}
-
-// reply is the callback for the conn's reply wildcard subscription.
-// Since the reply sub was created internally, it doesn't have an id.
-// Instead, the request id for each reply is decrypted from the message path.
-// If the path is malformed, unverifiable, or too old, the reply is dropped.
-func (sc *serverConn) reply(_ uint32, rm rmsg) {
-	b64, found := bytes.CutPrefix(rm.Msg.Path.data, sc.replyPrefix)
-	if !found {
-		return
-	}
-
-	buf, err := base64.RawURLEncoding.AppendDecode(nil, b64)
-	if err != nil {
-		return
-	}
-
-	nsz := sc.replyAEAD.NonceSize()
-	if len(buf) < nsz {
-		return
-	}
-
-	nonce := buf[:nsz]
-	buf = buf[nsz:]
-	payload, err := sc.replyAEAD.Open(nil, nonce, buf, sc.replyPrefix)
-	if err != nil {
-		return
-	}
-
-	if len(payload) != 12 {
-		return
-	}
-
-	id := binary.LittleEndian.Uint32(payload)
-	nsec := int64(binary.LittleEndian.Uint64(payload[4:]))
-	exp := time.Unix(0, nsec)
-
-	if time.Now().After(exp) {
-		return
-	}
-
-	sc.deliver(id, rm)
-}
-
-// isAtPath returns true if p starts with "@".
-func isAtPath(p Path) bool { return len(p.data) > 0 && p.data[0] == '@' }
+// isReplyPath returns true if p starts with "@".
+func isReplyPath(p Path) bool { return len(p.data) > 0 && p.data[0] == '@' }
