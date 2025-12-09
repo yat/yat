@@ -1,8 +1,13 @@
 #!/bin/sh
 # yat runs the dev client CLI.
 # usage: bin/yat [args]
+#
+# To run the dev server, execute bin/serve.
 
 set -eu
 
 bin/build
-exec ./yat "$@"
+exec ./yat \
+  -tls-cert-file tmp/tls/client.crt \
+  -tls-key-file tmp/tls/client.key \
+  -tls-ca-file tmp/tls/ca.crt "$@"

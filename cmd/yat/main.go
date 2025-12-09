@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -18,6 +20,12 @@ import (
 type SharedConfig struct {
 	Address  string
 	LogLevel slog.Level
+
+	// client flags
+
+	TLSCertFile string
+	TLSKeyFile  string
+	TLSCAFile   string
 }
 
 type usageError struct {
@@ -45,6 +53,9 @@ func run(ctx context.Context, args []string) error {
 	flags := flagset.New()
 	flags.String(&cfg.Address, "addr")
 	flags.Text(&cfg.LogLevel, "log-level")
+	flags.String(&cfg.TLSCertFile, "tls-cert-file")
+	flags.String(&cfg.TLSKeyFile, "tls-key-file")
+	flags.String(&cfg.TLSCAFile, "tls-ca-file")
 
 	args, err := flags.Parse(args)
 	if err != nil {
@@ -139,7 +150,36 @@ func run(ctx context.Context, args []string) error {
 
 // Dial connects to the server.
 func (cfg SharedConfig) Dial(ctx context.Context) (net.Conn, error) {
-	return (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Address)
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+	}
+
+	if len(cfg.TLSCertFile) > 0 && len(cfg.TLSKeyFile) > 0 {
+		crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConfig.Certificates = []tls.Certificate{crt}
+	}
+
+	if len(cfg.TLSCAFile) > 0 {
+		tlsConfig.RootCAs = x509.NewCertPool()
+		rootCerts, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCerts) {
+			return nil, fmt.Errorf("read %s: no certificates", cfg.TLSCAFile)
+		}
+	}
+
+	d := &tls.Dialer{
+		Config: tlsConfig,
+	}
+
+	return d.DialContext(ctx, "tcp", cfg.Address)
 }
 
 // getDefaultLogLevel returns the result of parsing YAT_LOG_LEVEL or [slog.LevelError].

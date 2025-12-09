@@ -24,3 +24,16 @@ Shared flags:
   -log-level error ($YAT_LOG_LEVEL)
       Set the log level to debug, info, warn, or error.
       Logs are printed to stderr as JSON lines.
+
+Client flags:
+
+  -tls-cert-file PATH
+      A file containing a PEM-encoded client cert.
+      If this flag is set, -tls-key-file must be set too.
+
+  -tls-key-file PATH
+      A file containing a PEM-encoded private key.
+      If this flag is set, -tls-cert-file must be set too.
+
+  -tls-ca-file PATH
+      A file containing PEM-encoded root certificates.
