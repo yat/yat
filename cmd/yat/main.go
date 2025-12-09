@@ -46,8 +46,11 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	cfg := SharedConfig{
-		Address:  getDefaultAddress(),
-		LogLevel: getDefaultLogLevel(),
+		Address:     getDefaultAddress(),
+		LogLevel:    getDefaultLogLevel(),
+		TLSCertFile: os.Getenv("YAT_TLS_CERT_FILE"),
+		TLSKeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
+		TLSCAFile:   os.Getenv("YAT_TLS_CA_FILE"),
 	}
 
 	flags := flagset.New()

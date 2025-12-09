@@ -5,6 +5,7 @@ import (
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,11 @@ type ServeCmd struct {
 	LocalTLSDir string
 }
 
+var (
+	errServeBadTLSFlags = errors.New("-local-tls and -tls-* are mutually exclusive")
+	errServeNoTLSCreds  = errors.New("missing credentials: set one of -local-tls or -tls-*")
+)
+
 func (cmd ServeCmd) Run(ctx context.Context, logger *slog.Logger, cfg SharedConfig, args []string) error {
 	if len(args) != 0 {
 		return usageError{
@@ -32,18 +38,9 @@ func (cmd ServeCmd) Run(ctx context.Context, logger *slog.Logger, cfg SharedConf
 		}
 	}
 
-	var tlsConfig *tls.Config
-
-	if len(cmd.LocalTLSDir) > 0 {
-		hostname, _, err := net.SplitHostPort(cfg.Address)
-		if err != nil {
-			return err
-		}
-
-		tlsConfig, err = cmd.setupLocalTLS(logger, hostname)
-		if err != nil {
-			return fmt.Errorf("yat serve -local-tls %s: %v", cmd.LocalTLSDir, err)
-		}
+	tlsConfig, err := cmd.setupTLS(cfg)
+	if err != nil {
+		return fmt.Errorf("yat serve: %v", err)
 	}
 
 	if len(cmd.Bind) == 0 {
@@ -122,7 +119,36 @@ func (cmd *ServeCmd) Flags() *flagset.Set {
 	return flags
 }
 
-func (cmd ServeCmd) setupLocalTLS(logger *slog.Logger, hostname string) (*tls.Config, error) {
+func (cmd ServeCmd) setupTLS(cfg SharedConfig) (*tls.Config, error) {
+	var (
+		hasStaticTLSConfig    = len(cfg.TLSCertFile) > 0 && len(cfg.TLSKeyFile) > 0
+		hasAnyStaticTLSConfig = len(cfg.TLSCertFile) > 0 || len(cfg.TLSKeyFile) > 0 || len(cfg.TLSCAFile) > 0
+		hasLocalTLSConfig     = len(cmd.LocalTLSDir) > 0
+	)
+
+	if hasStaticTLSConfig && hasLocalTLSConfig ||
+		hasLocalTLSConfig && hasAnyStaticTLSConfig {
+		return nil, errServeBadTLSFlags
+	}
+
+	switch {
+	case hasStaticTLSConfig:
+		return cmd.setupStaticTLS(cfg)
+
+	case hasLocalTLSConfig:
+		return cmd.setupLocalTLS(cfg)
+
+	default:
+		return nil, errServeNoTLSCreds
+	}
+}
+
+func (cmd ServeCmd) setupLocalTLS(cfg SharedConfig) (*tls.Config, error) {
+	hostname, _, err := net.SplitHostPort(cfg.Address)
+	if err != nil {
+		return nil, err
+	}
+
 	var (
 		hostnameFile      = filepath.Join(cmd.LocalTLSDir, "hostname")
 		tlsCAFile         = filepath.Join(cmd.LocalTLSDir, "ca.crt")
@@ -155,7 +181,6 @@ func (cmd ServeCmd) setupLocalTLS(logger *slog.Logger, hostname string) (*tls.Co
 	}
 
 	if !tlsOK {
-		logger.Debug("setup local tls", "dir", cmd.LocalTLSDir)
 		if err := os.MkdirAll(cmd.LocalTLSDir, 0755); err != nil {
 			return nil, err
 		}
@@ -229,6 +254,34 @@ func (cmd ServeCmd) setupLocalTLS(logger *slog.Logger, hostname string) (*tls.Co
 
 	if !tlsConfig.ClientCAs.AppendCertsFromPEM(rootCerts) {
 		return nil, fmt.Errorf("read %s: no certificates", tlsCAFile)
+	}
+
+	return tlsConfig, nil
+}
+
+func (cmd ServeCmd) setupStaticTLS(cfg SharedConfig) (*tls.Config, error) {
+	crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{crt},
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	if len(cfg.TLSCAFile) > 0 {
+		rootCerts, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+
+		tlsConfig.ClientCAs = x509.NewCertPool()
+		if !tlsConfig.ClientCAs.AppendCertsFromPEM(rootCerts) {
+			return nil, fmt.Errorf("read %s: no certificates", cfg.TLSCAFile)
+		}
 	}
 
 	return tlsConfig, nil

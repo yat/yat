@@ -1,4 +1,5 @@
-Yat is a command-line client and server for Yat.
+This is a command-line client and server for Yat, a message bus.
+Learn more about Yat by visiting yat.io or github.com/yat/yat.
 
 Usage:
 
@@ -25,15 +26,13 @@ Shared flags:
       Set the log level to debug, info, warn, or error.
       Logs are printed to stderr as JSON lines.
 
-Client flags:
-
-  -tls-cert-file PATH
-      A file containing a PEM-encoded client cert.
+  -tls-cert-file PATH ($YAT_TLS_CERT_FILE)
+      A file containing a PEM-encoded x.509 certificate.
       If this flag is set, -tls-key-file must be set too.
 
-  -tls-key-file PATH
-      A file containing a PEM-encoded private key.
+  -tls-key-file PATH ($YAT_TLS_KEY_FILE)
+      A file containing the corresponding PEM-encoded private key.
       If this flag is set, -tls-cert-file must be set too.
 
-  -tls-ca-file PATH
+  -tls-ca-file PATH ($YAT_TLS_CA_FILE)
       A file containing PEM-encoded root certificates.

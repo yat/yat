@@ -1,4 +1,4 @@
-Serve runs an instance of the Yat server.
+Serve runs a Yat server.
 
 Usage:
 
@@ -10,9 +10,13 @@ Flags:
       Local TCP address for the server to announce.
       If this flag is not set, the server announces the address
       set by the YAT_ADDR env var or the -addr shared flag.
+      The default address is localhost:63197.
 
   -local-tls DIR
       Generate and use a directory of local TLS credentials,
       including a root CA certificate and client/server keypairs.
       The directory is recreated if any files are missing,
       or if the server's address changes.
+
+The server requires TLS credentials.
+To provide them, set -local-tls or -tls-*.
