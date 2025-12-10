@@ -7,14 +7,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/google/uuid"
 	"yat.io/yat"
 	"yat.io/yat/internal/flagset"
 	"yat.io/yat/internal/pkigen"
@@ -47,6 +44,7 @@ func (cmd ServeCmd) Run(ctx context.Context, logger *slog.Logger, cfg SharedConf
 		cmd.Bind = cfg.Address
 	}
 
+	tlsConfig.MinVersion = tls.VersionTLS13
 	if err := cmd.run(ctx, logger, tlsConfig); err != nil {
 		return fmt.Errorf("yat serve: %v", err)
 	}
@@ -62,54 +60,18 @@ func (cmd ServeCmd) run(ctx context.Context, logger *slog.Logger, tlsConfig *tls
 
 	defer l.Close()
 
-	rr := yat.NewRouter()
+	svr, err := yat.NewServer(tlsConfig, yat.ServerConfig{
+		Logger: logger,
+	})
+
+	if err != nil {
+		return err
+	}
 
 	logger.InfoContext(ctx, "serve",
 		"address", l.Addr().String())
 
-	for {
-		nc, err := l.Accept()
-		if err != nil {
-			break
-		}
-
-		go func() {
-			defer nc.Close()
-
-			ctx, cancel := context.WithCancel(ctx)
-			defer cancel()
-
-			logger := logger.With(
-				"conn", uuid.New().String(),
-				"remote", nc.RemoteAddr().String(),
-				"local", nc.LocalAddr().String())
-
-			start := time.Now()
-			logger.DebugContext(ctx, "connection opened")
-
-			conn := tls.Server(nc, tlsConfig)
-			if err := conn.HandshakeContext(ctx); err != nil {
-				logger.DebugContext(ctx, "handshake failed", "error", err)
-				return
-			}
-
-			defer func() {
-				logger.DebugContext(ctx, "connection closed",
-					"elapsed", time.Since(start).Seconds())
-			}()
-
-			err := yat.Serve(ctx, conn, rr)
-			if err == io.EOF {
-				err = nil
-			}
-
-			if err != nil {
-				logger.ErrorContext(ctx, "connection error", "error", err)
-			}
-		}()
-	}
-
-	return nil
+	return svr.Serve(l)
 }
 
 func (cmd *ServeCmd) Flags() *flagset.Set {

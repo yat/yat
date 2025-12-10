@@ -6,19 +6,42 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/net/http2"
 	"golang.org/x/sync/errgroup"
 	"yat.io/yat/wire"
 )
+
+type Server struct {
+	tlsConfig *tls.Config
+	logger    *slog.Logger
+	router    *Router
+}
+
+// ServerConfig configures server behavior.
+// The zero ServerConfig is a valid configuration.
+type ServerConfig struct {
+
+	// Logger is where the server writes logs.
+	// If it is nil, server logs are discarded.
+	Logger *slog.Logger
+
+	// Router is the message router shared by all connections.
+	// If it is nil, the server uses an internal router.
+	Router *Router
+}
 
 type serverConn struct {
 	conn net.Conn
@@ -53,6 +76,87 @@ const (
 
 var errAtPath = errors.New("@ paths are publish-only")
 
+// NewServer creates and configures a new Yat server.
+// The given TLS configuration must contain at least one certificate
+// or set GetCertificate.
+func NewServer(tc *tls.Config, cfg ServerConfig) (*Server, error) {
+	if len(tc.Certificates) == 0 && tc.GetCertificate == nil {
+		return nil, errors.New("invalid TLS configuration: no certificates")
+	}
+
+	cfg = cfg.withDefaults()
+	svr := &Server{
+		tlsConfig: tc,
+		logger:    cfg.Logger,
+		router:    cfg.Router,
+	}
+
+	return svr, nil
+}
+
+// Serve serves connections accepted from l.
+// It always returns a non-nil error and closes l.
+func (s *Server) Serve(l net.Listener) error {
+	tc := s.tlsConfig.Clone()
+	tl := tls.NewListener(l, tc)
+
+	hs := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, "ѣ")
+		}),
+
+		TLSConfig: tc,
+	}
+
+	// wire up http/2
+	http2.ConfigureServer(hs, nil)
+
+	// clean up after ConfigureServer
+	delete(hs.TLSNextProto, "unencrypted_http2")
+	tc.NextProtos = []string{"h2", "y0"}
+
+	// http/2 only, no h2c or http/1
+	hs.Protocols = new(http.Protocols)
+	hs.Protocols.SetHTTP2(true)
+
+	// the yat client protocol, version 0
+	hs.TLSNextProto["y0"] = func(_ *http.Server, c *tls.Conn, _ http.Handler) {
+		s.serveClient(context.TODO(), c)
+	}
+
+	return hs.Serve(tl)
+}
+
+func (s *Server) serveClient(ctx context.Context, conn *tls.Conn) {
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	logger := s.logger.With(
+		"conn", uuid.New().String(),
+		"remote", conn.RemoteAddr().String(),
+		"local", conn.LocalAddr().String())
+
+	start := time.Now()
+	logger.DebugContext(ctx, "connection opened")
+
+	defer func() {
+		logger.DebugContext(ctx, "connection closed",
+			"elapsed", time.Since(start).Seconds())
+	}()
+
+	err := Serve(ctx, conn, s.router)
+	if err == io.EOF {
+		err = nil
+	}
+
+	if err != nil {
+		logger.ErrorContext(ctx, "connection error", "error", err)
+	}
+}
+
+// Serve serves the given router to conn using the binary protocol.
 func Serve(ctx context.Context, conn net.Conn, rr *Router) error {
 	defer conn.Close()
 
@@ -469,6 +573,18 @@ func (sc *serverConn) appendReplyPath(b []byte, id uint32) []byte {
 
 	enc := sc.replyAEAD.Seal(nonce, nonce, payload, sc.replyPrefix)
 	return b64.AppendEncode(append(b, sc.replyPrefix...), enc)
+}
+
+func (cfg ServerConfig) withDefaults() ServerConfig {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	if cfg.Router == nil {
+		cfg.Router = NewRouter()
+	}
+
+	return cfg
 }
 
 // isReplyPath returns true if p starts with "@".

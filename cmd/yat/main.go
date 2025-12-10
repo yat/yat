@@ -155,6 +155,7 @@ func run(ctx context.Context, args []string) error {
 func (cfg SharedConfig) Dial(ctx context.Context) (net.Conn, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
+		NextProtos: []string{"y0"},
 	}
 
 	if len(cfg.TLSCertFile) > 0 && len(cfg.TLSKeyFile) > 0 {
