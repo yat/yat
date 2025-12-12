@@ -327,6 +327,9 @@ func (cc *Conn) readFrames(ctx context.Context, conn net.Conn) error {
 		case wire.FPKG:
 			handle = cc.handlePkgFrame
 
+		case wire.FERR:
+			handle = cc.handleErrFrame
+
 		default:
 			if _, err := io.CopyN(io.Discard, conn, int64(hdr.BodyLen())); err != nil {
 				return fmt.Errorf("discard frame type %d: %v", hdr.Type, err)
@@ -379,19 +382,34 @@ func (cc *Conn) handlePkgFrame(ctx context.Context, b []byte) error {
 	}
 
 	var m Msg
-	var err error
-
-	switch body.Errno {
-	case 0:
-		if err := m.parse(body.Msg); err != nil {
-			return err
-		}
-
-	default:
-		err = Errno(body.Errno)
+	if err := m.parse(body.Msg); err != nil {
+		return err
 	}
 
-	if !h.Handle(m, err) {
+	if !h.Handle(m, nil) {
+		cc.mu.Lock()
+		delete(cc.handlers, body.ID)
+		cc.mu.Unlock()
+	}
+
+	return nil
+}
+
+func (cc *Conn) handleErrFrame(ctx context.Context, b []byte) error {
+	var body wire.ErrFrameBody
+	if _, err := body.Decode(b); err != nil {
+		return err
+	}
+
+	cc.mu.Lock()
+	h := cc.handlers[body.ID]
+	cc.mu.Unlock()
+
+	if h == nil || body.Errno == 0 {
+		return nil
+	}
+
+	if !h.Handle(Msg{}, Errno(body.Errno)) {
 		cc.mu.Lock()
 		delete(cc.handlers, body.ID)
 		cc.mu.Unlock()

@@ -509,12 +509,12 @@ func (sc *serverConn) reply(_ uint32, rm rmsg) {
 	sc.deliver(id, rm)
 }
 
-// fail writes a pkg frame with an errno and no message to the buffer and notifies the writer.
+// fail writes an err frame to the buffer and notifies the writer.
 func (sc *serverConn) fail(id uint32, errno Errno) error {
 	sc.mu.Lock()
 
-	sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FPKG,
-		wire.PkgFrameBody{
+	sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FERR,
+		wire.ErrFrameBody{
 			ID:    id,
 			Errno: uint32(errno),
 		}.Encode))

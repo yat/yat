@@ -55,9 +55,13 @@ type PongFrameBody struct {
 }
 
 type PkgFrameBody struct {
+	ID  uint32
+	Msg Msg
+}
+
+type ErrFrameBody struct {
 	ID    uint32
 	Errno uint32
-	Msg   Msg
 }
 
 type Msg struct {
@@ -75,6 +79,7 @@ const (
 	FUNSUB = 6
 	FPONG  = 65
 	FPKG   = 66
+	FERR   = 67
 )
 
 type reqFrameHdr struct {
@@ -99,9 +104,9 @@ type subFrameHdr struct {
 }
 
 type pkgFrameHdr struct {
-	ID    uint32
-	Errno uint32
-	Msg   msgHdr
+	ID  uint32
+	_   [4]byte
+	Msg msgHdr
 }
 
 type msgHdr struct {
@@ -269,9 +274,8 @@ func (fb *PongFrameBody) Decode(b []byte) (n int, err error) {
 
 func (fb PkgFrameBody) Encode(b []byte) []byte {
 	return fb.Msg.appendFields(unsafeEncode(b, pkgFrameHdr{
-		ID:    fb.ID,
-		Errno: fb.Errno,
-		Msg:   fb.Msg.hdr(),
+		ID:  fb.ID,
+		Msg: fb.Msg.hdr(),
 	}))
 }
 
@@ -287,8 +291,7 @@ func (fb *PkgFrameBody) Decode(b []byte) (n int, err error) {
 	}
 
 	*fb = PkgFrameBody{
-		ID:    h.ID,
-		Errno: h.Errno,
+		ID: h.ID,
 	}
 
 	n = h.EncodedLen()
@@ -300,6 +303,14 @@ func (fb *PkgFrameBody) Decode(b []byte) (n int, err error) {
 
 func (h pkgFrameHdr) EncodedLen() int {
 	return int(unsafe.Offsetof(h.Msg)) + h.Msg.EncodedLen()
+}
+
+func (fb ErrFrameBody) Encode(b []byte) []byte {
+	return unsafeEncode(b, fb)
+}
+
+func (fb *ErrFrameBody) Decode(b []byte) (n int, err error) {
+	return unsafeDecode(fb, b)
 }
 
 func (m Msg) Encode(b []byte) []byte {

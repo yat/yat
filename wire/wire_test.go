@@ -240,6 +240,30 @@ func TestPkgFrameBodyCodec(t *testing.T) {
 	}
 }
 
+func TestErrFrameBodyCodec(t *testing.T) {
+	want := wire.ErrFrameBody{
+		ID:    1,
+		Errno: 1,
+	}
+
+	b := want.Encode(nil)
+	b = append(b, "junk"...)
+
+	var got wire.ErrFrameBody
+	n, err := got.Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatal(diff)
+	}
+
+	if want, got := "junk", string(b[n:]); got != want {
+		t.Errorf("trailing bytes: %q != %q", got, want)
+	}
+}
+
 func TestMsgCodec(t *testing.T) {
 	want := wire.Msg{
 		Data:  []byte("data"),
