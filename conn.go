@@ -23,9 +23,9 @@ type Conn struct {
 	wbuf  []byte
 	wbufC chan struct{}
 
-	lastID   uint32
-	handlers map[uint32]pkgHandler
-	pings    map[uint32]chan struct{}
+	lastID   wire.ID
+	handlers map[wire.ID]pkgHandler
+	pings    map[wire.ID]chan struct{}
 }
 
 type pkgHandler interface {
@@ -45,8 +45,8 @@ func NewConn(conn net.Conn) *Conn {
 		doneC:    make(chan struct{}),
 		runC:     make(chan struct{}),
 		wbufC:    make(chan struct{}, 1),
-		handlers: map[uint32]pkgHandler{},
-		pings:    map[uint32]chan struct{}{},
+		handlers: map[wire.ID]pkgHandler{},
+		pings:    map[wire.ID]chan struct{}{},
 	}
 
 	go cc.run(conn)
@@ -484,7 +484,7 @@ func (cc *Conn) keepalive(ctx context.Context) error {
 	}
 }
 
-func (cc *Conn) unsub(id uint32) {
+func (cc *Conn) unsub(id wire.ID) {
 	cc.mu.Lock()
 
 	if _, ok := cc.handlers[id]; !ok {
@@ -515,7 +515,7 @@ func (cc *Conn) isClosed() bool {
 
 // nextID increments and returns the id counter.
 // The caller must hold mu.
-func (cc *Conn) nextID() uint32 {
+func (cc *Conn) nextID() wire.ID {
 	cc.lastID++
 	return cc.lastID
 }

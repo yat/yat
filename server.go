@@ -49,7 +49,7 @@ type serverConn struct {
 	id   uuid.UUID
 
 	mu    sync.Mutex
-	subs  map[uint32]*rsub
+	subs  map[wire.ID]*rsub
 	wbufs net.Buffers
 	wbufC chan struct{}
 
@@ -168,7 +168,7 @@ func Serve(ctx context.Context, conn net.Conn, rr *Router) error {
 		conn:  conn,
 		rr:    rr,
 		id:    uuid.New(),
-		subs:  map[uint32]*rsub{},
+		subs:  map[wire.ID]*rsub{},
 		wbufC: make(chan struct{}, 1),
 	}
 
@@ -443,7 +443,7 @@ func (sc *serverConn) wnotify() {
 }
 
 // deliver is called by the router when a message is delivered to one of the conn's subscriptions.
-func (sc *serverConn) deliver(id uint32, rm rmsg) {
+func (sc *serverConn) deliver(id wire.ID, rm rmsg) {
 	fh := wire.FrameHdr{
 		Len:  uint32(16 + len(rm.Buf)),
 		Type: wire.FPKG,
@@ -452,7 +452,7 @@ func (sc *serverConn) deliver(id uint32, rm rmsg) {
 	sc.mu.Lock()
 
 	// frame header + id + errno + msg buf == a pkg frame
-	prefix := binary.LittleEndian.AppendUint32(fh.Encode(nil), id)
+	prefix := binary.LittleEndian.AppendUint32(fh.Encode(nil), uint32(id))
 	prefix = append(prefix, 0, 0, 0, 0)
 	sc.wbufs = append(sc.wbufs, prefix, rm.Buf)
 
@@ -461,7 +461,7 @@ func (sc *serverConn) deliver(id uint32, rm rmsg) {
 }
 
 // forget is called by the router when a subscription is done.
-func (sc *serverConn) forget(id uint32) {
+func (sc *serverConn) forget(id wire.ID) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	delete(sc.subs, id)
@@ -471,7 +471,7 @@ func (sc *serverConn) forget(id uint32) {
 // Since the reply sub was created internally, it doesn't have an id.
 // Instead, the request id for each reply is decrypted from the message path.
 // If the path is malformed, unverifiable, or too old, the reply is dropped.
-func (sc *serverConn) reply(_ uint32, rm rmsg) {
+func (sc *serverConn) reply(_ wire.ID, rm rmsg) {
 	b64, found := bytes.CutPrefix(rm.Msg.Path.data, sc.replyPrefix)
 	if !found {
 		return
@@ -498,7 +498,7 @@ func (sc *serverConn) reply(_ uint32, rm rmsg) {
 		return
 	}
 
-	id := binary.LittleEndian.Uint32(payload)
+	id := wire.ID(binary.LittleEndian.Uint32(payload))
 	nsec := int64(binary.LittleEndian.Uint64(payload[4:]))
 	exp := time.Unix(0, nsec)
 
@@ -510,7 +510,7 @@ func (sc *serverConn) reply(_ uint32, rm rmsg) {
 }
 
 // fail writes an err frame to the buffer and notifies the writer.
-func (sc *serverConn) fail(id uint32, errno Errno) error {
+func (sc *serverConn) fail(id wire.ID, errno Errno) error {
 	sc.mu.Lock()
 
 	sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FERR,
@@ -530,7 +530,7 @@ func (sc *serverConn) fail(id uint32, errno Errno) error {
 //
 // When a reply is received, the path is decrypted by [serverConn.reply]
 // and verified before delivery.
-func (sc *serverConn) appendReplyPath(b []byte, id uint32) []byte {
+func (sc *serverConn) appendReplyPath(b []byte, id wire.ID) []byte {
 	b64 := base64.RawURLEncoding
 	sc.replySetup.Do(func() {
 		key := make([]byte, 32)
@@ -565,7 +565,7 @@ func (sc *serverConn) appendReplyPath(b []byte, id uint32) []byte {
 	exp := time.Now().Add(serverReplyPathTimeout)
 
 	payload := make([]byte, 12)
-	binary.LittleEndian.PutUint32(payload, id)
+	binary.LittleEndian.PutUint32(payload, uint32(id))
 	binary.LittleEndian.PutUint64(payload[4:], uint64(exp.UnixNano()))
 
 	nonce := make([]byte, sc.replyAEAD.NonceSize())

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
+	"yat.io/yat/wire"
 )
 
 type Router struct {
@@ -118,16 +119,16 @@ type rmsg struct {
 type rsub struct {
 
 	// ID, if set, is passed to Deliver and Unsub.
-	ID uint32
+	ID wire.ID
 
 	// Sel is the message selector.
 	Sel Sel
 
 	// Deliver is called to deliver a message.
-	Deliver func(id uint32, rm rmsg)
+	Deliver func(id wire.ID, rm rmsg)
 
 	// Forget is called after the router has deleted the sub.
-	Forget func(id uint32)
+	Forget func(id wire.ID)
 
 	n atomic.Uint64
 }

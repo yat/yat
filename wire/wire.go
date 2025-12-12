@@ -23,7 +23,7 @@ type FrameHdr struct {
 }
 
 type PingFrameBody struct {
-	ID uint32
+	ID ID
 	_  [4]byte
 }
 
@@ -32,35 +32,35 @@ type PubFrameBody struct {
 }
 
 type ReqFrameBody struct {
-	ID   uint32
+	ID   ID
 	Data []byte
 	Path []byte
 }
 
 type SubFrameBody struct {
-	ID    uint32
+	ID    ID
 	Limit uint32
 	Path  []byte
 	Group []byte
 }
 
 type UnsubFrameBody struct {
-	ID uint32
+	ID ID
 	_  [4]byte
 }
 
 type PongFrameBody struct {
-	ID uint32
+	ID ID
 	_  [4]byte
 }
 
 type PkgFrameBody struct {
-	ID  uint32
+	ID  ID
 	Msg Msg
 }
 
 type ErrFrameBody struct {
-	ID    uint32
+	ID    ID
 	Errno uint32
 }
 
@@ -69,6 +69,8 @@ type Msg struct {
 	Path  []byte
 	Reply []byte
 }
+
+type ID uint32
 
 const (
 	FAUTH  = 1
@@ -83,7 +85,7 @@ const (
 )
 
 type reqFrameHdr struct {
-	ID      uint32
+	ID      ID
 	_       [4]byte
 	DataLen uint32
 	PathLen uint16
@@ -96,7 +98,7 @@ type reqFrameHdr struct {
 }
 
 type subFrameHdr struct {
-	ID       uint32
+	ID       ID
 	Limit    uint32
 	_        [4]byte
 	PathLen  uint16
@@ -104,7 +106,7 @@ type subFrameHdr struct {
 }
 
 type pkgFrameHdr struct {
-	ID  uint32
+	ID  ID
 	_   [4]byte
 	Msg msgHdr
 }
