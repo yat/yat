@@ -92,29 +92,6 @@ func TestReadFrameHdr(t *testing.T) {
 	})
 }
 
-func TestPingFrameBodyCodec(t *testing.T) {
-	want := wire.PingFrameBody{
-		ID: 1,
-	}
-
-	b := want.Encode(nil)
-	b = append(b, "junk"...)
-
-	var got wire.PingFrameBody
-	n, err := got.Decode(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatal(diff)
-	}
-
-	if want, got := "junk", string(b[n:]); got != want {
-		t.Errorf("trailing bytes: %q != %q", got, want)
-	}
-}
-
 func TestReqFrameBodyCodec(t *testing.T) {
 	want := wire.ReqFrameBody{
 		ID:   1,
@@ -175,29 +152,6 @@ func TestUnsubFrameBodyCodec(t *testing.T) {
 	b = append(b, "junk"...)
 
 	var got wire.UnsubFrameBody
-	n, err := got.Decode(b)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatal(diff)
-	}
-
-	if want, got := "junk", string(b[n:]); got != want {
-		t.Errorf("trailing bytes: %q != %q", got, want)
-	}
-}
-
-func TestPongFrameBodyCodec(t *testing.T) {
-	want := wire.PongFrameBody{
-		ID: 1,
-	}
-
-	b := want.Encode(nil)
-	b = append(b, "junk"...)
-
-	var got wire.PongFrameBody
 	n, err := got.Decode(b)
 	if err != nil {
 		t.Fatal(err)

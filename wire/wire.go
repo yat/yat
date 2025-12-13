@@ -22,11 +22,6 @@ type FrameHdr struct {
 	Type uint32
 }
 
-type PingFrameBody struct {
-	ID ID
-	_  [4]byte
-}
-
 type PubFrameBody struct {
 	Msg
 }
@@ -45,11 +40,6 @@ type SubFrameBody struct {
 }
 
 type UnsubFrameBody struct {
-	ID ID
-	_  [4]byte
-}
-
-type PongFrameBody struct {
 	ID ID
 	_  [4]byte
 }
@@ -73,15 +63,12 @@ type Msg struct {
 type ID uint32
 
 const (
-	FAUTH  = 1
-	FPING  = 2
-	FPUB   = 3
-	FREQ   = 4
-	FSUB   = 5
-	FUNSUB = 6
-	FPONG  = 65
-	FPKG   = 66
-	FERR   = 67
+	FPUB   = 1
+	FREQ   = 2
+	FSUB   = 3
+	FUNSUB = 4
+	FPKG   = 65
+	FERR   = 66
 )
 
 type reqFrameHdr struct {
@@ -140,10 +127,10 @@ func AppendFrame(b []byte, typ uint32, f func([]byte) []byte) []byte {
 	b = bo.AppendUint32(b, typ)
 
 	// body
-	b = f(b)
-
-	// update hdr
-	bo.PutUint32(b[i:], uint32(len(b)-i))
+	if f != nil {
+		b = f(b)
+		bo.PutUint32(b[i:], uint32(len(b)-i))
+	}
 
 	return b
 }
@@ -168,14 +155,6 @@ func (fh FrameHdr) Encode(b []byte) []byte {
 // BodyLen return the length of the frame body following the header.
 func (fh FrameHdr) BodyLen() int {
 	return int(fh.Len) - frameHdrLen
-}
-
-func (fb PingFrameBody) Encode(b []byte) []byte {
-	return unsafeEncode(b, fb)
-}
-
-func (fb *PingFrameBody) Decode(b []byte) (n int, err error) {
-	return unsafeDecode(fb, b)
 }
 
 func (fb ReqFrameBody) Encode(b []byte) []byte {
@@ -263,14 +242,6 @@ func (fb UnsubFrameBody) Encode(b []byte) []byte {
 }
 
 func (fb *UnsubFrameBody) Decode(b []byte) (n int, err error) {
-	return unsafeDecode(fb, b)
-}
-
-func (fb PongFrameBody) Encode(b []byte) []byte {
-	return unsafeEncode(b, fb)
-}
-
-func (fb *PongFrameBody) Decode(b []byte) (n int, err error) {
 	return unsafeDecode(fb, b)
 }
 

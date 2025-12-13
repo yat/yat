@@ -25,7 +25,6 @@ type Conn struct {
 
 	lastID   wire.ID
 	handlers map[wire.ID]pkgHandler
-	pings    map[wire.ID]chan struct{}
 }
 
 type pkgHandler interface {
@@ -37,7 +36,11 @@ const (
 	clientReadHeaderTimeout = 30 * time.Second
 	clientReadBodyTimeout   = 10 * time.Second
 	clientWriteTimeout      = 10 * time.Second
-	clientPingInterval      = serverReadHeaderTimeout / 2
+	clientKeepaliveInterval = serverReadHeaderTimeout / 2
+)
+
+var (
+	connAPIFlush = NewPath("$conn/api/Flush")
 )
 
 func NewConn(conn net.Conn) *Conn {
@@ -46,7 +49,6 @@ func NewConn(conn net.Conn) *Conn {
 		runC:     make(chan struct{}),
 		wbufC:    make(chan struct{}, 1),
 		handlers: map[wire.ID]pkgHandler{},
-		pings:    map[wire.ID]chan struct{}{},
 	}
 
 	go cc.run(conn)
@@ -176,53 +178,7 @@ func (cc *Conn) Subscribe(sel Sel, f func(Msg)) (Sub, error) {
 
 // Flush blocks until the server has processed all previous client operations.
 func (cc *Conn) Flush(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	cc.mu.Lock()
-
-	if cc.isClosed() {
-		cc.mu.Unlock()
-		return net.ErrClosed
-	}
-
-	id := cc.nextID()
-	pongC := make(chan struct{})
-
-	cc.pings[id] = pongC
-	pong := false
-
-	defer func() {
-		if pong {
-			return
-		}
-
-		cc.mu.Lock()
-		defer cc.mu.Unlock()
-		delete(cc.pings, id)
-	}()
-
-	cc.wbuf = wire.AppendFrame(cc.wbuf, wire.FPING, func(b []byte) []byte {
-		return wire.PingFrameBody{
-			ID: id,
-		}.Encode(b)
-	})
-
-	cc.mu.Unlock()
-	cc.wnotify()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-
-	case <-cc.Done():
-		return cc.Err()
-
-	case <-pongC:
-		pong = true
-		return nil
-	}
+	return cc.Request(ctx, connAPIFlush, nil, func(Msg) error { return nil })
 }
 
 // Close waits for the write buffer to flush before closing the connection.
@@ -321,9 +277,6 @@ func (cc *Conn) readFrames(ctx context.Context, conn net.Conn) error {
 		var handle func(ctx context.Context, body []byte) error
 
 		switch hdr.Type {
-		case wire.FPONG:
-			handle = cc.handlePongFrame
-
 		case wire.FPKG:
 			handle = cc.handlePkgFrame
 
@@ -347,24 +300,6 @@ func (cc *Conn) readFrames(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("handle frame type %d: %v", hdr.Type, err)
 		}
 	}
-}
-
-func (cc *Conn) handlePongFrame(ctx context.Context, buf []byte) error {
-	var pong wire.PongFrameBody
-	if _, err := pong.Decode(buf); err != nil {
-		return err
-	}
-
-	cc.mu.Lock()
-
-	if pongC, ok := cc.pings[pong.ID]; ok {
-		delete(cc.pings, pong.ID)
-		close(pongC)
-	}
-
-	cc.mu.Unlock()
-
-	return nil
 }
 
 func (cc *Conn) handlePkgFrame(ctx context.Context, b []byte) error {
@@ -455,8 +390,7 @@ func (cc *Conn) writeFrames(ctx context.Context, conn net.Conn) (err error) {
 }
 
 func (cc *Conn) keepalive(ctx context.Context) error {
-	body := wire.PingFrameBody{}
-	pingC := time.Tick(clientPingInterval)
+	tickC := time.Tick(clientKeepaliveInterval)
 
 	for {
 		select {
@@ -466,18 +400,20 @@ func (cc *Conn) keepalive(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case <-pingC:
+		case <-tickC:
 			cc.mu.Lock()
 
-			var pinged bool
+			var wrote bool
 			if len(cc.wbuf) == 0 {
-				cc.wbuf = wire.AppendFrame(cc.wbuf, wire.FPING, body.Encode)
-				pinged = true
+				cc.wbuf = wire.AppendFrame(cc.wbuf, wire.FREQ, wire.ReqFrameBody{
+					Path: connAPIFlush.data,
+				}.Encode)
+				wrote = true
 			}
 
 			cc.mu.Unlock()
 
-			if pinged {
+			if wrote {
 				cc.wnotify()
 			}
 		}

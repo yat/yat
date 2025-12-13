@@ -227,12 +227,6 @@ func (sc *serverConn) readFrames(ctx context.Context) error {
 		var handle func(ctx context.Context, body []byte) error
 
 		switch hdr.Type {
-		case wire.FAUTH:
-			handle = sc.handleAuthFrame
-
-		case wire.FPING:
-			handle = sc.handlePingFrame
-
 		case wire.FPUB:
 			handle = sc.handlePubFrame
 
@@ -264,27 +258,6 @@ func (sc *serverConn) readFrames(ctx context.Context) error {
 	}
 }
 
-func (sc *serverConn) handleAuthFrame(ctx context.Context, b []byte) error {
-	return nil
-}
-
-func (sc *serverConn) handlePingFrame(ctx context.Context, b []byte) error {
-	var body wire.PingFrameBody
-	if _, err := body.Decode(b); err != nil {
-		return err
-	}
-
-	sc.mu.Lock()
-
-	frame := wire.AppendFrame(nil, wire.FPONG, wire.PongFrameBody(body).Encode)
-	sc.wbufs = append(sc.wbufs, frame)
-
-	sc.mu.Unlock()
-	sc.wnotify()
-
-	return nil
-}
-
 func (sc *serverConn) handlePubFrame(ctx context.Context, b []byte) error {
 	var body wire.PubFrameBody
 	_, err := body.Decode(b)
@@ -297,7 +270,13 @@ func (sc *serverConn) handlePubFrame(ctx context.Context, b []byte) error {
 		return err
 	}
 
-	if isReplyPath(m.Reply) {
+	// no publishable $paths yet
+	if m.Path.IsSpecialPath() {
+		return nil
+	}
+
+	// clients can't subscribe to @paths, so
+	if m.Reply.IsAtPath() {
 		return errAtPath
 	}
 
@@ -322,8 +301,14 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 		return sc.fail(body.ID, EINVAL)
 	}
 
-	if isReplyPath(path) {
+	// can't req @paths
+	if path.IsAtPath() {
 		return sc.fail(body.ID, EINVAL)
+	}
+
+	// don't route $paths
+	if path.IsSpecialPath() {
+		return sc.handleSpecialRequest(path, body.ID, body.Data)
 	}
 
 	b = b[:n]
@@ -366,8 +351,14 @@ func (sc *serverConn) handleSubFrame(ctx context.Context, b []byte) error {
 		return err
 	}
 
-	if isReplyPath(sel.Path) {
+	// can't sub to @paths
+	if sel.Path.IsAtPath() {
 		return errAtPath
+	}
+
+	// no subscribable $paths yet
+	if sel.Path.IsSpecialPath() {
+		return nil
 	}
 
 	sel.Group = NewGroup(string(body.Group))
@@ -524,6 +515,28 @@ func (sc *serverConn) fail(id wire.ID, errno Errno) error {
 	return nil
 }
 
+// handleSpecialRequest handles requests to the server-provided API.
+// Currently the only API is "$conn/api/Flush", which writes an empty response.
+func (sc *serverConn) handleSpecialRequest(path Path, id wire.ID, data []byte) error {
+	switch path.String() {
+	case "$conn/api/Flush":
+		sc.mu.Lock()
+
+		sc.wbufs = append(sc.wbufs, wire.AppendFrame(nil, wire.FPKG,
+			wire.PkgFrameBody{
+				ID: id,
+			}.Encode))
+
+		sc.mu.Unlock()
+		sc.wnotify()
+
+	default:
+		return sc.fail(id, ENOENT)
+	}
+
+	return nil
+}
+
 // appendReplyPath generates and appends an encrypted reply path to b, returning the extended buffer.
 // The path is in the form "@/$b64(rr.id)/$b64(sc.id)/$b64(encrypt(id, exp))",
 // using the raw URL base64 encoding. The path expires after serverReplyPathTimeout.
@@ -586,6 +599,3 @@ func (cfg ServerConfig) withDefaults() ServerConfig {
 
 	return cfg
 }
-
-// isReplyPath returns true if p starts with "@".
-func isReplyPath(p Path) bool { return len(p.data) > 0 && p.data[0] == '@' }
