@@ -19,10 +19,29 @@ type Requester interface {
 }
 
 type Sel struct {
+	Flags SelFlags
 	Limit int
 	Path  Path
 	Group Group
 }
+
+// SelFlags is a set of selector flags.
+// The [SDATA] and [SREPLY] flags narrow the set of selected messages.
+type SelFlags uint32
+
+const (
+
+	// SDATA selects messages with at least 1 byte of data.
+	SDATA SelFlags = 1 << iota
+
+	// SREPLY selects messages with a reply path.
+	SREPLY
+
+	// SRES is a hint for the server.
+	// If it is set, the subscriber intends to respond to every message it receives.
+	// The server uses this flag to return more accurate request errors.
+	SRES SelFlags = 128
+)
 
 type Sub interface {
 	Stop()                 // stops the subscription
@@ -33,7 +52,7 @@ type Sub interface {
 type Errno uint32
 
 const (
-	ENOENT = Errno(2)  // no subscribers
+	ENOENT = Errno(2)  // no responders
 	EINVAL = Errno(22) // invalid argument
 )
 
@@ -46,7 +65,7 @@ var (
 func (e Errno) Error() string {
 	switch e {
 	case ENOENT:
-		return "no subscribers"
+		return "no responders"
 
 	case EINVAL:
 		return "invalid argument"

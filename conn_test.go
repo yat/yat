@@ -170,7 +170,8 @@ func TestConnReqRes(t *testing.T) {
 		cc := newConn(t)
 
 		sel := yat.Sel{
-			Path: yat.NewPath("echo"),
+			Path:  yat.NewPath("echo"),
+			Flags: yat.SRES | yat.SREPLY,
 		}
 
 		_, err := cc.Subscribe(sel, func(req yat.Msg) {
@@ -225,7 +226,8 @@ func TestConnReqRes(t *testing.T) {
 		cc := newConn(t)
 
 		sel := yat.Sel{
-			Path: yat.NewPath("echo-wait"),
+			Path:  yat.NewPath("echo-wait"),
+			Flags: yat.SRES | yat.SREPLY,
 		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 1*time.Millisecond)
@@ -253,7 +255,8 @@ func TestConnReqRes(t *testing.T) {
 		cc := newConn(t)
 
 		sel := yat.Sel{
-			Path: yat.NewPath("path"),
+			Path:  yat.NewPath("path"),
+			Flags: yat.SRES | yat.SREPLY,
 		}
 
 		_, err := cc.Subscribe(sel, func(req yat.Msg) {

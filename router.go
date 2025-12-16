@@ -58,8 +58,22 @@ func (rr *Router) route(m Msg) []*rsub {
 		subs[i], subs[j] = subs[j], subs[i]
 	})
 
+	var has SelFlags
+	if len(m.Data) > 0 {
+		has |= SDATA
+	}
+
+	if !m.Reply.IsZero() {
+		has |= SREPLY
+	}
+
 	var gg map[Group]struct{}
 	return slices.DeleteFunc(subs, func(rs *rsub) bool {
+		want := rs.Sel.Flags & (SDATA | SREPLY)
+		if has&rs.Sel.Flags != want {
+			return true
+		}
+
 		if lim := rs.Sel.Limit; lim > 0 && rs.n.Load() >= uint64(lim) {
 			return true
 		}

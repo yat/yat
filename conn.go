@@ -165,6 +165,7 @@ func (cc *Conn) Subscribe(sel Sel, f func(Msg)) (Sub, error) {
 	cc.handlers[id] = h
 	cc.wbuf = wire.AppendFrame(cc.wbuf, wire.FSUB, wire.SubFrameBody{
 		ID:    id,
+		Flags: uint32(sel.Flags),
 		Limit: uint32(sel.Limit),
 		Path:  sel.Path.data,
 		Group: []byte(sel.Group.String()),

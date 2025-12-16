@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -325,8 +326,11 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 	rm.Msg.parse(wm)
 
 	subs := sc.rr.route(rm.Msg)
+	responder := slices.ContainsFunc(subs, func(rs *rsub) bool {
+		return rs.Sel.Flags&SRES != 0
+	})
 
-	if len(subs) == 0 {
+	if !responder {
 		return sc.fail(body.ID, ENOENT)
 	}
 
@@ -343,6 +347,7 @@ func (sc *serverConn) handleSubFrame(ctx context.Context, b []byte) error {
 	}
 
 	sel := Sel{
+		Flags: SelFlags(body.Flags),
 		Limit: int(body.Limit),
 	}
 

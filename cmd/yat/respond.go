@@ -56,7 +56,8 @@ func (cmd RespondCmd) run(ctx context.Context, _ *slog.Logger, cfg SharedConfig)
 	}
 
 	sel := yat.Sel{
-		Path: path,
+		Path:  path,
+		Flags: yat.SRES | yat.SREPLY,
 	}
 
 	if cmd.Limit > 0 {
@@ -72,10 +73,6 @@ func (cmd RespondCmd) run(ctx context.Context, _ *slog.Logger, cfg SharedConfig)
 	defer cc.Close()
 
 	sub, err := cc.Subscribe(sel, func(m yat.Msg) {
-		if m.Reply.IsZero() {
-			return
-		}
-
 		res := yat.Msg{
 			Path: m.Reply,
 			Data: data,

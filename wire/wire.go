@@ -34,6 +34,7 @@ type ReqFrameBody struct {
 
 type SubFrameBody struct {
 	ID    ID
+	Flags uint32
 	Limit uint32
 	Path  []byte
 	Group []byte
@@ -86,8 +87,8 @@ type reqFrameHdr struct {
 
 type subFrameHdr struct {
 	ID       ID
+	Flags    uint32
 	Limit    uint32
-	_        [4]byte
 	PathLen  uint16
 	GroupLen uint16
 }
@@ -202,6 +203,7 @@ func (h reqFrameHdr) EncodedLen() int {
 func (fb SubFrameBody) Encode(b []byte) []byte {
 	return append(append(unsafeEncode(b, subFrameHdr{
 		ID:       fb.ID,
+		Flags:    fb.Flags,
 		Limit:    fb.Limit,
 		PathLen:  uint16(len(fb.Path)),
 		GroupLen: uint16(len(fb.Group)),
@@ -225,6 +227,7 @@ func (fb *SubFrameBody) Decode(b []byte) (n int, err error) {
 
 	*fb = SubFrameBody{
 		ID:    h.ID,
+		Flags: h.Flags,
 		Limit: h.Limit,
 		Path:  fields[:plen],
 		Group: fields[plen:],
