@@ -20,11 +20,48 @@ func NewPath(str string) Path {
 }
 
 // ParsePath parses a path from a raw value.
-// If the value is a byte slice, the returned path aliases the slice.
-// ParsePath returns an error if the path is invalid.
-// If the path contains a * or ** segment, ParsePath returns wild=true.
+// It returns an error if the path is invalid.
+// If the path contains a * or ** wildcard, ParsePath returns wild=true.
 func ParsePath(raw []byte) (parsed Path, wild bool, err error) {
 	return parsePath(raw)
+}
+
+// Match returns true if the given path matches the receiver,
+// which may contain * or ** wildcards.
+// Zero values never match.
+func (p Path) Match(o Path) bool {
+	if p.IsZero() || o.IsZero() {
+		return false
+	}
+
+	// head segments
+	var ps, os Path
+
+	for {
+		ps, p = p.cut()
+		os, o = o.cut()
+
+		if ps.IsZero() {
+			return os.IsZero()
+		}
+
+		if os.IsZero() {
+			return false
+		}
+
+		switch ps.String() {
+		case "*":
+			continue
+
+		case "**":
+			return true
+
+		default:
+			if !os.Equal(ps) {
+				return false
+			}
+		}
+	}
 }
 
 // Clone returns a copy of the path.
