@@ -301,7 +301,7 @@ func newConn(t *testing.T) *yat.Conn {
 
 // newConnWithRouter returns a new client conn
 // connected to a server conn serving the given router
-// over a synchronous pipe.
+// over a synchronous pipe. All actions are allowed.
 //
 // It's fine to call Close on the returned conn,
 // but it's not required: The client and server conns
@@ -310,7 +310,10 @@ func newConnWithRouter(t *testing.T, rr *yat.Router) *yat.Conn {
 	a, b := net.Pipe()
 	cc := yat.NewConn(a)
 	t.Cleanup(func() { cc.Close() })
-	go yat.Serve(t.Context(), b, rr)
+	go yat.Serve(t.Context(), b, yat.ServerConfig{
+		Auth:   yat.AllowAll(),
+		Router: rr,
+	})
 	return cc
 }
 

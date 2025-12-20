@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
@@ -26,14 +27,17 @@ import (
 )
 
 type Server struct {
-	tlsConfig *tls.Config
-	logger    *slog.Logger
-	router    *Router
+	tls *tls.Config
+	cfg ServerConfig
 }
 
 // ServerConfig configures server behavior.
 // The zero ServerConfig is a valid configuration.
 type ServerConfig struct {
+
+	// Auth configures the server's token validation and access control rules.
+	// If it is nil, all client actions will fail.
+	Auth *Auth
 
 	// Logger is where the server writes logs.
 	// If it is nil, server logs are discarded.
@@ -45,11 +49,12 @@ type ServerConfig struct {
 }
 
 type serverConn struct {
+	cfg  ServerConfig
 	conn net.Conn
-	rr   *Router
 	id   uuid.UUID
 
 	mu    sync.Mutex
+	allow func(Path, Action) bool
 	subs  map[wire.ID]*rsub
 	wbufs net.Buffers
 	wbufC chan struct{}
@@ -86,10 +91,14 @@ func NewServer(tc *tls.Config, cfg ServerConfig) (*Server, error) {
 	}
 
 	cfg = cfg.withDefaults()
+
+	if cfg.Auth == nil {
+		cfg.Logger.Warn("client auth is not configured")
+	}
+
 	svr := &Server{
-		tlsConfig: tc,
-		logger:    cfg.Logger,
-		router:    cfg.Router,
+		tls: tc,
+		cfg: cfg,
 	}
 
 	return svr, nil
@@ -98,7 +107,7 @@ func NewServer(tc *tls.Config, cfg ServerConfig) (*Server, error) {
 // Serve serves connections accepted from l.
 // It always returns a non-nil error and closes l.
 func (s *Server) Serve(l net.Listener) error {
-	tc := s.tlsConfig.Clone()
+	tc := s.tls.Clone()
 	tl := tls.NewListener(l, tc)
 
 	hs := &http.Server{
@@ -122,7 +131,7 @@ func (s *Server) Serve(l net.Listener) error {
 
 	// the yat client protocol, version 0
 	hs.TLSNextProto["y0"] = func(_ *http.Server, c *tls.Conn, _ http.Handler) {
-		s.serveClient(context.TODO(), c)
+		s.serveClient(context.Background(), c)
 	}
 
 	return hs.Serve(tl)
@@ -134,7 +143,7 @@ func (s *Server) serveClient(ctx context.Context, conn *tls.Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	logger := s.logger.With(
+	logger := s.cfg.Logger.With(
 		"conn", uuid.New().String(),
 		"remote", conn.RemoteAddr().String(),
 		"local", conn.LocalAddr().String())
@@ -147,7 +156,10 @@ func (s *Server) serveClient(ctx context.Context, conn *tls.Conn) {
 			"elapsed", time.Since(start).Seconds())
 	}()
 
-	err := Serve(ctx, conn, s.router)
+	sc := newServerConn(conn, s.cfg)
+	defer sc.unroute()
+
+	err := sc.Serve(ctx)
 	if err == io.EOF {
 		err = nil
 	}
@@ -158,37 +170,33 @@ func (s *Server) serveClient(ctx context.Context, conn *tls.Conn) {
 }
 
 // Serve serves the given router to conn using the binary protocol.
-func Serve(ctx context.Context, conn net.Conn, rr *Router) error {
+func Serve(ctx context.Context, conn net.Conn, cfg ServerConfig) error {
 	defer conn.Close()
 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	sc := serverConn{
+	sc := newServerConn(conn, cfg)
+	defer sc.unroute()
+
+	return sc.Serve(ctx)
+}
+
+func newServerConn(conn net.Conn, cfg ServerConfig) *serverConn {
+	address, _ := netip.ParseAddrPort(conn.RemoteAddr().String())
+	allow := cfg.Auth.Compile(AuthContext{
+		Address: address,
+	})
+
+	return &serverConn{
+		cfg:   cfg,
 		conn:  conn,
-		rr:    rr,
 		id:    uuid.New(),
+		allow: allow,
 		subs:  map[wire.ID]*rsub{},
 		wbufC: make(chan struct{}, 1),
 	}
-
-	defer func() {
-		var subs []*rsub
-		for _, s := range sc.subs {
-			subs = append(subs, s)
-		}
-
-		if sc.replySub != nil {
-			subs = append(subs, sc.replySub)
-		}
-
-		if len(subs) > 0 {
-			sc.rr.rm(subs)
-		}
-	}()
-
-	return sc.Serve(ctx)
 }
 
 func (sc *serverConn) Serve(ctx context.Context) error {
@@ -281,8 +289,13 @@ func (sc *serverConn) handlePubFrame(ctx context.Context, b []byte) error {
 		return errAtPath
 	}
 
-	subs := sc.rr.route(m)
-	sc.rr.deliver(subs, rmsg{
+	if !sc.allow(m.Path, PubAction) {
+		// FIX: debug log
+		return nil
+	}
+
+	subs := sc.cfg.Router.route(m)
+	sc.cfg.Router.deliver(subs, rmsg{
 		Msg: m,
 		Buf: b,
 	})
@@ -312,6 +325,11 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 		return sc.handleSpecialRequest(path, body.ID, body.Data)
 	}
 
+	if !sc.allow(path, PubAction) {
+		// FIX: debug log
+		return nil
+	}
+
 	b = b[:n]
 	i := len(b)
 	b = sc.appendReplyPath(b, body.ID)
@@ -325,7 +343,7 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 	rm := rmsg{Buf: b[8:]}
 	rm.Msg.parse(wm)
 
-	subs := sc.rr.route(rm.Msg)
+	subs := sc.cfg.Router.route(rm.Msg)
 	responder := slices.ContainsFunc(subs, func(rs *rsub) bool {
 		return rs.Sel.Flags&SRES != 0
 	})
@@ -334,7 +352,7 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 		return sc.fail(body.ID, ENOENT)
 	}
 
-	sc.rr.deliver(subs, rm)
+	sc.cfg.Router.deliver(subs, rm)
 
 	return nil
 }
@@ -366,6 +384,11 @@ func (sc *serverConn) handleSubFrame(ctx context.Context, b []byte) error {
 		return nil
 	}
 
+	if !sc.allow(sel.Path, SubAction) {
+		//FIX: log
+		return nil
+	}
+
 	sel.Group = NewGroup(string(body.Group))
 
 	rs := &rsub{
@@ -380,7 +403,7 @@ func (sc *serverConn) handleSubFrame(ctx context.Context, b []byte) error {
 	sc.subs[rs.ID] = rs
 	sc.mu.Unlock()
 
-	sc.rr.swap(old, rs)
+	sc.cfg.Router.swap(old, rs)
 
 	return nil
 }
@@ -397,7 +420,7 @@ func (sc *serverConn) handleUnsubFrame(ctx context.Context, b []byte) error {
 	delete(sc.subs, body.ID)
 	sc.mu.Unlock()
 
-	sc.rr.swap(rs, nil)
+	sc.cfg.Router.swap(rs, nil)
 
 	return nil
 }
@@ -568,7 +591,7 @@ func (sc *serverConn) appendReplyPath(b []byte, id wire.ID) []byte {
 			panic(err)
 		}
 
-		sc.replyPrefix = b64.AppendEncode([]byte("@/"), sc.rr.id[:])
+		sc.replyPrefix = b64.AppendEncode([]byte("@/"), sc.cfg.Router.id[:])
 		sc.replyPrefix = append(b64.AppendEncode(append(sc.replyPrefix, '/'), sc.id[:]), '/')
 		sc.replyPrefix = sc.replyPrefix[:len(sc.replyPrefix):len(sc.replyPrefix)]
 
@@ -577,7 +600,7 @@ func (sc *serverConn) appendReplyPath(b []byte, id wire.ID) []byte {
 			Deliver: sc.reply,
 		}
 
-		sc.rr.swap(nil, sc.replySub)
+		sc.cfg.Router.swap(nil, sc.replySub)
 	})
 
 	exp := time.Now().Add(serverReplyPathTimeout)
@@ -591,6 +614,22 @@ func (sc *serverConn) appendReplyPath(b []byte, id wire.ID) []byte {
 
 	enc := sc.replyAEAD.Seal(nonce, nonce, payload, sc.replyPrefix)
 	return b64.AppendEncode(append(b, sc.replyPrefix...), enc)
+}
+
+// unroute is called after the conn is closed.
+func (sc *serverConn) unroute() {
+	var subs []*rsub
+	for _, s := range sc.subs {
+		subs = append(subs, s)
+	}
+
+	if sc.replySub != nil {
+		subs = append(subs, sc.replySub)
+	}
+
+	if len(subs) > 0 {
+		sc.cfg.Router.rm(subs)
+	}
 }
 
 func (cfg ServerConfig) withDefaults() ServerConfig {

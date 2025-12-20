@@ -6,6 +6,9 @@ Usage:
 
 Flags:
 
+  -auth-rules FILE
+      A JSON or YAML file containing client auth rules.
+
   -bind HOST:PORT
       Local TCP address for the server to announce.
       If this flag is not set, the server announces the address

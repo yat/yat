@@ -1,0 +1,11 @@
+auth:
+  rules:
+    - token:
+        issuer: https://issuer.test
+        audience: client
+        claims:
+          role: admin
+      grants:
+        - path: secure/**
+          actions:
+            - pub

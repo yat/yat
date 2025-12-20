@@ -18,8 +18,9 @@ import (
 )
 
 type ServeCmd struct {
-	Bind        string
-	LocalTLSDir string
+	AuthRulesFile string
+	BindAddress   string
+	LocalTLSDir   string
 }
 
 var (
@@ -40,8 +41,8 @@ func (cmd ServeCmd) Run(ctx context.Context, logger *slog.Logger, cfg SharedConf
 		return fmt.Errorf("yat serve: %v", err)
 	}
 
-	if len(cmd.Bind) == 0 {
-		cmd.Bind = cfg.Address
+	if len(cmd.BindAddress) == 0 {
+		cmd.BindAddress = cfg.Address
 	}
 
 	tlsConfig.MinVersion = tls.VersionTLS13
@@ -53,16 +54,31 @@ func (cmd ServeCmd) Run(ctx context.Context, logger *slog.Logger, cfg SharedConf
 }
 
 func (cmd ServeCmd) run(ctx context.Context, logger *slog.Logger, tlsConfig *tls.Config) error {
-	l, err := net.Listen("tcp", cmd.Bind)
+	l, err := net.Listen("tcp", cmd.BindAddress)
 	if err != nil {
 		return err
 	}
 
 	defer l.Close()
 
-	svr, err := yat.NewServer(tlsConfig, yat.ServerConfig{
+	scfg := yat.ServerConfig{
 		Logger: logger,
-	})
+	}
+
+	if cmd.AuthRulesFile != "" {
+		rules, err := yat.ReadAuthRulesFile(cmd.AuthRulesFile)
+
+		if err != nil {
+			return fmt.Errorf("read %s: %v", cmd.AuthRulesFile, err)
+		}
+
+		scfg.Auth, err = yat.NewAuth(ctx, rules)
+		if err != nil {
+			return err
+		}
+	}
+
+	svr, err := yat.NewServer(tlsConfig, scfg)
 
 	if err != nil {
 		return err
@@ -76,7 +92,8 @@ func (cmd ServeCmd) run(ctx context.Context, logger *slog.Logger, tlsConfig *tls
 
 func (cmd *ServeCmd) Flags() *flagset.Set {
 	flags := flagset.New()
-	flags.String(&cmd.Bind, "bind")
+	flags.String(&cmd.AuthRulesFile, "auth-rules")
+	flags.String(&cmd.BindAddress, "bind")
 	flags.String(&cmd.LocalTLSDir, "local-tls")
 	return flags
 }

@@ -8,5 +8,6 @@ bin/build
 
 exec go tool logfmt -x time \
   ./yat serve \
-    -log-level debug \
-    -local-tls tmp/tls "$@"
+    -auth-rules testdata/auth/local.yaml \
+    -local-tls tmp/tls \
+    -log-level debug "$@"
