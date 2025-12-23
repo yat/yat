@@ -6,10 +6,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,14 +20,12 @@ import (
 )
 
 type SharedConfig struct {
-	Address  string
-	LogLevel slog.Level
-
-	// client flags
-
+	Address     string
+	LogLevel    slog.Level
 	TLSCertFile string
 	TLSKeyFile  string
 	TLSCAFile   string
+	LocalDir    string
 }
 
 type usageError struct {
@@ -51,6 +51,7 @@ func run(ctx context.Context, args []string) error {
 		TLSCertFile: os.Getenv("YAT_TLS_CERT_FILE"),
 		TLSKeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
 		TLSCAFile:   os.Getenv("YAT_TLS_CA_FILE"),
+		LocalDir:    os.Getenv("YAT_LOCAL_DIR"),
 	}
 
 	flags := flagset.New()
@@ -59,6 +60,7 @@ func run(ctx context.Context, args []string) error {
 	flags.String(&cfg.TLSCertFile, "tls-cert-file")
 	flags.String(&cfg.TLSKeyFile, "tls-key-file")
 	flags.String(&cfg.TLSCAFile, "tls-ca-file")
+	flags.String(&cfg.LocalDir, "local")
 
 	args, err := flags.Parse(args)
 	if err != nil {
@@ -90,6 +92,9 @@ func run(ctx context.Context, args []string) error {
 
 	case "serve":
 		cmd = &ServeCmd{}
+
+	case "local":
+		cmd = &LocalCmd{}
 
 	case "help":
 		cmd = &HelpCmd{}
@@ -158,6 +163,13 @@ func (cfg SharedConfig) Dial(ctx context.Context) (net.Conn, error) {
 		NextProtos: []string{"y0"},
 	}
 
+	if cfg.LocalDir != "" {
+		tlsConfig.ServerName = "local-yat"
+		cfg.TLSCAFile = filepath.Join(cfg.LocalDir, "tls/ca.crt")
+		cfg.TLSCertFile = filepath.Join(cfg.LocalDir, "tls/client.crt")
+		cfg.TLSKeyFile = filepath.Join(cfg.LocalDir, "tls/client.key")
+	}
+
 	if len(cfg.TLSCertFile) > 0 && len(cfg.TLSKeyFile) > 0 {
 		crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
 		if err != nil {
@@ -168,12 +180,12 @@ func (cfg SharedConfig) Dial(ctx context.Context) (net.Conn, error) {
 	}
 
 	if len(cfg.TLSCAFile) > 0 {
-		tlsConfig.RootCAs = x509.NewCertPool()
 		rootCerts, err := os.ReadFile(cfg.TLSCAFile)
 		if err != nil {
 			return nil, err
 		}
 
+		tlsConfig.RootCAs = x509.NewCertPool()
 		if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCerts) {
 			return nil, fmt.Errorf("read %s: no certificates", cfg.TLSCAFile)
 		}
@@ -184,6 +196,44 @@ func (cfg SharedConfig) Dial(ctx context.Context) (net.Conn, error) {
 	}
 
 	return d.DialContext(ctx, "tcp", cfg.Address)
+}
+
+func (cfg SharedConfig) NewServerTLSConfig() (*tls.Config, error) {
+	if cfg.LocalDir != "" {
+		cfg.TLSCAFile = filepath.Join(cfg.LocalDir, "tls/ca.crt")
+		cfg.TLSCertFile = filepath.Join(cfg.LocalDir, "tls/server.crt")
+		cfg.TLSKeyFile = filepath.Join(cfg.LocalDir, "tls/server.key")
+	}
+
+	if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
+		return nil, errors.New("invalid TLS configuration")
+	}
+
+	crt, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{crt},
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	if cfg.TLSCAFile != "" {
+		rootCerts, err := os.ReadFile(cfg.TLSCAFile)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsConfig.ClientCAs = x509.NewCertPool()
+
+		if !tlsConfig.ClientCAs.AppendCertsFromPEM(rootCerts) {
+			return nil, fmt.Errorf("read %s: no certificates", cfg.TLSCAFile)
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 // getDefaultLogLevel returns the result of parsing YAT_LOG_LEVEL or [slog.LevelError].

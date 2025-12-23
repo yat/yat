@@ -6,8 +6,8 @@ set -eu
 
 bin/build
 
+# generate a local dev config on demand
+[ -f tmp/local/README ] || ./yat local tmp/local
+
 exec go tool logfmt -x time \
-  ./yat serve \
-    -auth-rules testdata/auth/local.yaml \
-    -local-tls tmp/tls \
-    -log-level debug "$@"
+  ./yat serve -log-level debug -local tmp/local "$@"

@@ -1,0 +1,16 @@
+Local generates local config files for dev or testing.
+Usese the generated configuration by setting the -local flag
+or the YAT_LOCAL_DIR environment variable.
+
+Usage:
+
+  yat local DIR
+
+Files:
+
+  rules.yaml
+  tls/ca.crt
+  tls/server.crt
+  tls/server.key
+  tls/client.crt
+  tls/client.key

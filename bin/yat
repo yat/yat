@@ -7,7 +7,4 @@
 set -eu
 
 bin/build
-exec ./yat \
-  -tls-cert-file tmp/tls/client.crt \
-  -tls-key-file tmp/tls/client.key \
-  -tls-ca-file tmp/tls/ca.crt "$@"
+exec ./yat -local tmp/local "$@"

@@ -177,6 +177,7 @@ func Serve(ctx context.Context, conn net.Conn, cfg ServerConfig) error {
 		return err
 	}
 
+	cfg = cfg.withDefaults()
 	sc := newServerConn(conn, cfg)
 	defer sc.unroute()
 

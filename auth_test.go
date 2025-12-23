@@ -142,6 +142,20 @@ func TestAuthTokenSpecMatch(t *testing.T) {
 		t.Fatal("allowed publish without token")
 	}
 
+	allow = a.Compile(AuthContext{
+		Token: &AuthToken{
+			claims: map[string]any{
+				"iss":   "https://issuer.test",
+				"aud":   []any{"client"},
+				"group": "dev",
+			},
+		},
+	})
+
+	if !allow(NewPath("secure"), SubAction) {
+		t.Fatal("token aud slice denied")
+	}
+
 	badToken := &AuthToken{
 		claims: map[string]any{
 			"iss":   "https://issuer.test",
@@ -188,7 +202,7 @@ func TestAuthMultipleRulesAccumulate(t *testing.T) {
 }
 
 func TestAuthExprMatch(t *testing.T) {
-	match, err := compileAuthExpr2(`conn.local && conn.token.claims["role"] == "loop"`)
+	match, err := compileAuthExpr(`conn.local && conn.token.claims["role"] == "loop"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +283,7 @@ func TestAuthVerify(t *testing.T) {
 }
 
 func TestReadAuthRulesFile_LocalExample(t *testing.T) {
-	rules, err := ReadAuthRulesFile("testdata/auth/local.yaml")
+	rules, err := ReadAuthFile("testdata/auth/local.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +314,7 @@ func TestReadAuthRulesFile_LocalExample(t *testing.T) {
 }
 
 func TestReadAuthRulesFile_WithToken(t *testing.T) {
-	rules, err := ReadAuthRulesFile("testdata/auth/token.yaml")
+	rules, err := ReadAuthFile("testdata/auth/token.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

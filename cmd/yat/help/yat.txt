@@ -12,6 +12,7 @@ Commands:
   request     publish a request
   respond     respond to requests
   serve       run the server
+  local       generate local config
   help        print command help
   version     print Yat version
 
@@ -36,3 +37,8 @@ Shared flags:
 
   -tls-ca-file PATH ($YAT_TLS_CA_FILE)
       A file containing PEM-encoded root certificates.
+
+  -local DIR ($YAT_LOCAL_DIR)
+      Load credentials and configuration from this directory,
+      overriding any other flags or environment variables.
+      See "yat help local" for details.

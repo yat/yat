@@ -118,9 +118,9 @@ func NewAuth(ctx context.Context, rules []AuthRule) (*Auth, error) {
 	return a, nil
 }
 
-// ReadAuthRulesFile reads and parses a set of auth rules from the named file,
+// ReadAuthFile reads and parses a set of auth rules from the named file,
 // which can contain YAML or JSON. See testdata/auth/ in this package for examples.
-func ReadAuthRulesFile(name string) (rules []AuthRule, err error) {
+func ReadAuthFile(name string) (rules []AuthRule, err error) {
 	data, err := os.ReadFile(name)
 	if err != nil {
 		return
@@ -154,7 +154,7 @@ func ReadAuthRulesFile(name string) (rules []AuthRule, err error) {
 		r := AuthRule{}
 
 		if fr.Match != "" {
-			r.Match, err = compileAuthExpr2(fr.Match)
+			r.Match, err = compileAuthExpr(fr.Match)
 			if err != nil {
 				err = fmt.Errorf("rules[%d]: %v", i, err)
 				return
@@ -289,16 +289,7 @@ func (spec AuthTokenSpec) match(at *AuthToken) bool {
 			return false
 		}
 
-		var got jwt.Audience
-		switch v := raw.(type) {
-		case string:
-			got = append(got, v)
-
-		case []string:
-			got = append(got, v...)
-		}
-
-		if !got.Contains(spec.Audience) {
+		if !audContains(raw, spec.Audience) {
 			return false
 		}
 	}
@@ -319,7 +310,7 @@ func (g AuthGrant) allow(p Path, a Action) bool {
 	return g.Path.Match(p) && slices.Contains(g.Actions, a)
 }
 
-func compileAuthExpr2(expr string) (func(ac AuthContext) bool, error) {
+func compileAuthExpr(expr string) (func(ac AuthContext) bool, error) {
 	ast, issues := authEnv.Parse(expr)
 	if err := issues.Err(); err != nil {
 		return nil, err
@@ -357,12 +348,36 @@ func compileAuthExpr2(expr string) (func(ac AuthContext) bool, error) {
 		})
 
 		if err != nil {
-			panic(err)
+			return false
 		}
 
 		ok, _ := v.Value().(bool)
 		return ok
 	}, nil
+}
+
+func audContains(aud any, want string) bool {
+	switch v := aud.(type) {
+	case string:
+		return v == want
+
+	case []string:
+		return slices.Contains(v, want)
+
+	case jwt.Audience:
+		return v.Contains(want)
+
+	case []any:
+		for _, elem := range v {
+			if s, ok := elem.(string); ok && s == want {
+				return true
+			}
+		}
+		return false
+
+	default:
+		return false
+	}
 }
 
 func init() {

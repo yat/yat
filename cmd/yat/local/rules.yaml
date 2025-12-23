@@ -1,0 +1,8 @@
+auth:
+  rules:
+    - match: "conn.local"
+      grants:
+        - path: "**"
+          actions:
+            - pub
+            - sub
