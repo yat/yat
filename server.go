@@ -327,8 +327,7 @@ func (sc *serverConn) handleReqFrame(ctx context.Context, b []byte) error {
 	}
 
 	if !sc.allow(path, PubAction) {
-		// FIX: debug log
-		return nil
+		return sc.fail(body.ID, EPERM)
 	}
 
 	b = b[:n]

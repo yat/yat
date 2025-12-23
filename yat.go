@@ -52,6 +52,7 @@ type Sub interface {
 type Errno uint32
 
 const (
+	EPERM  = Errno(1)  // permission denied
 	ENOENT = Errno(2)  // no responders
 	EINVAL = Errno(22) // invalid argument
 )
@@ -64,6 +65,9 @@ var (
 
 func (e Errno) Error() string {
 	switch e {
+	case EPERM:
+		return "permission denied"
+
 	case ENOENT:
 		return "no responders"
 
@@ -77,6 +81,9 @@ func (e Errno) Error() string {
 
 func (e Errno) String() string {
 	switch e {
+	case EPERM:
+		return "EPERM"
+
 	case ENOENT:
 		return "ENOENT"
 
