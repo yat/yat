@@ -289,7 +289,22 @@ func (spec AuthTokenSpec) match(at *AuthToken) bool {
 			return false
 		}
 
-		if !audContains(raw, spec.Audience) {
+		switch aud := raw.(type) {
+		case string:
+			if aud != spec.Audience {
+				return false
+			}
+
+		case []any:
+			ok := slices.ContainsFunc(aud, func(v any) bool {
+				return v == spec.Audience
+			})
+
+			if !ok {
+				return false
+			}
+
+		default:
 			return false
 		}
 	}
@@ -354,30 +369,6 @@ func compileAuthExpr(expr string) (func(ac AuthContext) bool, error) {
 		ok, _ := v.Value().(bool)
 		return ok
 	}, nil
-}
-
-func audContains(aud any, want string) bool {
-	switch v := aud.(type) {
-	case string:
-		return v == want
-
-	case []string:
-		return slices.Contains(v, want)
-
-	case jwt.Audience:
-		return v.Contains(want)
-
-	case []any:
-		for _, elem := range v {
-			if s, ok := elem.(string); ok && s == want {
-				return true
-			}
-		}
-		return false
-
-	default:
-		return false
-	}
 }
 
 func init() {
