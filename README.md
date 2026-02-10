@@ -1,0 +1,2 @@
+- `protoc` is required to run `go generate ./api`
+- `ragel` is required to run `go generate .`

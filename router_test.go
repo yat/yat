@@ -1,0 +1,224 @@
+package yat_test
+
+import (
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+
+	"yat.io/yat"
+)
+
+func TestRouterMatching(t *testing.T) {
+	var tcs = []struct {
+		Name    string
+		Pattern string
+		Path    string
+	}{
+		{"literal-match", "x", "x"},
+		{"literal-miss", "x", "y"},
+		{"single-wildcard", "*", "anything"},
+		{"single-wildcard-miss", "*", "a/b"},
+		{"prefix-wildcard", "x/*", "x/y"},
+		{"prefix-wildcard-miss", "x/*", "x/y/z"},
+		{"infix-wildcards", "*/*", "a/b"},
+		{"infix-wildcards-miss", "*/*", "a"},
+		{"double-star-root", "**", "x/y/z"},
+		{"double-star-prefix", "x/**", "x/y/z"},
+		{"double-star-prefix-min", "x/**", "x/y"},
+		{"double-star-prefix-miss", "x/**", "x"},
+		{"mixed-double-star", "*/**", "a/b/c"},
+		{"mixed-double-star-miss", "*/**", "a"},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.Name, func(t *testing.T) {
+			t.Parallel()
+
+			pat := yat.NewPath(tc.Pattern)
+			p := yat.NewPath(tc.Path)
+
+			pmatch := pat.Match(p)
+
+			var rmatch bool
+			synctest.Test(t, func(t *testing.T) {
+				rr := yat.NewRouter()
+
+				var n atomic.Uint64
+				_, err := rr.Subscribe(yat.Sel{Path: pat}, func(m yat.Msg) {
+					n.Add(1)
+				})
+
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err := rr.Publish(yat.Msg{Path: p}); err != nil {
+					t.Fatal(err)
+				}
+
+				synctest.Wait()
+				rmatch = n.Load() > 0
+			})
+
+			if pmatch != rmatch {
+				t.Errorf("match(%q, %q): path=%v, router=%v", pat, p, pmatch, rmatch)
+			}
+		})
+	}
+}
+
+func TestRouterFanout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			nfanoutSubs = 32
+			nwildSubs   = 16
+			nallSubs    = 8
+			nnegSubs    = 8
+
+			npublishers = 8
+			nmsgPerPub  = 200
+		)
+
+		rr := yat.NewRouter()
+
+		pathAB := mustPath("a/b")
+		pathAC := mustPath("a/c")
+		pathXY := mustPath("x/y")
+
+		addSubs := func(sel yat.Sel, n int, handler func(yat.Msg)) []func() {
+			t.Helper()
+
+			unsubs := make([]func(), 0, n)
+			for range n {
+				unsub, err := rr.Subscribe(sel, handler)
+				if err != nil {
+					t.Fatalf("subscribe %q: %v", sel.Path.String(), err)
+				}
+				unsubs = append(unsubs, unsub)
+			}
+			return unsubs
+		}
+
+		countingHandler := func(counter *atomic.Uint64) func(yat.Msg) {
+			return func(yat.Msg) {
+				counter.Add(1)
+			}
+		}
+
+		var (
+			fanoutCount   atomic.Uint64
+			wildcardCount atomic.Uint64
+			allCount      atomic.Uint64
+			negativeCount atomic.Uint64
+		)
+
+		var unsubs []func()
+		unsubs = append(unsubs, addSubs(yat.Sel{Path: pathAB}, nfanoutSubs, countingHandler(&fanoutCount))...)
+		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("a/*")}, nwildSubs, countingHandler(&wildcardCount))...)
+		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("**")}, nallSubs, countingHandler(&allCount))...)
+		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("no/match")}, nnegSubs, countingHandler(&negativeCount))...)
+		t.Cleanup(func() {
+			for _, unsub := range unsubs {
+				unsub()
+			}
+		})
+
+		for range npublishers {
+			go func() {
+				for j := 0; j < nmsgPerPub; j++ {
+					_ = rr.Publish(yat.Msg{Path: pathAB})
+					_ = rr.Publish(yat.Msg{Path: pathAC})
+					_ = rr.Publish(yat.Msg{Path: pathXY})
+				}
+			}()
+		}
+
+		synctest.Wait()
+
+		totalPerPath := npublishers * nmsgPerPub
+		expectedFanout := uint64(totalPerPath * nfanoutSubs)
+		expectedWildcard := uint64(totalPerPath * 2 * nwildSubs)
+		expectedAll := uint64(totalPerPath * 3 * nallSubs)
+
+		if got := fanoutCount.Load(); got != expectedFanout {
+			t.Fatalf("fanout: %d != %d", got, expectedFanout)
+		}
+		if got := wildcardCount.Load(); got != expectedWildcard {
+			t.Fatalf("wildcard: %d != %d", got, expectedWildcard)
+		}
+		if got := allCount.Load(); got != expectedAll {
+			t.Fatalf("match-all: %d != %d", got, expectedAll)
+		}
+		if got := negativeCount.Load(); got != 0 {
+			t.Fatalf("negative: %d != 0", got)
+		}
+	})
+}
+
+func TestRouter_Publish(t *testing.T) {
+	t.Run("empty path", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+
+			var n atomic.Uint64
+			_, err := rr.Subscribe(yat.Sel{Path: mustPath("**")}, func(yat.Msg) {
+				n.Add(1)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := rr.Publish(yat.Msg{Path: yat.Path{}}); err == nil {
+				t.Fatal("no error")
+			}
+
+			synctest.Wait()
+			if got := n.Load(); got != 0 {
+				t.Fatalf("unexpected deliveries: %d", got)
+			}
+		})
+	})
+
+	t.Run("wild path", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+
+			var n atomic.Uint64
+			_, err := rr.Subscribe(yat.Sel{Path: mustPath("**")}, func(yat.Msg) {
+				n.Add(1)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := rr.Publish(yat.Msg{Path: mustPath("*")}); err == nil {
+				t.Fatal("no error")
+			}
+
+			synctest.Wait()
+			if got := n.Load(); got != 0 {
+				t.Fatalf("unexpected deliveries: %d", got)
+			}
+		})
+	})
+}
+
+func TestRouter_Subscribe(t *testing.T) {
+	t.Run("empty path", func(t *testing.T) {
+		rr := yat.NewRouter()
+		unsub, err := rr.Subscribe(yat.Sel{}, func(yat.Msg) {})
+		if err == nil {
+			t.Fatal("no error")
+		}
+		if unsub != nil {
+			t.Fatal("unexpected unsub")
+		}
+	})
+
+	t.Run("nil handler", func(t *testing.T) {
+		rr := yat.NewRouter()
+		if _, err := rr.Subscribe(yat.Sel{Path: mustPath("path")}, nil); err == nil {
+			t.Error("no error")
+		}
+	})
+}

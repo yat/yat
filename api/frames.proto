@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package yat;
+
+option go_package = "yat.io/yat/api";
+
+message PubFrame {
+  reserved 1; // num
+
+  bytes path  = 2;
+  bytes data  = 3;
+  bytes inbox = 4;
+}
+
+message SubFrame {
+  uint64 num = 1;
+  bytes path = 2;
+}
+
+message UnsubFrame {
+  uint64 num = 1;
+}
+
+message MsgFrame {
+  uint64 num  = 1;
+  bytes path  = 2;
+  bytes data  = 3;
+  bytes inbox = 4;
+}
