@@ -207,6 +207,14 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 }
 
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
+	msg, raw, err := parseMsg(body)
+	if err != nil {
+		return err
+	}
+
+	// wip
+	_ = msg
+	_ = raw
 	panic("handlePub")
 }
 

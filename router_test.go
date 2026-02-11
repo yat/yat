@@ -8,7 +8,7 @@ import (
 	"yat.io/yat"
 )
 
-func TestRouterMatching(t *testing.T) {
+func TestRouterVsPathMatch(t *testing.T) {
 	var tcs = []struct {
 		Name    string
 		Pattern string
@@ -156,68 +156,40 @@ func TestRouterFanout(t *testing.T) {
 }
 
 func TestRouter_Publish(t *testing.T) {
-	t.Run("empty path", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
+	bad := map[string]yat.Msg{
+		"zero message": {},
+		"wild path":    {Path: yat.NewPath("*")},
+		"wild inbox":   {Path: yat.NewPath("path"), Inbox: yat.NewPath("*")},
+	}
+
+	for name, msg := range bad {
+		t.Run(name, func(t *testing.T) {
 			rr := yat.NewRouter()
-
-			var n atomic.Uint64
-			_, err := rr.Subscribe(yat.Sel{Path: mustPath("**")}, func(yat.Msg) {
-				n.Add(1)
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if err := rr.Publish(yat.Msg{Path: yat.Path{}}); err == nil {
+			if err := rr.Publish(msg); err == nil {
 				t.Fatal("no error")
 			}
-
-			synctest.Wait()
-			if got := n.Load(); got != 0 {
-				t.Fatalf("unexpected deliveries: %d", got)
-			}
 		})
-	})
-
-	t.Run("wild path", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			rr := yat.NewRouter()
-
-			var n atomic.Uint64
-			_, err := rr.Subscribe(yat.Sel{Path: mustPath("**")}, func(yat.Msg) {
-				n.Add(1)
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if err := rr.Publish(yat.Msg{Path: mustPath("*")}); err == nil {
-				t.Fatal("no error")
-			}
-
-			synctest.Wait()
-			if got := n.Load(); got != 0 {
-				t.Fatalf("unexpected deliveries: %d", got)
-			}
-		})
-	})
+	}
 }
 
 func TestRouter_Subscribe(t *testing.T) {
-	t.Run("empty path", func(t *testing.T) {
-		rr := yat.NewRouter()
-		unsub, err := rr.Subscribe(yat.Sel{}, func(yat.Msg) {})
-		if err == nil {
-			t.Fatal("no error")
-		}
-		if unsub != nil {
-			t.Fatal("unexpected unsub")
-		}
-	})
+	bad := map[string]yat.Sel{
+		"zero selector": {},
+		"zero path":     {Path: yat.Path{}},
+	}
+
+	for name, sel := range bad {
+		t.Run(name, func(t *testing.T) {
+			rr := yat.NewRouter()
+			if _, err := rr.Subscribe(sel, func(m yat.Msg) {}); err == nil {
+				t.Fatal("no error")
+			}
+		})
+	}
 
 	t.Run("nil handler", func(t *testing.T) {
 		rr := yat.NewRouter()
-		if _, err := rr.Subscribe(yat.Sel{Path: mustPath("path")}, nil); err == nil {
+		if _, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 			t.Error("no error")
 		}
 	})

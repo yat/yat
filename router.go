@@ -35,6 +35,7 @@ type rent struct {
 var (
 	errEmptyPath   = errors.New("empty path")
 	errWildPath    = errors.New("wildcard path")
+	errWildInbox   = errors.New("wildcard inbox")
 	errNilCallback = errors.New("nil callback func")
 )
 
@@ -51,6 +52,10 @@ func (rr *Router) Publish(m Msg) error {
 
 	if m.Path.IsWild() {
 		return errWildPath
+	}
+
+	if m.Inbox.IsWild() {
+		return errWildInbox
 	}
 
 	ee := rr.route(m)

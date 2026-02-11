@@ -28,6 +28,12 @@ const (
 	msgFrameType   = 4
 )
 
+const (
+	pathFieldNum  = 2
+	dataFieldNum  = 3
+	inboxFieldNum = 4
+)
+
 func (h frameHdr) Len() int {
 	return int(h & 0x00ffffff)
 }
@@ -63,8 +69,7 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 			return
 		}
 
-		// path, data, inbox fields only
-		if num != 2 && num != 3 && num != 4 {
+		if num != pathFieldNum && num != dataFieldNum && num != inboxFieldNum {
 			nval := protowire.ConsumeFieldValue(num, typ, body[in+nt:])
 			if nval < 0 {
 				err = protowire.ParseError(nval)
@@ -102,18 +107,30 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 		clean = clean[nt+nv:]
 
 		switch num {
-		case 2:
-			msg.Path, _, err = ParsePath(v)
+		case pathFieldNum:
+			var wild bool
+			msg.Path, wild, err = ParsePath(v)
 			if err != nil {
 				return
 			}
 
-		case 3:
+			if wild {
+				err = errWildPath
+				return
+			}
+
+		case dataFieldNum:
 			msg.Data = v
 
-		case 4:
-			msg.Inbox, _, err = ParsePath(v)
+		case inboxFieldNum:
+			var wild bool
+			msg.Inbox, wild, err = ParsePath(v)
 			if err != nil {
+				return
+			}
+
+			if wild {
+				err = errWildInbox
 				return
 			}
 		}
@@ -123,16 +140,16 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 }
 
 func appendMsgFields(b []byte, m Msg) []byte {
-	b = protowire.AppendTag(b, 2, protowire.BytesType)
+	b = protowire.AppendTag(b, pathFieldNum, protowire.BytesType)
 	b = protowire.AppendBytes(b, m.Path.p)
 
 	if len(m.Data) > 0 {
-		b = protowire.AppendTag(b, 3, protowire.BytesType)
+		b = protowire.AppendTag(b, dataFieldNum, protowire.BytesType)
 		b = protowire.AppendBytes(b, m.Data)
 	}
 
 	if !m.Inbox.IsZero() {
-		b = protowire.AppendTag(b, 4, protowire.BytesType)
+		b = protowire.AppendTag(b, inboxFieldNum, protowire.BytesType)
 		b = protowire.AppendBytes(b, m.Inbox.p)
 	}
 
@@ -146,14 +163,14 @@ func aliasMsgFields(raw []byte) (msg Msg) {
 		raw = raw[nt+nv:]
 
 		switch num {
-		case 2:
-			msg.Path, _, _ = ParsePath(v)
+		case pathFieldNum:
+			msg.Path.p = v
 
-		case 3:
+		case dataFieldNum:
 			msg.Data = v
 
-		case 4:
-			msg.Inbox, _, _ = ParsePath(v)
+		case inboxFieldNum:
+			msg.Inbox.p = v
 		}
 	}
 
