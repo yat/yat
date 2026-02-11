@@ -2,6 +2,7 @@ package yat
 
 import (
 	"errors"
+	"iter"
 	"math/rand/v2"
 	"sync"
 )
@@ -64,24 +65,38 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 		},
 	}
 
-	unsub = sync.OnceFunc(func() {
-		rr.del(e)
-	})
+	rr.update(nil, e)
+	unsub = sync.OnceFunc(func() { rr.update(e, nil) })
 
-	rr.ins(e)
 	return
 }
 
-func (rr *Router) ins(e *rent) {
+// update atomically removes old from the router and adds new.
+// If old or new is nil, it is ignored.
+func (rr *Router) update(old, new *rent) {
+	if old == nil && new == nil {
+		return
+	}
+
 	rr.mu.Lock()
-	rr.tree.Ins(e)
-	rr.mu.Unlock()
+	defer rr.mu.Unlock()
+
+	if old != nil {
+		rr.tree.Del(old)
+	}
+
+	if new != nil {
+		rr.tree.Ins(new)
+	}
 }
 
-func (rr *Router) del(e *rent) {
+// removeAll is called to clean up router entries after a connection is closed.
+func (rr *Router) removeAll(entries iter.Seq[*rent]) {
 	rr.mu.Lock()
-	rr.tree.Del(e)
-	rr.mu.Unlock()
+	defer rr.mu.Unlock()
+	for e := range entries {
+		rr.tree.Del(e)
+	}
 }
 
 func (rr *Router) route(m Msg) []*rent {
