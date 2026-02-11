@@ -41,6 +41,15 @@ Reason: this repo often has staged and unstaged work at the same time. If you on
 - A maintainer should understand the diff at a glance.
 - If a helper/abstraction adds cognitive load, remove it.
 
+## Change-shape discipline
+
+When a maintainer requests a structural change, preserve everything not explicitly in scope.
+
+- Change only the requested dimension. If the ask is "remove nesting", do not also swap control-flow style, naming style, or error-shape conventions.
+- Do not make speculative style or micro-optimization substitutions. If a change is not required for correctness or explicitly requested, leave it alone.
+- For hot-path "cleanups", prioritize reviewer intent over personal preference: equivalent behavior with smaller, clearer diffs.
+- If a potential improvement is optional, present it separately after completing the requested change.
+
 ## Review calibration
 
 1. Treat stated deployment targets as scope.
@@ -57,6 +66,10 @@ Reason: this repo often has staged and unstaged work at the same time. If you on
 
 4. Respect declared review scope for WIP code.
 - If a review request says to ignore `panic("wip")` placeholders, ignore them.
+
+## Benchmark style
+
+- Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.
 
 ## Pre-submit checklist
 

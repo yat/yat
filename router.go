@@ -13,6 +13,25 @@ type Router struct {
 	tree rnode
 }
 
+// rnode implements a simple prefix tree.
+// Empty branches are pruned on delete.
+//
+// It should be replaced with something that:
+//   - is faster and more memory efficient
+//   - doesn't churn on quick ins/del
+type rnode struct {
+	parent   *rnode
+	name     string
+	children map[string]*rnode
+	entries  map[*rent]struct{}
+}
+
+// rent is an entry in the route tree.
+type rent struct {
+	Sel Sel
+	Do  func(Msg, []byte)
+}
+
 var (
 	errEmptyPath   = errors.New("empty path")
 	errWildPath    = errors.New("wildcard path")
@@ -24,10 +43,7 @@ func NewRouter() *Router {
 	return &Router{}
 }
 
-// Pub publishes a message.
-//
-// The router takes ownership of the message:
-// The caller must not modify it after calling Pub.
+// Pub publishes a copy of the message.
 func (rr *Router) Publish(m Msg) error {
 	if m.Path.IsZero() {
 		return errEmptyPath
@@ -38,7 +54,15 @@ func (rr *Router) Publish(m Msg) error {
 	}
 
 	ee := rr.route(m)
-	rr.deliver(ee, m)
+	if len(ee) == 0 {
+		return nil
+	}
+
+	// synthesize and alias proto
+	raw := appendMsgFields(nil, m)
+	m = aliasMsgFields(raw)
+
+	rr.deliver(ee, m, raw)
 
 	return nil
 }
@@ -60,7 +84,7 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 
 	e := &rent{
 		Sel: sel,
-		Do: func(m Msg) {
+		Do: func(m Msg, _ []byte) {
 			go callback(m)
 		},
 	}
@@ -115,29 +139,10 @@ func (rr *Router) route(m Msg) []*rent {
 	return ee
 }
 
-func (rr *Router) deliver(ee []*rent, m Msg) {
+func (rr *Router) deliver(ee []*rent, m Msg, raw []byte) {
 	for _, e := range ee {
-		e.Do(m)
+		e.Do(m, raw)
 	}
-}
-
-// rnode implements a simple prefix tree.
-// Empty branches are pruned on delete.
-//
-// It should be replaced with something that:
-//   - is faster and more memory efficient
-//   - doesn't churn on quick ins/del
-type rnode struct {
-	parent   *rnode
-	name     string
-	children map[string]*rnode
-	entries  map[*rent]struct{}
-}
-
-// rent is an entry in the route tree.
-type rent struct {
-	Sel Sel
-	Do  func(Msg)
 }
 
 // Ins inserts e into the tree.

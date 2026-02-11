@@ -1,8 +1,11 @@
 package yat
 
 import (
+	"errors"
 	"io"
 	"unsafe"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 const (
@@ -39,5 +42,120 @@ func (h frameHdr) Type() byte {
 
 func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
 	_, err = io.ReadFull(r, (*(*[4]byte)(unsafe.Pointer(&hdr)))[:])
+	return
+}
+
+// parseMsg parses a proto into a message.
+// It returns the parsed message and its raw backing proto.
+//
+// The given body is compacted, retaining fields 2 (path), 3 (data), and 4 (inbox).
+// The returned message and its raw backing slice alias the body.
+//
+// This function does not allocate.
+func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
+	out := 0
+	raw = body[:0]
+
+	for in := 0; in < len(body); {
+		num, typ, nt := protowire.ConsumeTag(body[in:])
+		if nt < 0 {
+			err = protowire.ParseError(nt)
+			return
+		}
+
+		// path, data, inbox fields only
+		if num != 2 && num != 3 && num != 4 {
+			nval := protowire.ConsumeFieldValue(num, typ, body[in+nt:])
+			if nval < 0 {
+				err = protowire.ParseError(nval)
+				return
+			}
+
+			in += nt + nval
+			continue
+		}
+
+		if typ != protowire.BytesType {
+			err = errors.New("invalid field type")
+			return
+		}
+
+		_, nv := protowire.ConsumeBytes(body[in+nt:])
+		if nv < 0 {
+			err = protowire.ParseError(nv)
+			return
+		}
+
+		n := nt + nv
+		if out != in {
+			copy(body[out:], body[in:in+n])
+		}
+
+		out += n
+		in += n
+		raw = body[:out]
+	}
+
+	for clean := raw; len(clean) > 0; {
+		num, _, nt := protowire.ConsumeTag(clean)
+		v, nv := protowire.ConsumeBytes(clean[nt:])
+		clean = clean[nt+nv:]
+
+		switch num {
+		case 2:
+			msg.Path, _, err = ParsePath(v)
+			if err != nil {
+				return
+			}
+
+		case 3:
+			msg.Data = v
+
+		case 4:
+			msg.Inbox, _, err = ParsePath(v)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	return
+}
+
+func appendMsgFields(b []byte, m Msg) []byte {
+	b = protowire.AppendTag(b, 2, protowire.BytesType)
+	b = protowire.AppendBytes(b, m.Path.p)
+
+	if len(m.Data) > 0 {
+		b = protowire.AppendTag(b, 3, protowire.BytesType)
+		b = protowire.AppendBytes(b, m.Data)
+	}
+
+	if !m.Inbox.IsZero() {
+		b = protowire.AppendTag(b, 4, protowire.BytesType)
+		b = protowire.AppendBytes(b, m.Inbox.p)
+	}
+
+	return b
+}
+
+func aliasMsgFields(raw []byte) (msg Msg) {
+	for len(raw) > 0 {
+		num, _, nt := protowire.ConsumeTag(raw)
+		v, nv := protowire.ConsumeBytes(raw[nt:])
+		raw = raw[nt+nv:]
+
+		switch num {
+		case 2:
+			msg.Path, _, _ = ParsePath(v)
+
+		case 3:
+			msg.Data = v
+
+		case 4:
+			msg.Inbox, _, _ = ParsePath(v)
+		}
+	}
+
 	return
 }

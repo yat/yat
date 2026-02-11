@@ -226,7 +226,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 			Path: p,
 		},
 
-		Do: func(m Msg) {
+		Do: func(m Msg, raw []byte) {
 			panic("wip")
 		},
 	}

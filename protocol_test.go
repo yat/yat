@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func Test_frameHdr(t *testing.T) {
@@ -51,6 +53,220 @@ func Test_readFrameHdr(t *testing.T) {
 		_, err := readFrameHdr(bytes.NewReader([]byte{1, 2, 3}))
 		if !errors.Is(err, io.ErrUnexpectedEOF) {
 			t.Fatalf("error: %v", err)
+		}
+	})
+}
+
+func Test_parsePubFrame(t *testing.T) {
+	t.Run("parses and compacts known fields", func(t *testing.T) {
+		buf := make([]byte, 0, 64)
+		buf = protowire.AppendTag(buf, 99, protowire.VarintType)
+		buf = protowire.AppendVarint(buf, 1)
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("a/b"))
+		buf = protowire.AppendTag(buf, 98, protowire.Fixed32Type)
+		buf = protowire.AppendFixed32(buf, 7)
+		buf = protowire.AppendTag(buf, 3, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("payload"))
+		buf = protowire.AppendTag(buf, 4, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("inbox"))
+		buf = protowire.AppendTag(buf, 97, protowire.VarintType)
+		buf = protowire.AppendVarint(buf, 2)
+
+		msg, raw, err := parseMsg(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, 2, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("a/b"))
+		want = protowire.AppendTag(want, 3, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("payload"))
+		want = protowire.AppendTag(want, 4, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("inbox"))
+
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("compact mismatch: %x != %x", raw, want)
+		}
+		if len(raw) > 0 && &raw[0] != &buf[0] {
+			t.Fatal("raw does not alias body prefix")
+		}
+		if got := msg.Path.String(); got != "a/b" {
+			t.Fatalf("path: %q != %q", got, "a/b")
+		}
+		if !bytes.Equal(msg.Data, []byte("payload")) {
+			t.Fatalf("data: %q != %q", msg.Data, "payload")
+		}
+		if got := msg.Inbox.String(); got != "inbox" {
+			t.Fatalf("inbox: %q != %q", got, "inbox")
+		}
+	})
+
+	t.Run("repeated fields last wins", func(t *testing.T) {
+		buf := make([]byte, 0, 64)
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("a"))
+		buf = protowire.AppendTag(buf, 3, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("v1"))
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("b/c"))
+		buf = protowire.AppendTag(buf, 3, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("v2"))
+		buf = protowire.AppendTag(buf, 4, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("r"))
+
+		msg, raw, err := parseMsg(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) == 0 {
+			t.Fatal("empty raw")
+		}
+		if got := msg.Path.String(); got != "b/c" {
+			t.Fatalf("path: %q != %q", got, "b/c")
+		}
+		if !bytes.Equal(msg.Data, []byte("v2")) {
+			t.Fatalf("data: %q != %q", msg.Data, "v2")
+		}
+		if got := msg.Inbox.String(); got != "r" {
+			t.Fatalf("inbox: %q != %q", got, "r")
+		}
+	})
+
+	t.Run("unknown-only frame", func(t *testing.T) {
+		buf := make([]byte, 0, 16)
+		buf = protowire.AppendTag(buf, 99, protowire.VarintType)
+		buf = protowire.AppendVarint(buf, 7)
+		buf = protowire.AppendTag(buf, 98, protowire.Fixed32Type)
+		buf = protowire.AppendFixed32(buf, 1)
+
+		msg, raw, err := parseMsg(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) != 0 {
+			t.Fatalf("len: %d != 0", len(raw))
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("malformed tag with no accepted fields", func(t *testing.T) {
+		buf := []byte{0x80}
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if len(raw) != 0 {
+			t.Fatalf("len: %d != 0", len(raw))
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("wrong type with no accepted fields", func(t *testing.T) {
+		buf := make([]byte, 0, 8)
+		buf = protowire.AppendTag(buf, 2, protowire.VarintType)
+		buf = protowire.AppendVarint(buf, 1)
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if len(raw) != 0 {
+			t.Fatalf("len: %d != 0", len(raw))
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("malformed known field keeps accepted prefix", func(t *testing.T) {
+		buf := make([]byte, 0, 16)
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("ok"))
+		buf = protowire.AppendTag(buf, 3, protowire.BytesType)
+		buf = protowire.AppendVarint(buf, 5)
+		buf = append(buf, 'x')
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, 2, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("ok"))
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("raw: %x != %x", raw, want)
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("invalid path keeps compacted raw", func(t *testing.T) {
+		buf := make([]byte, 0, 16)
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte{})
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, 2, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte{})
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("raw: %x != %x", raw, want)
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("invalid inbox keeps compacted raw", func(t *testing.T) {
+		buf := make([]byte, 0, 24)
+		buf = protowire.AppendTag(buf, 2, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("ok"))
+		buf = protowire.AppendTag(buf, 4, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte{})
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, 2, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("ok"))
+		want = protowire.AppendTag(want, 4, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte{})
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("raw: %x != %x", raw, want)
+		}
+		if got := msg.Path.String(); got != "ok" {
+			t.Fatalf("path: %q != %q", got, "ok")
+		}
+	})
+
+	t.Run("malformed unknown field with no accepted fields", func(t *testing.T) {
+		buf := make([]byte, 0, 16)
+		buf = protowire.AppendTag(buf, 99, protowire.BytesType)
+		buf = protowire.AppendVarint(buf, 3)
+		buf = append(buf, 'x')
+
+		msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if len(raw) != 0 {
+			t.Fatalf("len: %d != 0", len(raw))
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
 		}
 	})
 }
