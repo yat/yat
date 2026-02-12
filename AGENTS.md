@@ -2,11 +2,20 @@
 
 Guidance for future Codex runs in this repo.
 
-## Critical mistake to avoid
+## Primary preference
 
-I wrote code that forced maintainer cleanup. I added avoidable structure, missed style cues, and made assumptions instead of reading the active diff first.
+Readability and maintainability are first-order goals.
+Small, obvious code is preferred over speculative robustness.
 
-Do not repeat this.
+Avoid low-value ceremonial defensive code.
+- Do not add guards for states that cannot occur under current invariants.
+- Do not add "future-proof" branches unless requested.
+- Do not add checks just because they are cheap.
+
+If you think a defensive check is necessary, tie it to one of:
+- a real external input boundary
+- an explicit protocol constraint
+- a known failure mode in current code paths
 
 ## Required first step on every edit
 
@@ -17,27 +26,32 @@ Before writing code, inspect both diff layers:
 
 Reason: this repo often has staged and unstaged work at the same time. If you only read one layer, you will misread intent and style.
 
-## Standards derived from maintainer cleanup
+## Style and change expectations
 
 1. Prefer the smallest mechanism that solves the request.
 - If an atomic counter is sufficient, do not introduce a semaphore.
 - If logic is single-use and clear inline, do not extract a helper.
 
-2. Keep logging exact and minimal.
+2. Optimize for clarity over ceremony.
+- Prefer straightforward control flow over layered abstractions.
+- Remove complexity that does not buy immediate correctness or required behavior.
+- Keep diffs scan-friendly and obvious.
+
+3. Keep logging exact and minimal.
 - Message text is part of the contract.
 - Only include requested fields.
 - Do not add explanatory fields like `reason` unless explicitly requested.
 
-3. Match file-local style, not generic best practices.
+4. Match file-local style, not generic best practices.
 - Follow existing control-flow shape and naming in the target file.
-- Avoid adding “architectural” layers for small behavior changes.
+- Avoid adding "architectural" layers for small behavior changes.
 - Keep comments sparse and useful.
 
-4. Avoid hidden behavior changes.
-- Do not silently shift semantics while “cleaning up”.
+5. Avoid hidden behavior changes.
+- Do not silently shift semantics while "cleaning up".
 - Keep changes narrowly scoped to the requested behavior.
 
-5. Optimize for maintainer review speed.
+6. Optimize for maintainer review speed.
 - A maintainer should understand the diff at a glance.
 - If a helper/abstraction adds cognitive load, remove it.
 
@@ -49,6 +63,13 @@ When a maintainer requests a structural change, preserve everything not explicit
 - Do not make speculative style or micro-optimization substitutions. If a change is not required for correctness or explicitly requested, leave it alone.
 - For hot-path "cleanups", prioritize reviewer intent over personal preference: equivalent behavior with smaller, clearer diffs.
 - If a potential improvement is optional, present it separately after completing the requested change.
+
+## Defensive-code policy
+
+- Default stance: do not add defensive checks unless they are needed now.
+- Keep invariant assumptions local and obvious in code shape.
+- Prefer deleting redundant checks over preserving them "just in case."
+- If a guard stays, it should protect a realistic boundary (network input, parsing, file IO, user input, or explicit protocol max/min).
 
 ## Review calibration
 
@@ -75,6 +96,6 @@ When a maintainer requests a structural change, preserve everything not explicit
 
 - [ ] I reviewed `git diff --cached` and `git diff` first.
 - [ ] Every changed line is directly tied to the request.
-- [ ] I avoided unnecessary helpers/abstractions.
+- [ ] I avoided unnecessary helpers/abstractions/defensive ceremony.
 - [ ] Log messages/fields exactly match user direction.
 - [ ] The diff is easy to scan and hard to misinterpret.

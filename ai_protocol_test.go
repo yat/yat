@@ -73,7 +73,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, 97, protowire.VarintType)
 		buf = protowire.AppendVarint(buf, 2)
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,6 +103,39 @@ func Test_parsePubFrame(t *testing.T) {
 		}
 	})
 
+	t.Run("extracts num and omits it from compacted raw", func(t *testing.T) {
+		buf := make([]byte, 0, 64)
+		buf = protowire.AppendTag(buf, numField, protowire.VarintType)
+		buf = protowire.AppendVarint(buf, 42)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("a/b"))
+		buf = protowire.AppendTag(buf, dataField, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("payload"))
+
+		num, msg, raw, err := parseMsg(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if num != 42 {
+			t.Fatalf("num: %d != %d", num, 42)
+		}
+
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("a/b"))
+		want = protowire.AppendTag(want, dataField, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("payload"))
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("compact mismatch: %x != %x", raw, want)
+		}
+		if got := msg.Path.String(); got != "a/b" {
+			t.Fatalf("path: %q != %q", got, "a/b")
+		}
+		if !bytes.Equal(msg.Data, []byte("payload")) {
+			t.Fatalf("data: %q != %q", msg.Data, "payload")
+		}
+	})
+
 	t.Run("repeated fields last wins", func(t *testing.T) {
 		buf := make([]byte, 0, 64)
 		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
@@ -116,7 +149,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("r"))
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +174,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, 98, protowire.Fixed32Type)
 		buf = protowire.AppendFixed32(buf, 1)
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if !errors.Is(err, errEmptyPath) {
 			t.Fatalf("error: %v", err)
 		}
@@ -156,7 +189,7 @@ func Test_parsePubFrame(t *testing.T) {
 	t.Run("malformed tag with no accepted fields", func(t *testing.T) {
 		buf := []byte{0x80}
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -173,7 +206,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, pathField, protowire.VarintType)
 		buf = protowire.AppendVarint(buf, 1)
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -193,7 +226,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendVarint(buf, 5)
 		buf = append(buf, 'x')
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -213,7 +246,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte{})
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -233,7 +266,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("*"))
 
-		_, raw, err := parseMsg(buf)
+		_, _, raw, err := parseMsg(buf)
 		if !errors.Is(err, errWildPath) {
 			t.Fatalf("error: %v", err)
 		}
@@ -252,7 +285,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte{})
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -276,7 +309,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("*"))
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if !errors.Is(err, errWildInbox) {
 			t.Fatalf("error: %v", err)
 		}
@@ -299,7 +332,7 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendVarint(buf, 3)
 		buf = append(buf, 'x')
 
-		msg, raw, err := parseMsg(buf)
+		_, msg, raw, err := parseMsg(buf)
 		if err == nil {
 			t.Fatal("expected error")
 		}

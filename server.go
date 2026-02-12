@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -24,7 +23,6 @@ type Server struct {
 }
 
 type ServerConfig struct {
-
 	// Logger is where the server writes logs.
 	// If it is nil, server logs are discarded.
 	Logger *slog.Logger
@@ -35,7 +33,6 @@ type serverConn struct {
 	subs  map[uint64]*rent
 	wbufs net.Buffers
 	wbufC chan struct{}
-	wbufN int
 
 	net.Conn
 }
@@ -70,7 +67,6 @@ func (s *Server) Serve(l net.Listener) error {
 
 		wg.Go(func() {
 			logger := s.config.Logger.With(
-				"conn", uuid.New().String(),
 				"local", conn.LocalAddr(),
 				"remote", conn.RemoteAddr(),
 			)
@@ -119,7 +115,7 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 		}
 
 		if hdr.Len() < MinFrameLen {
-			return errors.New("short frame")
+			return errShortFrame
 		}
 
 		var handle func(context.Context, *slog.Logger, *serverConn, []byte) error
@@ -157,7 +153,7 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 }
 
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
-	msg, raw, err := parseMsg(body)
+	_, msg, raw, err := parseMsg(body)
 	if err != nil {
 		return err
 	}
@@ -235,7 +231,6 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 		conn.mu.Lock()
 		bufs := conn.wbufs
 		conn.wbufs = nil
-		conn.wbufN = 0
 		conn.mu.Unlock()
 
 		if len(bufs) > 0 {
@@ -250,22 +245,19 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 	}
 }
 
-func (s *Server) deliver(conn *serverConn, subNum uint64, rawMsg []byte) {
+func (s *Server) deliver(conn *serverConn, subNum uint64, msgFields []byte) {
 	prefix := []byte{0, 0, 0, msgFrameType}
 	prefix = protowire.AppendTag(prefix, numField, protowire.VarintType)
 	prefix = protowire.AppendVarint(prefix, subNum)
 
-	// framHdr.Len
-	n := len(prefix) + len(rawMsg)
+	// frameHdr.Len
+	n := len(prefix) + len(msgFields)
 	prefix[0] = byte(n)
 	prefix[1] = byte(n >> 8)
 	prefix[2] = byte(n >> 16)
 
 	conn.mu.Lock()
-
-	conn.wbufs = append(conn.wbufs, prefix, rawMsg)
-	conn.wbufN += n
-
+	conn.wbufs = append(conn.wbufs, prefix, msgFields)
 	conn.mu.Unlock()
 
 	select {
@@ -286,10 +278,9 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 		case <-tick.C:
 			conn.mu.Lock()
 
-			flush := conn.wbufN == 0
+			flush := len(conn.wbufs) == 0
 			if flush {
 				conn.wbufs = append(conn.wbufs, keepalive)
-				conn.wbufN += len(keepalive)
 			}
 
 			conn.mu.Unlock()
@@ -304,10 +295,10 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 }
 
-func (sc ServerConfig) withDefaults() ServerConfig {
-	if sc.Logger == nil {
-		sc.Logger = slog.New(slog.DiscardHandler)
+func (c ServerConfig) withDefaults() ServerConfig {
+	if c.Logger == nil {
+		c.Logger = slog.New(slog.DiscardHandler)
 	}
 
-	return sc
+	return c
 }

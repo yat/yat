@@ -9,16 +9,18 @@ import (
 )
 
 const (
-	MinFrameLen = 4
+	MinFrameLen = frameHdrLen
 	MaxFrameLen = 1<<24 - 1
 )
-
-type frameHdr uint32
 
 // type frameHdr struct {
 // 	Len  uint24
 // 	Type byte
 // }
+
+type frameHdr uint32
+
+const frameHdrLen = 4
 
 const (
 	_              = 0
@@ -33,6 +35,11 @@ const (
 	pathField  = 2
 	dataField  = 3
 	inboxField = 4
+)
+
+var (
+	errShortFrame = errors.New("short frame")
+	errLongFrame  = errors.New("long frame")
 )
 
 func (h frameHdr) Len() int {
@@ -52,27 +59,60 @@ func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
 	return
 }
 
+// appendFrame appends a frame header and body to buf and returns the extended slice.
+// The body comes from calling f, which must append to its argument and return the extended slice.
+func appendFrame(buf []byte, typ byte, f func([]byte) []byte) []byte {
+	off := len(buf)
+	buf = append(buf, 0, 0, 0, typ)
+	buf = f(buf)
+
+	n := len(buf) - off
+	buf[off+0] = byte(n)
+	buf[off+1] = byte(n >> 8)
+	buf[off+2] = byte(n >> 16)
+
+	return buf
+}
+
 // parseMsg parses a proto into a message.
-// It returns the parsed message and its raw backing proto.
+// It returns the parsed num field, parsed message, and its raw backing proto.
 // The returned message is valid.
 //
-// The given body is compacted, retaining fields 2 (path), 3 (data), and 4 (inbox).
+// The given body is compacted, retaining only fields 2 (path), 3 (data), and 4 (inbox).
+// If field 1 (num) is encountered, its value is returned.
 // The returned message and its raw backing slice alias the body.
 //
 // This function does not allocate.
-func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
+func parseMsg(body []byte) (num uint64, msg Msg, raw []byte, err error) {
 	out := 0
 	raw = body[:0]
 
 	for in := 0; in < len(body); {
-		num, typ, nt := protowire.ConsumeTag(body[in:])
+		fn, typ, nt := protowire.ConsumeTag(body[in:])
 		if nt < 0 {
 			err = protowire.ParseError(nt)
 			return
 		}
 
-		if num != pathField && num != dataField && num != inboxField {
-			nval := protowire.ConsumeFieldValue(num, typ, body[in+nt:])
+		if fn == numField {
+			if typ != protowire.VarintType {
+				err = errors.New("invalid field type")
+				return
+			}
+
+			v, nv := protowire.ConsumeVarint(body[in+nt:])
+			if nv < 0 {
+				err = protowire.ParseError(nv)
+				return
+			}
+			num = v
+
+			in += nt + nv
+			continue
+		}
+
+		if fn != pathField && fn != dataField && fn != inboxField {
+			nval := protowire.ConsumeFieldValue(fn, typ, body[in+nt:])
 			if nval < 0 {
 				err = protowire.ParseError(nval)
 				return
@@ -104,11 +144,11 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 	}
 
 	for clean := raw; len(clean) > 0; {
-		num, _, nt := protowire.ConsumeTag(clean)
+		fn, _, nt := protowire.ConsumeTag(clean)
 		v, nv := protowire.ConsumeBytes(clean[nt:])
 		clean = clean[nt+nv:]
 
-		switch num {
+		switch fn {
 		case pathField:
 			var wild bool
 			msg.Path, wild, err = ParsePath(v)
@@ -162,6 +202,8 @@ func appendMsgFields(b []byte, m Msg) []byte {
 	return b
 }
 
+// aliasMsgFields returns a Msg with fields backed by the raw proto.
+// The encoded message must already be valid.
 func aliasMsgFields(raw []byte) (msg Msg) {
 	for len(raw) > 0 {
 		num, _, nt := protowire.ConsumeTag(raw)
@@ -181,4 +223,22 @@ func aliasMsgFields(raw []byte) (msg Msg) {
 	}
 
 	return
+}
+
+// msgFieldsLen returns the length of the proto-encoded version of the message.
+func msgFieldsLen(m Msg) int {
+	n := protowire.SizeTag(pathField) +
+		protowire.SizeBytes(len(m.Path.p))
+
+	if len(m.Data) > 0 {
+		n += protowire.SizeTag(dataField) +
+			protowire.SizeBytes(len(m.Data))
+	}
+
+	if !m.Inbox.IsZero() {
+		n += protowire.SizeTag(inboxField) +
+			protowire.SizeBytes(len(m.Inbox.p))
+	}
+
+	return n
 }
