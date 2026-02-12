@@ -343,4 +343,50 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatal("non-zero msg")
 		}
 	})
+
+	t.Run("num field with wrong type keeps accepted prefix", func(t *testing.T) {
+		buf := make([]byte, 0, 24)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("ok"))
+		buf = protowire.AppendTag(buf, numField, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("not-varint"))
+
+		_, msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("ok"))
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("raw: %x != %x", raw, want)
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
+
+	t.Run("malformed num varint keeps accepted prefix", func(t *testing.T) {
+		buf := make([]byte, 0, 24)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
+		buf = protowire.AppendBytes(buf, []byte("ok"))
+		buf = protowire.AppendTag(buf, numField, protowire.VarintType)
+		buf = append(buf, 0x80) // truncated varint
+
+		_, msg, raw, err := parseMsg(buf)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+
+		want := make([]byte, 0, len(raw))
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
+		want = protowire.AppendBytes(want, []byte("ok"))
+		if !bytes.Equal(raw, want) {
+			t.Fatalf("raw: %x != %x", raw, want)
+		}
+		if !msg.Path.IsZero() || len(msg.Data) != 0 || !msg.Inbox.IsZero() {
+			t.Fatal("non-zero msg")
+		}
+	})
 }
