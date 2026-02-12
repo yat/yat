@@ -8,11 +8,11 @@ import (
 	"maps"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"yat.io/yat/api"
@@ -28,28 +28,9 @@ type ServerConfig struct {
 	// If it is nil, server logs are discarded.
 	Logger *slog.Logger
 
-	// ReadTimeout limits the amount of time the server waits for a read to finish.
-	// If the value is <= 0 it is replaced by the default (5s).
-	// If the read timeout is exceeded, the connection is closed.
-	ReadTimeout time.Duration
-
-	// WriteTimeout limits the amount of time the server waits for a write to finish.
-	// If the value is <= 0 it is replaced by the default (10s).
-	// If the write timeout is exceeded, the connection is closed.
-	WriteTimeout time.Duration
-
-	// KeepaliveInterval controls how often the server sends keepalive frames
-	// If the value is <= 0 it is replaced by the default (1s).
+	// KeepaliveInterval controls how often the server sends keepalive frames.
+	// Values <= 0 are interpreted as 1s.
 	KeepaliveInterval time.Duration
-
-	// MaxConnBufferLen limits the length of the per-connection write buffer.
-	// If the value is <= 0 it is replaced by the default (16MiB).
-	// Overlimit writes are logged and dropped.
-	MaxConnBufferLen int
-
-	// MaxNumConn limits the number of simultaneous connections.
-	// If the value is <= 0 an unlimited number of connections is allowed.
-	MaxNumConn int
 }
 
 type serverConn struct {
@@ -61,13 +42,6 @@ type serverConn struct {
 
 	net.Conn
 }
-
-const (
-	defaultReadTimeout       = 5 * time.Second
-	defaultWriteTimeout      = 10 * time.Second
-	defaultKeepaliveInterval = 1 * time.Second
-	defaultMaxConnBufferLen  = 1 << 24
-)
 
 func NewServer(router *Router, config ServerConfig) (*Server, error) {
 	if router == nil {
@@ -91,30 +65,13 @@ func (s *Server) Serve(l net.Listener) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// curently serving
-	var nconn atomic.Int64
-
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			return err
 		}
 
-		n := nconn.Add(1)
-		if max := int64(s.config.MaxNumConn); max > 0 && n > max {
-			s.config.Logger.Warn("too many connections",
-				"local", conn.LocalAddr(),
-				"remote", conn.RemoteAddr(),
-				"nconn", s.config.MaxNumConn)
-
-			nconn.Add(-1)
-			conn.Close()
-			continue
-		}
-
 		wg.Go(func() {
-			defer nconn.Add(-1)
-
 			logger := s.config.Logger.With(
 				"conn", uuid.New().String(),
 				"local", conn.LocalAddr(),
@@ -159,10 +116,6 @@ func (s *Server) serve(ctx context.Context, logger *slog.Logger, conn net.Conn) 
 
 func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serverConn) error {
 	for {
-		if err := s.setReadDeadline(conn); err != nil {
-			return err
-		}
-
 		hdr, err := readFrameHdr(conn)
 		if err != nil {
 			return err
@@ -212,10 +165,10 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	// wip
-	_ = msg
-	_ = raw
-	panic("handlePub")
+	ee := s.router.route(msg)
+	s.router.deliver(ee, msg, raw)
+
+	return nil
 }
 
 func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
@@ -224,6 +177,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
+	num := f.GetNum()
 	p, _, err := ParsePath(f.GetPath())
 	if err != nil {
 		return err
@@ -234,14 +188,14 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 			Path: p,
 		},
 
-		Do: func(m Msg, raw []byte) {
-			panic("wip")
+		Do: func(_ Msg, raw []byte) {
+			s.deliver(conn, num, raw)
 		},
 	}
 
 	conn.mu.Lock()
-	old := conn.subs[f.GetNum()]
-	conn.subs[f.GetNum()] = e
+	old := conn.subs[num]
+	conn.subs[num] = e
 	conn.mu.Unlock()
 
 	s.router.update(old, e)
@@ -288,10 +242,6 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 		conn.mu.Unlock()
 
 		if len(bufs) > 0 {
-			if err := s.setWriteDeadline(conn); err != nil {
-				return err
-			}
-
 			if _, err := bufs.WriteTo(conn); err != nil {
 				return err
 			}
@@ -300,6 +250,30 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 		if err := context.Cause(ctx); err != nil {
 			return err
 		}
+	}
+}
+
+func (s *Server) deliver(conn *serverConn, subNum uint64, rawMsg []byte) {
+	prefix := []byte{0, 0, 0, msgFrameType}
+	prefix = protowire.AppendTag(prefix, numField, protowire.VarintType)
+	prefix = protowire.AppendVarint(prefix, subNum)
+
+	// framHdr.Len
+	n := len(prefix) + len(rawMsg)
+	prefix[0] = byte(n)
+	prefix[1] = byte(n >> 8)
+	prefix[2] = byte(n >> 16)
+
+	conn.mu.Lock()
+
+	conn.wbufs = append(conn.wbufs, prefix, rawMsg)
+	conn.wbufN += n
+
+	conn.mu.Unlock()
+
+	select {
+	case conn.wbufC <- struct{}{}:
+	default:
 	}
 }
 
@@ -315,11 +289,10 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 		case <-tick.C:
 			conn.mu.Lock()
 
-			flush := false
-			if free := s.config.MaxConnBufferLen - conn.wbufN; free >= len(keepalive) {
+			flush := conn.wbufN == 0
+			if flush {
 				conn.wbufs = append(conn.wbufs, keepalive)
 				conn.wbufN += len(keepalive)
-				flush = true
 			}
 
 			conn.mu.Unlock()
@@ -334,37 +307,13 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 }
 
-func (s *Server) setReadDeadline(conn net.Conn) error {
-	return conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
-}
-
-func (s *Server) setWriteDeadline(conn net.Conn) error {
-	return conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
-}
-
 func (sc ServerConfig) withDefaults() ServerConfig {
 	if sc.Logger == nil {
 		sc.Logger = slog.New(slog.DiscardHandler)
 	}
 
-	if sc.ReadTimeout <= 0 {
-		sc.ReadTimeout = defaultReadTimeout
-	}
-
-	if sc.WriteTimeout <= 0 {
-		sc.WriteTimeout = defaultWriteTimeout
-	}
-
 	if sc.KeepaliveInterval <= 0 {
-		sc.KeepaliveInterval = defaultKeepaliveInterval
-	}
-
-	if sc.MaxConnBufferLen <= 0 {
-		sc.MaxConnBufferLen = defaultMaxConnBufferLen
-	}
-
-	if sc.MaxNumConn < 0 {
-		sc.MaxNumConn = 0
+		sc.KeepaliveInterval = 1 * time.Second
 	}
 
 	return sc

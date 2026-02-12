@@ -62,13 +62,13 @@ func Test_parsePubFrame(t *testing.T) {
 		buf := make([]byte, 0, 64)
 		buf = protowire.AppendTag(buf, 99, protowire.VarintType)
 		buf = protowire.AppendVarint(buf, 1)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("a/b"))
 		buf = protowire.AppendTag(buf, 98, protowire.Fixed32Type)
 		buf = protowire.AppendFixed32(buf, 7)
-		buf = protowire.AppendTag(buf, dataFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, dataField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("payload"))
-		buf = protowire.AppendTag(buf, inboxFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("inbox"))
 		buf = protowire.AppendTag(buf, 97, protowire.VarintType)
 		buf = protowire.AppendVarint(buf, 2)
@@ -79,11 +79,11 @@ func Test_parsePubFrame(t *testing.T) {
 		}
 
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("a/b"))
-		want = protowire.AppendTag(want, dataFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, dataField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("payload"))
-		want = protowire.AppendTag(want, inboxFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, inboxField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("inbox"))
 
 		if !bytes.Equal(raw, want) {
@@ -105,15 +105,15 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("repeated fields last wins", func(t *testing.T) {
 		buf := make([]byte, 0, 64)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("a"))
-		buf = protowire.AppendTag(buf, dataFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, dataField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("v1"))
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("b/c"))
-		buf = protowire.AppendTag(buf, dataFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, dataField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("v2"))
-		buf = protowire.AppendTag(buf, inboxFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("r"))
 
 		msg, raw, err := parseMsg(buf)
@@ -142,8 +142,8 @@ func Test_parsePubFrame(t *testing.T) {
 		buf = protowire.AppendFixed32(buf, 1)
 
 		msg, raw, err := parseMsg(buf)
-		if err != nil {
-			t.Fatal(err)
+		if !errors.Is(err, errEmptyPath) {
+			t.Fatalf("error: %v", err)
 		}
 		if len(raw) != 0 {
 			t.Fatalf("len: %d != 0", len(raw))
@@ -170,7 +170,7 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("wrong type with no accepted fields", func(t *testing.T) {
 		buf := make([]byte, 0, 8)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.VarintType)
+		buf = protowire.AppendTag(buf, pathField, protowire.VarintType)
 		buf = protowire.AppendVarint(buf, 1)
 
 		msg, raw, err := parseMsg(buf)
@@ -187,9 +187,9 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("malformed known field keeps accepted prefix", func(t *testing.T) {
 		buf := make([]byte, 0, 16)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("ok"))
-		buf = protowire.AppendTag(buf, dataFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, dataField, protowire.BytesType)
 		buf = protowire.AppendVarint(buf, 5)
 		buf = append(buf, 'x')
 
@@ -198,7 +198,7 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatal("expected error")
 		}
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("ok"))
 		if !bytes.Equal(raw, want) {
 			t.Fatalf("raw: %x != %x", raw, want)
@@ -210,7 +210,7 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("invalid path keeps compacted raw", func(t *testing.T) {
 		buf := make([]byte, 0, 16)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte{})
 
 		msg, raw, err := parseMsg(buf)
@@ -218,7 +218,7 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatal("expected error")
 		}
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte{})
 		if !bytes.Equal(raw, want) {
 			t.Fatalf("raw: %x != %x", raw, want)
@@ -230,7 +230,7 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("wild path keeps compacted raw", func(t *testing.T) {
 		buf := make([]byte, 0, 16)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("*"))
 
 		_, raw, err := parseMsg(buf)
@@ -238,7 +238,7 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatalf("error: %v", err)
 		}
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("*"))
 		if !bytes.Equal(raw, want) {
 			t.Fatalf("raw: %x != %x", raw, want)
@@ -247,9 +247,9 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("invalid inbox keeps compacted raw", func(t *testing.T) {
 		buf := make([]byte, 0, 24)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("ok"))
-		buf = protowire.AppendTag(buf, inboxFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte{})
 
 		msg, raw, err := parseMsg(buf)
@@ -257,9 +257,9 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatal("expected error")
 		}
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("ok"))
-		want = protowire.AppendTag(want, inboxFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, inboxField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte{})
 		if !bytes.Equal(raw, want) {
 			t.Fatalf("raw: %x != %x", raw, want)
@@ -271,9 +271,9 @@ func Test_parsePubFrame(t *testing.T) {
 
 	t.Run("wild inbox keeps compacted raw", func(t *testing.T) {
 		buf := make([]byte, 0, 24)
-		buf = protowire.AppendTag(buf, pathFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, pathField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("ok"))
-		buf = protowire.AppendTag(buf, inboxFieldNum, protowire.BytesType)
+		buf = protowire.AppendTag(buf, inboxField, protowire.BytesType)
 		buf = protowire.AppendBytes(buf, []byte("*"))
 
 		msg, raw, err := parseMsg(buf)
@@ -281,9 +281,9 @@ func Test_parsePubFrame(t *testing.T) {
 			t.Fatalf("error: %v", err)
 		}
 		want := make([]byte, 0, len(raw))
-		want = protowire.AppendTag(want, pathFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, pathField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("ok"))
-		want = protowire.AppendTag(want, inboxFieldNum, protowire.BytesType)
+		want = protowire.AppendTag(want, inboxField, protowire.BytesType)
 		want = protowire.AppendBytes(want, []byte("*"))
 		if !bytes.Equal(raw, want) {
 			t.Fatalf("raw: %x != %x", raw, want)

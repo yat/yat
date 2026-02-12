@@ -29,9 +29,10 @@ const (
 )
 
 const (
-	pathFieldNum  = 2
-	dataFieldNum  = 3
-	inboxFieldNum = 4
+	numField   = 1
+	pathField  = 2
+	dataField  = 3
+	inboxField = 4
 )
 
 func (h frameHdr) Len() int {
@@ -53,6 +54,7 @@ func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
 
 // parseMsg parses a proto into a message.
 // It returns the parsed message and its raw backing proto.
+// The returned message is valid.
 //
 // The given body is compacted, retaining fields 2 (path), 3 (data), and 4 (inbox).
 // The returned message and its raw backing slice alias the body.
@@ -69,7 +71,7 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 			return
 		}
 
-		if num != pathFieldNum && num != dataFieldNum && num != inboxFieldNum {
+		if num != pathField && num != dataField && num != inboxField {
 			nval := protowire.ConsumeFieldValue(num, typ, body[in+nt:])
 			if nval < 0 {
 				err = protowire.ParseError(nval)
@@ -107,7 +109,7 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 		clean = clean[nt+nv:]
 
 		switch num {
-		case pathFieldNum:
+		case pathField:
 			var wild bool
 			msg.Path, wild, err = ParsePath(v)
 			if err != nil {
@@ -119,10 +121,10 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 				return
 			}
 
-		case dataFieldNum:
+		case dataField:
 			msg.Data = v
 
-		case inboxFieldNum:
+		case inboxField:
 			var wild bool
 			msg.Inbox, wild, err = ParsePath(v)
 			if err != nil {
@@ -136,20 +138,24 @@ func parseMsg(body []byte) (msg Msg, raw []byte, err error) {
 		}
 	}
 
+	if msg.Path.IsZero() {
+		err = errEmptyPath
+	}
+
 	return
 }
 
 func appendMsgFields(b []byte, m Msg) []byte {
-	b = protowire.AppendTag(b, pathFieldNum, protowire.BytesType)
+	b = protowire.AppendTag(b, pathField, protowire.BytesType)
 	b = protowire.AppendBytes(b, m.Path.p)
 
 	if len(m.Data) > 0 {
-		b = protowire.AppendTag(b, dataFieldNum, protowire.BytesType)
+		b = protowire.AppendTag(b, dataField, protowire.BytesType)
 		b = protowire.AppendBytes(b, m.Data)
 	}
 
 	if !m.Inbox.IsZero() {
-		b = protowire.AppendTag(b, inboxFieldNum, protowire.BytesType)
+		b = protowire.AppendTag(b, inboxField, protowire.BytesType)
 		b = protowire.AppendBytes(b, m.Inbox.p)
 	}
 
@@ -163,13 +169,13 @@ func aliasMsgFields(raw []byte) (msg Msg) {
 		raw = raw[nt+nv:]
 
 		switch num {
-		case pathFieldNum:
+		case pathField:
 			msg.Path.p = v
 
-		case dataFieldNum:
+		case dataField:
 			msg.Data = v
 
-		case inboxFieldNum:
+		case inboxField:
 			msg.Inbox.p = v
 		}
 	}

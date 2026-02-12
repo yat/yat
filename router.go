@@ -63,10 +63,9 @@ func (rr *Router) Publish(m Msg) error {
 		return nil
 	}
 
-	// synthesize and alias proto
+	// make a deep copy
 	raw := appendMsgFields(nil, m)
 	m = aliasMsgFields(raw)
-
 	rr.deliver(ee, m, raw)
 
 	return nil
