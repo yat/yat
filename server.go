@@ -24,13 +24,10 @@ type Server struct {
 }
 
 type ServerConfig struct {
+
 	// Logger is where the server writes logs.
 	// If it is nil, server logs are discarded.
 	Logger *slog.Logger
-
-	// KeepaliveInterval controls how often the server sends keepalive frames.
-	// Values <= 0 are interpreted as 1s.
-	KeepaliveInterval time.Duration
 }
 
 type serverConn struct {
@@ -278,7 +275,7 @@ func (s *Server) deliver(conn *serverConn, subNum uint64, rawMsg []byte) {
 }
 
 func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serverConn) error {
-	tick := time.NewTicker(s.config.KeepaliveInterval)
+	tick := time.NewTicker(1 * time.Second)
 	keepalive := []byte{4, 0, 0, 0}
 
 	for {
@@ -310,10 +307,6 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 func (sc ServerConfig) withDefaults() ServerConfig {
 	if sc.Logger == nil {
 		sc.Logger = slog.New(slog.DiscardHandler)
-	}
-
-	if sc.KeepaliveInterval <= 0 {
-		sc.KeepaliveInterval = 1 * time.Second
 	}
 
 	return sc

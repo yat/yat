@@ -354,9 +354,7 @@ func startTestServer(t *testing.T) (*yat.Router, *pipeListener) {
 	t.Helper()
 
 	rr := yat.NewRouter()
-	srv, err := yat.NewServer(rr, yat.ServerConfig{
-		KeepaliveInterval: time.Hour,
-	})
+	srv, err := yat.NewServer(rr, yat.ServerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
