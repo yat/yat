@@ -2,7 +2,6 @@ package yat
 
 import (
 	"errors"
-	"iter"
 	"math/rand/v2"
 	"sync"
 )
@@ -28,6 +27,7 @@ type rnode struct {
 
 // rent is an entry in the route tree.
 type rent struct {
+	rr  *Router
 	Sel Sel
 	Do  func(Msg, []byte)
 }
@@ -87,6 +87,7 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 	}
 
 	e := &rent{
+		rr:  rr,
 		Sel: sel,
 		Do: func(m Msg, _ []byte) {
 			go callback(m)
@@ -119,10 +120,10 @@ func (rr *Router) update(old, new *rent) {
 }
 
 // removeAll is called to clean up router entries after a connection is closed.
-func (rr *Router) removeAll(entries iter.Seq[*rent]) {
+func (rr *Router) removeAll(entries []*rent) {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
-	for e := range entries {
+	for _, e := range entries {
 		rr.tree.Del(e)
 	}
 }

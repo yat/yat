@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -96,7 +97,7 @@ func (s *Server) serve(ctx context.Context, logger *slog.Logger, conn net.Conn) 
 
 	defer func() {
 		if len(sc.subs) > 0 {
-			s.router.removeAll(maps.Values(sc.subs))
+			s.router.removeAll(slices.Collect(maps.Values(sc.subs)))
 		}
 	}()
 
