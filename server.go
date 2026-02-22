@@ -5,9 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"maps"
 	"net"
-	"slices"
 	"sync"
 	"time"
 
@@ -21,6 +19,7 @@ import (
 type Server struct {
 	router *Router
 	config ServerConfig
+	local  *Router
 }
 
 type ServerConfig struct {
@@ -44,10 +43,12 @@ func NewServer(router *Router, config ServerConfig) (*Server, error) {
 	}
 
 	config = config.withDefaults()
+	local := NewRouter()
 
 	s := &Server{
 		router: router,
 		config: config,
+		local:  local,
 	}
 
 	return s, nil
@@ -62,6 +63,10 @@ func (s *Server) Serve(l net.Listener) error {
 
 	for {
 		conn, err := l.Accept()
+		if errors.Is(err, net.ErrClosed) {
+			s.local.Publish(Msg{Path: NewPath("$svr/events/stop")})
+		}
+
 		if err != nil {
 			return err
 		}
@@ -97,7 +102,15 @@ func (s *Server) serve(ctx context.Context, logger *slog.Logger, conn net.Conn) 
 
 	defer func() {
 		if len(sc.subs) > 0 {
-			s.router.removeAll(slices.Collect(maps.Values(sc.subs)))
+			rents := map[*Router][]*rent{}
+
+			for _, e := range sc.subs {
+				rents[e.rr] = append(rents[e.rr], e)
+			}
+
+			for rr, ee := range rents {
+				rr.removeAll(ee)
+			}
 		}
 	}()
 
@@ -182,12 +195,11 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	// wip
-	if isReserved(p) {
-		return nil
-	}
+	rr := s.getRouter(p)
 
 	e := &rent{
+		rr: rr,
+
 		Sel: Sel{
 			Path: p,
 		},
@@ -209,7 +221,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	conn.subs[num] = e
 	conn.mu.Unlock()
 
-	s.router.update(old, e)
+	rr.update(old, e)
 
 	return nil
 }
@@ -231,7 +243,7 @@ func (s *Server) handleUnsub(ctx context.Context, logger *slog.Logger, conn *ser
 	conn.mu.Unlock()
 
 	if found {
-		s.router.update(old, nil)
+		old.rr.update(old, nil)
 	}
 
 	return nil
@@ -310,6 +322,19 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 				}
 			}
 		}
+	}
+}
+
+// getRouter returns the appropriate router for the given path.
+// If the path is reserved, getRouter returns the server's internal router.
+// Otherwise it returns the router passed to [NewServer].
+func (s *Server) getRouter(p Path) *Router {
+	switch {
+	case isReserved(p):
+		return s.local
+
+	default:
+		return s.router
 	}
 }
 

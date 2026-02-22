@@ -216,15 +216,22 @@ func TestServer_handleSub(t *testing.T) {
 		}
 	})
 
-	t.Run("system path is dropped", func(t *testing.T) {
+	t.Run("system path is local-only", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		sc := newBareServerConn(&testConn{})
 
 		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("$sys/sub"))[frameHdrLen:]); err != nil {
 			t.Fatal(err)
 		}
-		if len(sc.subs) != 0 {
-			t.Fatalf("len(subs): %d != 0", len(sc.subs))
+		if len(sc.subs) != 1 {
+			t.Fatalf("len(subs): %d != 1", len(sc.subs))
+		}
+		sub, found := sc.subs[1]
+		if !found {
+			t.Fatal("sub not found")
+		}
+		if sub.rr != s.local {
+			t.Fatal("sub router is not local")
 		}
 
 		if err := s.router.Publish(Msg{Path: NewPath("$sys/sub"), Data: []byte("msg")}); err != nil {
@@ -234,7 +241,17 @@ func TestServer_handleSub(t *testing.T) {
 		n := len(sc.wbufs)
 		sc.mu.Unlock()
 		if n != 0 {
-			t.Fatalf("system path delivered %d buffers", n)
+			t.Fatalf("public path delivered %d buffers", n)
+		}
+
+		if err := s.local.Publish(Msg{Path: NewPath("$sys/sub"), Data: []byte("msg")}); err != nil {
+			t.Fatal(err)
+		}
+		sc.mu.Lock()
+		n = len(sc.wbufs)
+		sc.mu.Unlock()
+		if n == 0 {
+			t.Fatal("local path not delivered")
 		}
 	})
 
@@ -316,6 +333,34 @@ func TestServer_handleUnsub(t *testing.T) {
 		sc.wbufs = nil
 		sc.mu.Unlock()
 		if err := s.router.Publish(Msg{Path: NewPath("ok"), Data: []byte("gone")}); err != nil {
+			t.Fatal(err)
+		}
+		sc.mu.Lock()
+		n := len(sc.wbufs)
+		sc.mu.Unlock()
+		if n != 0 {
+			t.Fatalf("unsub delivered %d buffers", n)
+		}
+	})
+
+	t.Run("existing system sub is removed", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		sc := newBareServerConn(&testConn{})
+
+		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("$sys/ok"))[frameHdrLen:]); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.handleUnsub(context.Background(), discardLogger, sc, newUnsubFrame(1)[frameHdrLen:]); err != nil {
+			t.Fatal(err)
+		}
+		if len(sc.subs) != 0 {
+			t.Fatalf("len(subs): %d != 0", len(sc.subs))
+		}
+
+		sc.mu.Lock()
+		sc.wbufs = nil
+		sc.mu.Unlock()
+		if err := s.local.Publish(Msg{Path: NewPath("$sys/ok"), Data: []byte("gone")}); err != nil {
 			t.Fatal(err)
 		}
 		sc.mu.Lock()
@@ -480,3 +525,72 @@ func TestServer_serve_removesAllConnSubsOnReturn(t *testing.T) {
 		t.Fatalf("len(entries): %d != 0", len(got))
 	}
 }
+
+func TestServer_serve_removesAllConnSubsOnReturn_reservedAndPublic(t *testing.T) {
+	s := mustNewServerForTest(t)
+
+	wire := appendFrames(
+		newSubFrame(1, NewPath("chat/room")),
+		newSubFrame(2, NewPath("$sys/sub")),
+	)
+	err := s.serve(context.Background(), discardLogger, newTestConnWithBytes(wire))
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("error: %v", err)
+	}
+
+	got := s.router.tree.Match(NewPath("chat/room"))
+	if len(got) != 0 {
+		t.Fatalf("len(public entries): %d != 0", len(got))
+	}
+
+	got = s.local.tree.Match(NewPath("$sys/sub"))
+	if len(got) != 0 {
+		t.Fatalf("len(local entries): %d != 0", len(got))
+	}
+}
+
+func TestServer_Serve_publishesStopEvent(t *testing.T) {
+	s := mustNewServerForTest(t)
+
+	msgC := make(chan Msg, 1)
+	unsub, err := s.local.Subscribe(Sel{Path: NewPath("$svr/events/stop")}, func(m Msg) {
+		msgC <- m
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+
+	err = s.Serve(closedListener{})
+	if !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("error: %v", err)
+	}
+
+	select {
+	case got := <-msgC:
+		if got.Path.String() != "$svr/events/stop" {
+			t.Fatalf("path: %q != %q", got.Path.String(), "$svr/events/stop")
+		}
+
+	case <-time.After(1 * time.Second):
+		t.Fatal("stop event not delivered")
+	}
+}
+
+func TestServer_getRouter(t *testing.T) {
+	s := mustNewServerForTest(t)
+
+	if got := s.getRouter(NewPath("chat/room")); got != s.router {
+		t.Fatal("chat router mismatch")
+	}
+
+	if got := s.getRouter(NewPath("$sys/sub")); got != s.local {
+		t.Fatal("system router mismatch")
+	}
+}
+
+type closedListener struct{}
+
+func (closedListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
+func (closedListener) Close() error              { return nil }
+func (closedListener) Addr() net.Addr            { return testAddr("closed-listener") }

@@ -20,6 +20,11 @@ a client creates a subscription by selecting the set of matching messages
 a subscription selects a set of messages matching a particular path
 a subscription's selected path is immutable
 
+server api
+
+$svr/events/stop
+published after the server stops accepting connections
+
 protocol
 
 the read loop is the same on the client and server:
