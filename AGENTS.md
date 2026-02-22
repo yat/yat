@@ -7,6 +7,15 @@ Guidance for future Codex runs in this repo.
 Readability and maintainability are first-order goals.
 Small, obvious code is preferred over speculative robustness.
 
+## Minimal-change mandate
+
+When implementing a requested feature or fix, change the fewest lines needed for correct behavior.
+
+- Do not refactor nearby code unless it is required to make the requested change correct.
+- Do not rename, reorder, move, or reformat unrelated code in the same edit.
+- Preserve existing control-flow shape unless changing it is necessary for the requested behavior.
+- If two approaches are both correct, prefer the one with the smaller, easier-to-review diff.
+
 Avoid low-value ceremonial defensive code.
 - Do not add guards for states that cannot occur under current invariants.
 - Do not add "future-proof" branches unless requested.
