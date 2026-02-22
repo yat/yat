@@ -40,6 +40,7 @@ const (
 var (
 	errShortFrame = errors.New("short frame")
 	errLongFrame  = errors.New("long frame")
+	errSelPath    = errors.New("selector path changed")
 )
 
 func (h frameHdr) Len() int {

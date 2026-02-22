@@ -112,6 +112,20 @@ func TestServer_readFrames(t *testing.T) {
 			t.Fatalf("error: %v", err)
 		}
 	})
+
+	t.Run("sub path change error is returned", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		wire := appendFrames(
+			newSubFrame(1, NewPath("old")),
+			newSubFrame(1, NewPath("new")),
+		)
+		sc := newBareServerConn(newTestConnWithBytes(wire))
+
+		err := s.readFrames(context.Background(), discardLogger, sc)
+		if !errors.Is(err, errSelPath) {
+			t.Fatalf("error: %v", err)
+		}
+	})
 }
 
 func TestServer_handlePub(t *testing.T) {
@@ -224,38 +238,41 @@ func TestServer_handleSub(t *testing.T) {
 		}
 	})
 
-	t.Run("replaces existing sub number", func(t *testing.T) {
+	t.Run("changing existing sub path fails", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		sc := newBareServerConn(&testConn{})
 
 		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("old"))[frameHdrLen:]); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("new"))[frameHdrLen:]); err != nil {
-			t.Fatal(err)
+		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("new"))[frameHdrLen:]); !errors.Is(err, errSelPath) {
+			t.Fatalf("error: %v", err)
 		}
 
 		sc.mu.Lock()
 		sc.wbufs = nil
 		sc.mu.Unlock()
-		if err := s.router.Publish(Msg{Path: NewPath("old"), Data: []byte("stale")}); err != nil {
+		if err := s.router.Publish(Msg{Path: NewPath("old"), Data: []byte("live")}); err != nil {
 			t.Fatal(err)
 		}
 		sc.mu.Lock()
 		n := len(sc.wbufs)
 		sc.mu.Unlock()
-		if n != 0 {
-			t.Fatalf("old path delivered %d buffers", n)
+		if n == 0 {
+			t.Fatal("old path not delivered")
 		}
 
-		if err := s.router.Publish(Msg{Path: NewPath("new"), Data: []byte("live")}); err != nil {
+		sc.mu.Lock()
+		sc.wbufs = nil
+		sc.mu.Unlock()
+		if err := s.router.Publish(Msg{Path: NewPath("new"), Data: []byte("stale")}); err != nil {
 			t.Fatal(err)
 		}
 		sc.mu.Lock()
 		n = len(sc.wbufs)
 		sc.mu.Unlock()
-		if n == 0 {
-			t.Fatal("new path not delivered")
+		if n != 0 {
+			t.Fatalf("new path delivered %d buffers", n)
 		}
 	})
 }

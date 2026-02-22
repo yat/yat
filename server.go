@@ -199,6 +199,13 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 
 	conn.mu.Lock()
 	old := conn.subs[num]
+
+	// selected path is immutable
+	if old != nil && !p.Equal(old.Sel.Path) {
+		conn.mu.Unlock()
+		return errSelPath
+	}
+
 	conn.subs[num] = e
 	conn.mu.Unlock()
 

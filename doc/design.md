@@ -14,6 +14,12 @@ a system path starts with $
 client's can't publish to system paths
 (and they can't subscribe either for now, but stay tuned)
 
+subscribing
+
+a client creates a subscription by selecting the set of matching messages
+a subscription selects a set of messages matching a particular path
+a subscription's selected path is immutable
+
 protocol
 
 the read loop is the same on the client and server:
