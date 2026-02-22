@@ -160,7 +160,7 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	// can't publish to $ paths
-	if isSystemPath(msg.Path) {
+	if isReserved(msg.Path) {
 		return nil
 	}
 
@@ -183,7 +183,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	// wip
-	if isSystemPath(p) {
+	if isReserved(p) {
 		return nil
 	}
 

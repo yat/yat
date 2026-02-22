@@ -244,8 +244,8 @@ func msgFieldsLen(m Msg) int {
 	return n
 }
 
-// isSystemPath returns true if the path is reserved by the system.
-// System paths start with a $.
-func isSystemPath(p Path) bool {
+// isReserved returns true if the path is reserved for internal use.
+// Reserved paths start with a $.
+func isReserved(p Path) bool {
 	return len(p.p) > 0 && p.p[0] == '$'
 }
