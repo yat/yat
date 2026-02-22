@@ -159,6 +159,11 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
+	// can't publish to $ paths
+	if isSystemPath(msg.Path) {
+		return nil
+	}
+
 	ee := s.router.route(msg)
 	s.router.deliver(ee, msg, raw)
 
@@ -175,6 +180,11 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	p, _, err := ParsePath(f.GetPath())
 	if err != nil {
 		return err
+	}
+
+	// wip
+	if isSystemPath(p) {
+		return nil
 	}
 
 	e := &rent{

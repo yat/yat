@@ -123,6 +123,33 @@ func TestServer_handlePub(t *testing.T) {
 		}
 	})
 
+	t.Run("system path is dropped", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		msgC := make(chan Msg, 1)
+		unsub, err := s.router.Subscribe(Sel{Path: NewPath("$sys/pub")}, func(m Msg) {
+			msgC <- m
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unsub()
+
+		body := appendMsgFields(nil, Msg{
+			Path:  NewPath("$sys/pub"),
+			Data:  []byte("hi"),
+			Inbox: NewPath("reply/room"),
+		})
+		if err := s.handlePub(context.Background(), discardLogger, newBareServerConn(&testConn{}), body); err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case got := <-msgC:
+			t.Fatalf("unexpected message: path=%q data=%q inbox=%q", got.Path.String(), got.Data, got.Inbox.String())
+		default:
+		}
+	})
+
 	t.Run("delivers to routed subscribers", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
@@ -172,6 +199,28 @@ func TestServer_handleSub(t *testing.T) {
 		err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, Path{})[frameHdrLen:])
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("system path is dropped", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		sc := newBareServerConn(&testConn{})
+
+		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("$sys/sub"))[frameHdrLen:]); err != nil {
+			t.Fatal(err)
+		}
+		if len(sc.subs) != 0 {
+			t.Fatalf("len(subs): %d != 0", len(sc.subs))
+		}
+
+		if err := s.router.Publish(Msg{Path: NewPath("$sys/sub"), Data: []byte("msg")}); err != nil {
+			t.Fatal(err)
+		}
+		sc.mu.Lock()
+		n := len(sc.wbufs)
+		sc.mu.Unlock()
+		if n != 0 {
+			t.Fatalf("system path delivered %d buffers", n)
 		}
 	})
 

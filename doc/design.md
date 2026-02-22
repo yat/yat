@@ -10,6 +10,10 @@ a path containing * or ** elements is a wildcard path
 the * wildcard matches any single element (matches like a/b* are not supported)
 the ** wildcard matches one or more trailing elements at the end of a path
 
+a system path starts with $
+client's can't publish to system paths
+(and they can't subscribe either for now, but stay tuned)
+
 protocol
 
 the read loop is the same on the client and server:
