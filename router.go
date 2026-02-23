@@ -32,12 +32,7 @@ type rent struct {
 	Do  func(Msg, []byte)
 }
 
-var (
-	errEmptyPath   = errors.New("empty path")
-	errWildPath    = errors.New("wildcard path")
-	errWildInbox   = errors.New("wildcard inbox")
-	errNilCallback = errors.New("nil callback func")
-)
+var errNilCallback = errors.New("nil callback func")
 
 // NewRouter returns a new router.
 func NewRouter() *Router {
@@ -50,12 +45,16 @@ func (rr *Router) Publish(m Msg) error {
 		return errEmptyPath
 	}
 
-	if m.Path.IsWild() {
+	if isWild(m.Path) {
 		return errWildPath
 	}
 
-	if m.Inbox.IsWild() {
+	if isWild(m.Inbox) {
 		return errWildInbox
+	}
+
+	if isReserved(m.Inbox) {
+		return errReservedInbox
 	}
 
 	ee := rr.route(m)

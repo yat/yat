@@ -1,6 +1,9 @@
 package yat
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestRouter_internalNoopBranches(t *testing.T) {
 	t.Run("update with nil old and new is a no-op", func(t *testing.T) {
@@ -21,4 +24,30 @@ func TestRouter_internalNoopBranches(t *testing.T) {
 			t.Fatal("expected nil")
 		}
 	})
+}
+
+func TestRouter_Publish_reservedInbox(t *testing.T) {
+	rr := NewRouter()
+	msgC := make(chan Msg, 1)
+	unsub, err := rr.Subscribe(Sel{Path: NewPath("chat/room")}, func(m Msg) {
+		msgC <- m
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsub()
+
+	err = rr.Publish(Msg{
+		Path:  NewPath("chat/room"),
+		Inbox: NewPath("$svr/events/stop"),
+	})
+	if !errors.Is(err, errReservedInbox) {
+		t.Fatalf("error: %v", err)
+	}
+
+	select {
+	case got := <-msgC:
+		t.Fatalf("unexpected message: path=%q data=%q inbox=%q", got.Path.String(), got.Data, got.Inbox.String())
+	default:
+	}
 }

@@ -172,7 +172,11 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	// can't publish to $ paths
+	if isReserved(msg.Inbox) {
+		return errReservedInbox
+	}
+
+	// no publishable $paths yet
 	if isReserved(msg.Path) {
 		return nil
 	}

@@ -106,28 +106,6 @@ func TestPath_Clone(t *testing.T) {
 	}
 }
 
-func TestPath_IsWild(t *testing.T) {
-	tcs := []struct {
-		Path string
-		Wild bool
-	}{
-		{"x", false},
-		{"x/y", false},
-		{"*", true},
-		{"**", true},
-		{"x/*", true},
-		{"x/**", true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.Path, func(t *testing.T) {
-			if got := mustPath(tc.Path).IsWild(); got != tc.Wild {
-				t.Fatalf("IsWild: %v != %v", got, tc.Wild)
-			}
-		})
-	}
-}
-
 func TestPath_IsZero(t *testing.T) {
 	zero := yat.Path{}
 	nonzero := mustPath("test")
@@ -138,10 +116,6 @@ func TestPath_IsZero(t *testing.T) {
 
 	if nonzero.IsZero() {
 		t.Fatal("nonzero is zero")
-	}
-
-	if zero.IsWild() {
-		t.Fatal("zero is wild")
 	}
 }
 

@@ -97,6 +97,10 @@ When a maintainer requests a structural change, preserve everything not explicit
 4. Respect declared review scope for WIP code.
 - If a review request says to ignore `panic("wip")` placeholders, ignore them.
 
+5. Calibrate API breakage concerns to current usage.
+- This package currently has no external consumers.
+- Unless explicitly requested, evaluate API compatibility impact within this repo only.
+
 ## Benchmark style
 
 - Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.

@@ -10,10 +10,12 @@ a path containing * or ** elements is a wildcard path
 the * wildcard matches any single element (matches like a/b* are not supported)
 the ** wildcard matches one or more trailing elements at the end of a path
 
-a reserved path starts with $
+reserved path starts with $
 messages with reserved paths are not routed to other clients
 they are handled by the server directly
-$svr/events/stop is published by the server after it stops accepting connections
+$svr/events/stop is currently the only reserved path
+the server publishes an empty message to this path when it stops accepting connections
+reserved path can't be used as a message inbox
 
 subscribing
 

@@ -2,7 +2,6 @@ package yat
 
 import (
 	"bytes"
-	"slices"
 )
 
 //go:generate sh -c "ragel -Z -G2 -o path.rl.go path.rl && go fmt path.rl.go > /dev/null"
@@ -68,11 +67,6 @@ func (p Path) Clone() Path {
 // String returns the path as a string.
 func (p Path) String() string {
 	return string(p.p)
-}
-
-// IsWild returns true if the path contains a * or ** wildcard.
-func (p Path) IsWild() bool {
-	return slices.Contains(p.p, '*')
 }
 
 // IsZero returns true if the path is empty.

@@ -43,6 +43,9 @@ func TestClient_Publish_validationAndClosed(t *testing.T) {
 	if err := c.Publish(Msg{Path: NewPath("ok"), Inbox: NewPath("*")}); !errors.Is(err, errWildInbox) {
 		t.Fatalf("wild inbox: %v", err)
 	}
+	if err := c.Publish(Msg{Path: NewPath("ok"), Inbox: NewPath("$svr/events/stop")}); !errors.Is(err, errReservedInbox) {
+		t.Fatalf("reserved inbox: %v", err)
+	}
 
 	tooLongData := make([]byte, MaxFrameLen)
 	if err := c.Publish(Msg{Path: NewPath("ok"), Data: tooLongData}); !errors.Is(err, errLongFrame) {

@@ -113,6 +113,22 @@ func TestServer_readFrames(t *testing.T) {
 		}
 	})
 
+	t.Run("reserved inbox error is returned", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		wire := appendFrame(nil, pubFrameType, func(b []byte) []byte {
+			return appendMsgFields(b, Msg{
+				Path:  NewPath("chat/room"),
+				Inbox: NewPath("$svr/events/stop"),
+			})
+		})
+		sc := newBareServerConn(newTestConnWithBytes(wire))
+
+		err := s.readFrames(context.Background(), discardLogger, sc)
+		if !errors.Is(err, errReservedInbox) {
+			t.Fatalf("error: %v", err)
+		}
+	})
+
 	t.Run("sub path change error is returned", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		wire := appendFrames(
@@ -134,6 +150,33 @@ func TestServer_handlePub(t *testing.T) {
 		err := s.handlePub(context.Background(), discardLogger, newBareServerConn(&testConn{}), []byte{0x80})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("reserved inbox is rejected", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		msgC := make(chan Msg, 1)
+		unsub, err := s.router.Subscribe(Sel{Path: NewPath("chat/room")}, func(m Msg) {
+			msgC <- m
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unsub()
+
+		body := appendMsgFields(nil, Msg{
+			Path:  NewPath("chat/room"),
+			Data:  []byte("hi"),
+			Inbox: NewPath("$svr/events/stop"),
+		})
+		if err := s.handlePub(context.Background(), discardLogger, newBareServerConn(&testConn{}), body); !errors.Is(err, errReservedInbox) {
+			t.Fatalf("error: %v", err)
+		}
+
+		select {
+		case got := <-msgC:
+			t.Fatalf("unexpected message: path=%q data=%q inbox=%q", got.Path.String(), got.Data, got.Inbox.String())
+		default:
 		}
 	})
 

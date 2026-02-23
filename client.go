@@ -79,12 +79,16 @@ func (c *Client) Publish(m Msg) error {
 		return errEmptyPath
 	}
 
-	if m.Path.IsWild() {
+	if isWild(m.Path) {
 		return errWildPath
 	}
 
-	if m.Inbox.IsWild() {
+	if isWild(m.Inbox) {
 		return errWildInbox
+	}
+
+	if isReserved(m.Inbox) {
+		return errReservedInbox
 	}
 
 	// TODO: return a less protocol-centric error here,
