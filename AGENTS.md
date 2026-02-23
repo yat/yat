@@ -16,6 +16,7 @@ When implementing a requested feature or fix, change the fewest lines needed for
 - Do not rename, reorder, move, or reformat unrelated code in the same edit.
 - Preserve existing control-flow shape unless changing it is necessary for the requested behavior.
 - If two approaches are both correct, prefer the one with the smaller, easier-to-review diff.
+- If the request is review/analysis only, do not edit files unless explicitly asked.
 
 Avoid low-value ceremonial defensive code.
 - Do not add guards for states that cannot occur under current invariants.
@@ -108,13 +109,18 @@ When a maintainer requests a structural change, preserve everything not explicit
 - This package currently has no external consumers.
 - Unless explicitly requested, evaluate API compatibility impact within this repo only.
 
+6. Anchor Go feedback to this repo's Go version.
+- Before asserting Go language/runtime/stdlib behavior, check the `go` version in `go.mod` and reason from that version specifically.
+- Do not give advice based on older Go behavior without confirming it still applies.
+- If version-dependent behavior is uncertain, verify first and call out the exact version in the feedback.
+
 ## Test style
 
 - Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.
 - Hard rule: generated tests must be in files named `ai_*_test.go`.
 - Prefer external `_test` packages (for example `servertls_test`) when writing tests.
 - Use same-package tests only when access to internals is absolutely required.
-- If internals are required, prefer separating them into a dedicated `*_internal_test.go` file.
+- If internals are required, prefer separating them into a dedicated `ai_*_internal_test.go` file.
 - Prefer behavior/state assertions over message-text assertions so tests remain stable when diagnostics evolve. Do not assert logger output in generated tests.
 
 ## Pre-submit checklist
