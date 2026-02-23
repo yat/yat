@@ -229,17 +229,35 @@ func (c *Client) connect(dial DialFunc) {
 		}
 	}()
 
+	var ndial int
+
 	for {
+		c.mu.Lock()
+		buffered := len(c.wbuf) > 0
+		c.mu.Unlock()
+
+		// stop if the client is done
+		// unless this is the first dial
+		// and there's something in the write buffer,
+		// in which case make an effort to connect and flush
+
 		select {
 		case <-ctx.Done():
-			return
+			if ndial > 0 || !buffered {
+				return
+			}
 		default:
 		}
 
-		// TODO: add a reasonable timeout here
-		dialCtx, cancelDial := context.WithCancel(ctx)
-		conn, err := dial(dialCtx)
-		cancelDial()
+		dctx := ctx
+		if ndial == 0 && buffered {
+			dctx = context.Background()
+		}
+
+		dctx, cancel := context.WithTimeout(dctx, 3*time.Second)
+		conn, err := dial(dctx)
+		cancel()
+		ndial++
 
 		if err != nil {
 			c.config.Logger.ErrorContext(ctx, "dial failed", "error", err)
