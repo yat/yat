@@ -73,6 +73,12 @@ When a maintainer requests a structural change, preserve everything not explicit
 - For hot-path "cleanups", prioritize reviewer intent over personal preference: equivalent behavior with smaller, clearer diffs.
 - If a potential improvement is optional, present it separately after completing the requested change.
 
+## API goroutine ownership
+
+- Default: do not start goroutines inside API methods.
+- Prefer blocking APIs where the caller chooses whether to call directly or launch a goroutine.
+- Only start internal goroutines when the API contract explicitly requires internal background lifecycle management.
+
 ## Defensive-code policy
 
 - Default stance: do not add defensive checks unless they are needed now.
@@ -104,6 +110,16 @@ When a maintainer requests a structural change, preserve everything not explicit
 ## Benchmark style
 
 - Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.
+
+## Generated test files
+
+- Hard rule: generated tests must be in files named `ai_*_test.go`.
+
+## Test package preference
+
+- Prefer external `_test` packages (for example `servertls_test`) when writing tests.
+- Use same-package tests only when access to internals is absolutely required.
+- If internals are required, prefer separating them into a dedicated `*_internal_test.go` file.
 
 ## Pre-submit checklist
 
