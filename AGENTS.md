@@ -35,7 +35,7 @@ Before writing code, inspect both diff layers:
 1. `git diff --cached`
 2. `git diff`
 
-Reason: this repo often has staged and unstaged work at the same time. If you only read one layer, you will misread intent and style. This is important but you don't need to announce it every time.
+Reason: this repo often has staged and unstaged work at the same time. If you only read one layer, you will misread intent and style.
 
 ## Style and change expectations
 
@@ -87,6 +87,24 @@ When a maintainer requests a structural change, preserve everything not explicit
 - Keep invariant assumptions local and obvious in code shape.
 - Prefer deleting redundant checks over preserving them "just in case."
 - If a guard stays, it should protect a realistic boundary (network input, parsing, file IO, user input, or explicit protocol max/min).
+
+## Judgment tie-breakers
+
+When multiple implementations are valid, choose in this order:
+
+1. Explicit maintainer/user intent.
+2. File-local style and current behavior.
+3. Smaller diffs and lower cognitive load.
+4. Added robustness only when supported by current evidence.
+
+Add a new guard, branch, helper, or retry path only if at least one is true:
+- The maintainer/user explicitly requested it.
+- A current failing test or known bug requires it.
+- It protects a real external-input boundary.
+
+If none of the above are true, do not add it.
+
+If intent is unclear and behavior could change, ask one clarifying question before coding.
 
 ## Review calibration
 
