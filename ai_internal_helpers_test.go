@@ -58,7 +58,7 @@ func newTestConnWithBytes(b []byte) *testConn {
 func newBareClient() *Client {
 	return &Client{
 		config: ClientConfig{}.withDefaults(),
-		subs:   map[uint64]func(Msg){},
+		subs:   map[uint64]*clientSub{},
 		wbufC:  make(chan struct{}, 1),
 		doneC:  make(chan struct{}),
 		connC:  make(chan struct{}),

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -17,9 +18,14 @@ import (
 type Client struct {
 	config ClientConfig
 
-	mu    sync.Mutex
-	num   uint64
-	subs  map[uint64]func(Msg)
+	mu   sync.Mutex
+	num  uint64
+	subs map[uint64]*clientSub
+
+	// bsub holds the numbers of the SubFrames buffered in wbuf.
+	// It is cleared when the buffer is flushed.
+	bsub []uint64
+
 	wbuf  []byte
 	wbufC chan struct{}
 
@@ -38,6 +44,11 @@ type ClientConfig struct {
 
 type DialFunc func(context.Context) (net.Conn, error)
 
+type clientSub struct {
+	Sel Sel
+	Do  func(Msg)
+}
+
 func NewClient(dial DialFunc, config ClientConfig) (*Client, error) {
 	if dial == nil {
 		return nil, errors.New("nil dial func")
@@ -47,7 +58,7 @@ func NewClient(dial DialFunc, config ClientConfig) (*Client, error) {
 
 	c := &Client{
 		config: config,
-		subs:   map[uint64]func(Msg){},
+		subs:   map[uint64]*clientSub{},
 		wbufC:  make(chan struct{}, 1),
 		doneC:  make(chan struct{}),
 		connC:  make(chan struct{}),
@@ -142,8 +153,12 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error
 
 	c.num++
 	num := c.num
-	c.subs[num] = func(m Msg) {
-		go callback(m)
+	c.bsub = append(c.bsub, num)
+	c.subs[num] = &clientSub{
+		Sel: sel,
+		Do: func(m Msg) {
+			go callback(m)
+		},
 	}
 
 	c.wbuf = appendFrame(c.wbuf, subFrameType, func(b []byte) []byte {
@@ -246,6 +261,38 @@ func (c *Client) connect(dial DialFunc) {
 		start := time.Now()
 		logger.DebugContext(ctx, "connection opened")
 
+		c.mu.Lock()
+
+		var resubbed bool
+		for num, sub := range c.subs {
+			if slices.Contains(c.bsub, num) {
+				continue
+			}
+
+			logger.DebugContext(ctx, "resubscribe",
+				"num", num, "path", sub.Sel.Path)
+
+			resubbed = true
+			c.bsub = append(c.bsub, num)
+			c.wbuf = appendFrame(c.wbuf, subFrameType, func(b []byte) []byte {
+				b, _ = proto.MarshalOptions{}.MarshalAppend(b, &api.SubFrame{
+					Num:  num,
+					Path: sub.Sel.Path.p,
+				})
+
+				return b
+			})
+		}
+
+		c.mu.Unlock()
+
+		if resubbed {
+			select {
+			case c.wbufC <- struct{}{}:
+			default:
+			}
+		}
+
 		err = c.serve(ctx, logger, conn)
 
 		logger.DebugContext(ctx, "connection closed", "elapsed", time.Since(start))
@@ -317,11 +364,11 @@ func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte
 	}
 
 	c.mu.Lock()
-	callback := c.subs[num]
+	sub := c.subs[num]
 	c.mu.Unlock()
 
-	if callback != nil {
-		callback(msg)
+	if sub != nil {
+		sub.Do(msg)
 	}
 
 	return nil
@@ -340,6 +387,7 @@ func (c *Client) writeFrames(ctx context.Context, logger *slog.Logger, conn net.
 
 		c.mu.Lock()
 		buf := c.wbuf
+		c.bsub = nil
 		c.wbuf = nil
 		c.mu.Unlock()
 

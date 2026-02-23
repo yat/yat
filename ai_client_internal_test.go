@@ -135,7 +135,9 @@ func TestClient_readFrames(t *testing.T) {
 	t.Run("unknown frame is discarded, known msg is handled", func(t *testing.T) {
 		c := newBareClient()
 		msgC := make(chan Msg, 1)
-		c.subs[7] = func(m Msg) { msgC <- m }
+		c.subs[7] = &clientSub{
+			Do: func(m Msg) { msgC <- m },
+		}
 
 		msg := Msg{Path: NewPath("chat/room"), Data: []byte("hi"), Inbox: NewPath("reply/room")}
 		wire := appendFrames(
@@ -375,6 +377,45 @@ func TestClient_connect(t *testing.T) {
 			synctest.Wait()
 			if got := calls.Load(); got < 2 {
 				t.Fatalf("calls: %d < 2", got)
+			}
+		})
+	})
+
+	t.Run("reconnect replays subscriptions", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			c := newBareClient()
+			t.Cleanup(func() {
+				select {
+				case <-c.doneC:
+				default:
+					close(c.doneC)
+				}
+				<-c.connC
+			})
+
+			subPath := NewPath("chat/resub")
+			if _, err := c.Subscribe(Sel{Path: subPath}, func(Msg) {}); err != nil {
+				t.Fatal(err)
+			}
+
+			connC := make(chan *testConn, 4)
+			go c.connect(func(context.Context) (net.Conn, error) {
+				tc := &testConn{}
+				connC <- tc
+				return tc, nil
+			})
+
+			first := <-connC
+			synctest.Wait()
+			if !bytes.Equal(first.wrote(), newSubFrame(1, subPath)) {
+				t.Fatalf("first write: %x != %x", first.wrote(), newSubFrame(1, subPath))
+			}
+
+			time.Sleep(500 * time.Millisecond)
+			second := <-connC
+			synctest.Wait()
+			if !bytes.Equal(second.wrote(), newSubFrame(1, subPath)) {
+				t.Fatalf("second write: %x != %x", second.wrote(), newSubFrame(1, subPath))
 			}
 		})
 	})
