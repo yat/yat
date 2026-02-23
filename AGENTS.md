@@ -1,11 +1,12 @@
 # AGENTS.md
 
-Guidance for future Codex runs in this repo.
+Guidance for future runs in this repo.
 
 ## Primary preference
 
 Readability and maintainability are first-order goals.
 Small, obvious code is preferred over speculative robustness.
+Do not toy with these people.
 
 ## Minimal-change mandate
 
@@ -33,7 +34,7 @@ Before writing code, inspect both diff layers:
 1. `git diff --cached`
 2. `git diff`
 
-Reason: this repo often has staged and unstaged work at the same time. If you only read one layer, you will misread intent and style.
+Reason: this repo often has staged and unstaged work at the same time. If you only read one layer, you will misread intent and style. This is important but you don't need to announce it every time.
 
 ## Style and change expectations
 
@@ -107,19 +108,14 @@ When a maintainer requests a structural change, preserve everything not explicit
 - This package currently has no external consumers.
 - Unless explicitly requested, evaluate API compatibility impact within this repo only.
 
-## Benchmark style
+## Test style
 
 - Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.
-
-## Generated test files
-
 - Hard rule: generated tests must be in files named `ai_*_test.go`.
-
-## Test package preference
-
 - Prefer external `_test` packages (for example `servertls_test`) when writing tests.
 - Use same-package tests only when access to internals is absolutely required.
 - If internals are required, prefer separating them into a dedicated `*_internal_test.go` file.
+- Prefer behavior/state assertions over message-text assertions so tests remain stable when diagnostics evolve. Do not assert logger output in generated tests.
 
 ## Pre-submit checklist
 

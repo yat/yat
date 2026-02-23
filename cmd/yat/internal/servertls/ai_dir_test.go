@@ -1,7 +1,6 @@
 package servertls_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -237,9 +235,7 @@ func TestDirConfig_Watch_DebouncesKeyAndCertUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	cancel, done := startWatchWithLogger(t, d, logger)
+	cancel, done := startWatch(t, d)
 	defer stopWatch(t, cancel, done)
 
 	afterBundle := newBundle(t, "server-after-debounce")
@@ -255,9 +251,71 @@ func TestDirConfig_Watch_DebouncesKeyAndCertUpdate(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool {
 		return activeServerCN(t, d) == "server-after-debounce"
 	})
+}
 
-	if strings.Contains(logs.String(), "tls config directory reload failed") {
-		t.Fatalf("unexpected reload failure log:\n%s", logs.String())
+func TestDirConfig_Watch_ReloadFailureCases(t *testing.T) {
+	tcs := []struct {
+		name   string
+		mutate func(t *testing.T, dir string)
+	}{
+		{
+			name: "missing key file",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.Remove(filepath.Join(dir, "server.key")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "corrupt cert file",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, "server.crt"), []byte("not a cert"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "mismatched key and cert",
+			mutate: func(t *testing.T, dir string) {
+				t.Helper()
+				other := newBundle(t, "server-mismatch")
+				if err := os.WriteFile(filepath.Join(dir, "server.key"), other.serverKeyPEM, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeBundle(t, dir, newBundle(t, "server-watch-failure"), true)
+
+			d, err := servertls.NewDirConfig(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			cancel, done := startWatch(t, d)
+			defer stopWatch(t, cancel, done)
+
+			before := activeConfig(t, d)
+			beforeCN := activeServerCN(t, d)
+
+			tc.mutate(t, dir)
+			time.Sleep(300 * time.Millisecond)
+
+			after := activeConfig(t, d)
+			if after != before {
+				t.Fatal("tls config changed after watch reload failure")
+			}
+
+			if got := activeServerCN(t, d); got != beforeCN {
+				t.Fatalf("common name %q != %q", got, beforeCN)
+			}
+		})
 	}
 }
 
@@ -287,7 +345,111 @@ func TestDirConfig_Watch_IgnoresUnrelatedFiles(t *testing.T) {
 	}
 }
 
-func TestDirConfig_Watch_ReloadFailureKeepsLastGoodConfig(t *testing.T) {
+func TestDirConfig_ReloadWithoutCAResetsClientAuth(t *testing.T) {
+	dir := t.TempDir()
+	writeBundle(t, dir, newBundle(t, "server-with-ca"), true)
+
+	d, err := servertls.NewDirConfig(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := activeConfig(t, d)
+	if cfg.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Fatalf("ClientAuth %v != %v", cfg.ClientAuth, tls.RequireAndVerifyClientCert)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "ca.crt")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg = activeConfig(t, d)
+	if cfg.ClientAuth != tls.NoClientCert {
+		t.Fatalf("ClientAuth %v != %v", cfg.ClientAuth, tls.NoClientCert)
+	}
+
+	if cfg.ClientCAs != nil {
+		t.Fatal("ClientCAs is non-nil")
+	}
+}
+
+func TestDirConfig_ReloadCAFileFailureKeepsLastGoodConfig(t *testing.T) {
+	tcs := []struct {
+		name string
+		pem  []byte
+	}{
+		{name: "empty ca file", pem: nil},
+		{name: "invalid ca file", pem: []byte("not a cert")},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeBundle(t, dir, newBundle(t, "server-ca-bad"), true)
+
+			d, err := servertls.NewDirConfig(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			before := activeConfig(t, d)
+			if err := os.WriteFile(filepath.Join(dir, "ca.crt"), tc.pem, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := d.Reload(); err == nil {
+				t.Fatal("no error")
+			}
+
+			after := activeConfig(t, d)
+			if after != before {
+				t.Fatal("tls config changed after bad ca reload")
+			}
+		})
+	}
+}
+
+func TestDirConfig_ReloadWithPartiallyValidCA(t *testing.T) {
+	dir := t.TempDir()
+	b := newBundle(t, "server-ca-partial")
+	writeBundle(t, dir, b, false)
+
+	d, err := servertls.NewDirConfig(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before := activeConfig(t, d)
+	pem := append([]byte{}, b.caCertPEM...)
+	pem = append(pem, []byte("not a cert")...)
+
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), pem, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := activeConfig(t, d)
+	if after == before {
+		t.Fatal("tls config did not change after successful reload")
+	}
+
+	if after.ClientAuth != tls.RequireAndVerifyClientCert {
+		t.Fatalf("ClientAuth %v != %v", after.ClientAuth, tls.RequireAndVerifyClientCert)
+	}
+
+	if after.ClientCAs == nil {
+		t.Fatal("ClientCAs is nil")
+	}
+}
+
+func TestDirConfig_ReloadFailureKeepsLastGoodConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeBundle(t, dir, newBundle(t, "server-good"), true)
 
@@ -296,16 +458,15 @@ func TestDirConfig_Watch_ReloadFailureKeepsLastGoodConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cancel, done := startWatch(t, d)
-	defer stopWatch(t, cancel, done)
-
 	before := activeConfig(t, d)
 
 	if err := os.WriteFile(filepath.Join(dir, "server.crt"), []byte("not a cert"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	time.Sleep(300 * time.Millisecond)
+	if err := d.Reload(); err == nil {
+		t.Fatal("no error")
+	}
 
 	after := activeConfig(t, d)
 	if after != before {
@@ -313,7 +474,7 @@ func TestDirConfig_Watch_ReloadFailureKeepsLastGoodConfig(t *testing.T) {
 	}
 }
 
-func TestDirConfig_Watch_ReloadKeepsBaseConfig(t *testing.T) {
+func TestDirConfig_ReloadKeepsBaseConfig(t *testing.T) {
 	dir := t.TempDir()
 	writeBundle(t, dir, newBundle(t, "server-base-before"), true)
 
@@ -327,9 +488,6 @@ func TestDirConfig_Watch_ReloadKeepsBaseConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cancel, done := startWatch(t, d)
-	defer stopWatch(t, cancel, done)
-
 	afterBundle := newBundle(t, "server-base-after")
 	if err := os.WriteFile(filepath.Join(dir, "server.key"), afterBundle.serverKeyPEM, 0o600); err != nil {
 		t.Fatal(err)
@@ -338,9 +496,13 @@ func TestDirConfig_Watch_ReloadKeepsBaseConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, 3*time.Second, func() bool {
-		return activeServerCN(t, d) == "server-base-after"
-	})
+	if err := d.Reload(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := activeServerCN(t, d); got != "server-base-after" {
+		t.Fatalf("common name %q != %q", got, "server-base-after")
+	}
 
 	cfg := activeConfig(t, d)
 	if cfg.MinVersion != tls.VersionTLS13 {

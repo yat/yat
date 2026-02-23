@@ -14,8 +14,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// DirConfig reads credentials from server.crt, server.key,
-// and (optionally) ca.crt files in a local directory.
+// DirConfig reads credentials from PEM encoded files in a local directory.
+// It reads the server keypair from server.crt and server.key.
+// If ca.crt is present, the roots it contains are used to verify client certificates.
 type DirConfig struct {
 	dir     string
 	base    *tls.Config
@@ -25,23 +26,22 @@ type DirConfig struct {
 
 // NewDirConfig loads a server TLS configuration from the given directory.
 // If baseConfig is not nil, it is cloned each time the configuration is updated.
-// Call Watch to update the configuration when files change.
+// Call [DirConfig.Watch] to automatically reload when files change.
 func NewDirConfig(dir string, baseConfig *tls.Config) (*DirConfig, error) {
 	d := &DirConfig{
 		dir:  dir,
 		base: baseConfig,
 	}
 
-	if err := d.updateConfig(); err != nil {
+	if err := d.Reload(); err != nil {
 		return nil, err
 	}
 
 	return d, nil
 }
 
-// TLSConfig returns a TLS configuration backed by the server.crt, server.key,
-// and (optionally) ca.crt files in the configured directory.
-// If [DirConfig.Watch] is running, the configuration is updated when files change.
+// TLSConfig returns a TLS configuration backed by the server.crt, server.key, and (optionally) ca.crt files in the configured directory.
+// If [DirConfig.Watch] is running, the configuration is reloaded automatically when files change.
 func (d *DirConfig) TLSConfig() *tls.Config {
 	if d.config.Load() == nil {
 		return nil
@@ -54,10 +54,10 @@ func (d *DirConfig) TLSConfig() *tls.Config {
 	}
 }
 
-// Watch updates the TLS configuration when files change.
+// Watch reloads the configuration when files change.
 // If the new configuration is invalid, the old one is retained and the error is logged.
 // Watch blocks until the given context is canceled.
-// Calling Watch more than once causes it to return an error.
+// Calling Watch more than once is an error.
 func (d *DirConfig) Watch(ctx context.Context, logger *slog.Logger) error {
 	if !d.watched.CompareAndSwap(false, true) {
 		return errors.New("already watched")
@@ -94,7 +94,7 @@ func (d *DirConfig) Watch(ctx context.Context, logger *slog.Logger) error {
 
 		case <-debounce:
 			debounce = nil
-			if err := d.updateConfig(); err != nil {
+			if err := d.Reload(); err != nil {
 				logger.ErrorContext(ctx, "tls config directory reload failed", "error", err)
 			} else {
 				logger.InfoContext(ctx, "tls config directory reloaded")
@@ -103,7 +103,8 @@ func (d *DirConfig) Watch(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-func (d *DirConfig) updateConfig() error {
+// Reload reloads the configuration.
+func (d *DirConfig) Reload() error {
 	cfg := d.base.Clone()
 	if cfg == nil {
 		cfg = new(tls.Config)
