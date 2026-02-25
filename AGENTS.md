@@ -136,7 +136,7 @@ If intent is unclear and behavior could change, ask one clarifying question befo
 
 - Use `for b.Loop()` in benchmarks instead of `for i := 0; i < b.N; i++`.
 - Hard rule: generated tests must be in files named `ai_*_test.go`.
-- Prefer external `_test` packages (for example `servertls_test`) when writing tests.
+- Prefer external `_test` packages (for example `tlsdir_test`) when writing tests.
 - Use same-package tests only when access to internals is absolutely required.
 - If internals are required, prefer separating them into a dedicated `ai_*_internal_test.go` file.
 - Prefer behavior/state assertions over message-text assertions so tests remain stable when diagnostics evolve. Do not assert logger output in generated tests.
