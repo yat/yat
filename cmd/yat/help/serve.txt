@@ -1,0 +1,14 @@
+Serve runs a Yat server.
+
+Usage:
+
+  yat serve [flags]
+
+Flags:
+
+  -bind localhost:25120
+      The address the server should bind.
+
+  -tls-dir PATH
+      Path to a directory containing server.crt and server.key files.
+      If ca.crt exists, it is used to verify client certificates.

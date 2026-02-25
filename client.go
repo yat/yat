@@ -271,13 +271,18 @@ func (c *Client) connect(dial DialFunc) {
 			}
 		}
 
-		logger := c.config.Logger.With(
-			"local", conn.LocalAddr(),
-			"remote", conn.RemoteAddr(),
-		)
-
 		start := time.Now()
-		logger.DebugContext(ctx, "connection opened")
+		logger := c.config.Logger.With(
+			"local", conn.LocalAddr().String(),
+			"remote", conn.RemoteAddr().String())
+
+		switch ndial {
+		case 1:
+			logger.DebugContext(ctx, "connection opened")
+
+		default:
+			logger.InfoContext(ctx, "connection reëstablished")
+		}
 
 		c.mu.Lock()
 

@@ -73,8 +73,8 @@ func (s *Server) Serve(l net.Listener) error {
 
 		wg.Go(func() {
 			logger := s.config.Logger.With(
-				"local", conn.LocalAddr(),
-				"remote", conn.RemoteAddr(),
+				"local", conn.LocalAddr().String(),
+				"remote", conn.RemoteAddr().String(),
 			)
 
 			start := time.Now()
@@ -86,7 +86,7 @@ func (s *Server) Serve(l net.Listener) error {
 
 			err := s.serve(ctx, logger, conn)
 
-			if err != nil {
+			if err != nil && err != io.EOF {
 				logger.ErrorContext(ctx, "connection failed", "error", err)
 			}
 		})
@@ -145,7 +145,7 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 			handle = s.handleUnsub
 
 		default:
-			logger.DebugContext(ctx, "discard frame", "type", hdr.Type(), "len", hdr.Len())
+			logger.Log(ctx, slog.LevelDebug-1, "discard frame", "type", hdr.Type(), "len", hdr.Len())
 			if _, err := io.CopyN(io.Discard, conn, int64(hdr.BodyLen())); err != nil {
 				return err
 			}

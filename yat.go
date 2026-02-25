@@ -1,9 +1,9 @@
 package yat
 
 type Msg struct {
-	Path  Path
-	Data  []byte
-	Inbox Path
+	Path  Path   `json:"path"`
+	Data  []byte `json:"data,omitempty"`
+	Inbox Path   `json:"inbox,omitzero"`
 }
 
 type Sel struct {

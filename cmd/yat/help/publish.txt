@@ -1,0 +1,17 @@
+Publish publishes a message.
+
+Usage:
+
+  yat publish PATH
+
+Flags:
+
+  -empty, -e
+      Publish a message with no data.
+
+  -file, -f /dev/stdin
+      Read message data from this file.
+      This flag is ignored if -empty is set.
+
+  -inbox, -i PATH
+      Set the message inbox.

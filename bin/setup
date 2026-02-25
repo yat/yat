@@ -1,0 +1,5 @@
+#!/bin/sh
+
+set -eux
+
+bin/yat seed tmp

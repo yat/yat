@@ -1,0 +1,5 @@
+#!/bin/sh
+
+set -eu
+
+exec go build -o ./yat ./cmd/yat
