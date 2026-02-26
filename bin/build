@@ -2,4 +2,4 @@
 
 set -eu
 
-exec go build -o ./yat ./cmd/yat
+CGO_ENABLED=0 exec go build -o ./yat ./cmd/yat
