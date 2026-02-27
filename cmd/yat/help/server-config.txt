@@ -1,0 +1,10 @@
+Optional server configuration can be loaded from YAML files.
+
+Usage
+
+  yat serve -config PATH [-config PATH]
+
+Example
+
+# add a tag attribute to the logger
+tag: "mostly just for testing"

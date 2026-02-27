@@ -4,21 +4,31 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
+	"os"
 
+	"go.yaml.in/yaml/v4"
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
 	"yat.io/yat/cmd/yat/internal/tlsdir"
 )
 
 type ServeCmd struct {
-	BindAddr string
-	TLSDir   string
+	BindAddr   string
+	ConfigURLs []string
+	TLSDir     string
+}
+
+type serverConfig struct {
+	Tag string `yaml:"tag"`
 }
 
 func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
+	flags.Strings(&cmd.ConfigURLs, "config")
 	flags.String(&cmd.TLSDir, "tls-dir")
 }
 
@@ -27,21 +37,32 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		return errors.New("missing required -tls-dir flag")
 	}
 
-	baseConfig := &tls.Config{
+	var cfg serverConfig
+	for _, curl := range cmd.ConfigURLs {
+		if err := loadServerConfig(&cfg, curl); err != nil {
+			return err
+		}
+	}
+
+	baseTLSConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		NextProtos: []string{"y0"},
 	}
 
-	dc, err := tlsdir.LoadServerConfig(cmd.TLSDir, baseConfig)
+	td, err := tlsdir.LoadServerConfig(cmd.TLSDir, baseTLSConfig)
 	if err != nil {
 		return err
 	}
 
-	go dc.Watch(ctx, logger)
+	go td.Watch(ctx, logger)
 
-	l, err := tls.Listen("tcp", cmd.BindAddr, dc.TLSConfig())
+	l, err := tls.Listen("tcp", cmd.BindAddr, td.TLSConfig())
 	if err != nil {
 		return err
+	}
+
+	if cfg.Tag != "" {
+		logger = logger.With("tag", cfg.Tag)
 	}
 
 	svr, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
@@ -70,4 +91,26 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	return err
+}
+
+func loadServerConfig(cfg *serverConfig, src string) error {
+	su, err := url.Parse(src)
+	if err != nil {
+		return err
+	}
+
+	var data []byte
+	switch su.Scheme {
+	case "file", "":
+		data, err = os.ReadFile(su.Path)
+
+	default:
+		err = fmt.Errorf("unsupported scheme: %s", su.Scheme)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	return yaml.Load(data, cfg)
 }

@@ -9,6 +9,11 @@ Flags:
   -bind localhost:25120
       The address the server should bind.
 
+  -config PATH
+      Path to a YAML file.
+      This flag can be set more than once.
+      Run 'yat help server-config' for details.
+
   -tls-dir PATH
       Path to a directory containing server.crt and server.key files.
       If ca.crt exists, it is used to verify client certificates.
