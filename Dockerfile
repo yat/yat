@@ -5,7 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN bin/build
+RUN bin/build -trimpath
 
 FROM scratch
 
