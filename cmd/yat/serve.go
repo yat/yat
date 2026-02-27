@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 
 	"go.yaml.in/yaml/v4"
+	"golang.org/x/net/http2"
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
 	"yat.io/yat/cmd/yat/internal/tlsdir"
@@ -46,7 +48,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 	baseTLSConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{"y0"},
+		NextProtos: []string{clientALPN, "h2", "http/1.1"},
 	}
 
 	td, err := tlsdir.LoadServerConfig(cmd.TLSDir, baseTLSConfig)
@@ -65,11 +67,24 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		logger = logger.With("tag", cfg.Tag)
 	}
 
-	svr, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
+	ys, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
 		Logger: logger,
 	})
 
 	if err != nil {
+		return err
+	}
+
+	hs := &http.Server{
+		TLSConfig: baseTLSConfig.Clone(),
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){
+			"y0": func(_ *http.Server, conn *tls.Conn, _ http.Handler) {
+				ys.ServeConn(ctx, conn)
+			},
+		},
+	}
+
+	if err := http2.ConfigureServer(hs, &http2.Server{}); err != nil {
 		return err
 	}
 
@@ -85,7 +100,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	logger.InfoContext(ctx, "serve",
 		"addr", l.Addr().String())
 
-	err = svr.Serve(l)
+	err = hs.Serve(l)
 	if errors.Is(err, net.ErrClosed) {
 		err = nil
 	}

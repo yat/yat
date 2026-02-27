@@ -15,6 +15,8 @@ type ClientConfig struct {
 	TLSDir string
 }
 
+const clientALPN = "y0"
+
 func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
 	addr, serverName, err := cmd.parseAddr()
 	if err != nil {
@@ -23,7 +25,7 @@ func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*ya
 
 	baseConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{"y0"},
+		NextProtos: []string{clientALPN},
 		ServerName: serverName,
 	}
 

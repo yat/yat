@@ -558,7 +558,7 @@ func TestServer_serve_removesAllConnSubsOnReturn(t *testing.T) {
 	s := mustNewServerForTest(t)
 
 	wire := newSubFrame(1, NewPath("chat/room"))
-	err := s.serve(context.Background(), discardLogger, newTestConnWithBytes(wire))
+	err := s.serveConn(context.Background(), discardLogger, newTestConnWithBytes(wire))
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("error: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestServer_serve_removesAllConnSubsOnReturn_reservedAndPublic(t *testing.T)
 		newSubFrame(1, NewPath("chat/room")),
 		newSubFrame(2, NewPath("$sys/sub")),
 	)
-	err := s.serve(context.Background(), discardLogger, newTestConnWithBytes(wire))
+	err := s.serveConn(context.Background(), discardLogger, newTestConnWithBytes(wire))
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("error: %v", err)
 	}

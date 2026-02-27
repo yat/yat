@@ -72,28 +72,32 @@ func (s *Server) Serve(l net.Listener) error {
 		}
 
 		wg.Go(func() {
-			logger := s.config.Logger.With(
-				"local", conn.LocalAddr().String(),
-				"remote", conn.RemoteAddr().String(),
-			)
-
-			start := time.Now()
-			logger.DebugContext(ctx, "connection opened")
-
-			defer func() {
-				logger.DebugContext(ctx, "connection closed", "elapsed", time.Since(start))
-			}()
-
-			err := s.serve(ctx, logger, conn)
-
-			if err != nil && err != io.EOF {
-				logger.ErrorContext(ctx, "connection failed", "error", err)
-			}
+			s.ServeConn(ctx, conn)
 		})
 	}
 }
 
-func (s *Server) serve(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
+func (s *Server) ServeConn(ctx context.Context, conn net.Conn) {
+	logger := s.config.Logger.With(
+		"local", conn.LocalAddr().String(),
+		"remote", conn.RemoteAddr().String(),
+	)
+
+	start := time.Now()
+	logger.DebugContext(ctx, "connection opened")
+
+	defer func() {
+		logger.DebugContext(ctx, "connection closed", "elapsed", time.Since(start))
+	}()
+
+	err := s.serveConn(ctx, logger, conn)
+
+	if err != nil && err != io.EOF {
+		logger.ErrorContext(ctx, "connection failed", "error", err)
+	}
+}
+
+func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
 	sc := &serverConn{
 		subs:  map[uint64]*rent{},
 		wbufC: make(chan struct{}, 1),
