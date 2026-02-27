@@ -2,7 +2,7 @@ Subscribe prints a stream of selected messages.
 
 Usage:
 
-  yat subscribe PATH
+  yat subscribe PATH ...
 
 Flags:
 

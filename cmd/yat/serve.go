@@ -35,6 +35,10 @@ func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 }
 
 func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
+	if len(args) != 0 {
+		return errors.New("serve doesn't take arguments")
+	}
+
 	if cmd.TLSDir == "" {
 		return errors.New("missing required -tls-dir flag")
 	}
