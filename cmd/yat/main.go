@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"yat.io/yat/cmd/yat/internal/flagset"
+
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 func main() {
