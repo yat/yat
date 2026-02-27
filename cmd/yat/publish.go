@@ -11,14 +11,13 @@ import (
 )
 
 type PublishCmd struct {
-	*ClientCmd
-	Empty bool
-	File  string
-	Inbox string
+	Config *ClientConfig
+	Empty  bool
+	File   string
+	Inbox  string
 }
 
 func (cmd *PublishCmd) AddFlags(flags *flagset.Set) {
-	cmd.ClientCmd.AddFlags(flags)
 	flags.Bool(&cmd.Empty, "empty", "e")
 	flags.String(&cmd.File, "file", "f")
 	flags.String(&cmd.Inbox, "inbox", "i")
@@ -55,23 +54,16 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		}
 	}
 
-	yc, err := cmd.newClient(ctx, logger)
+	yc, err := cmd.Config.NewClient(ctx, logger)
 	if err != nil {
 		return err
 	}
 
 	defer yc.Close()
 
-	err = yc.Publish(yat.Msg{
+	return yc.Publish(yat.Msg{
 		Path:  path,
 		Data:  data,
 		Inbox: inbox,
 	})
-
-	if err != nil {
-		yc.Close()
-		return err
-	}
-
-	return nil
 }

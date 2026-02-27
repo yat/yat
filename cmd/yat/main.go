@@ -22,9 +22,26 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	logLevel := slog.LevelInfo
+	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
+		if err := logLevel.UnmarshalText([]byte(ll)); err != nil {
+			return err
+		}
+	}
+
+	// embedded in client cmds
+	clientConfig := &ClientConfig{
+		Addr:   os.Getenv("YAT_ADDR"),
+		TLSDir: os.Getenv("YAT_TLS"),
+	}
+
+	if clientConfig.Addr == "" {
+		clientConfig.Addr = "localhost:25120"
+	}
 
 	flags := flagset.New()
 	flags.Text(&logLevel, "log-level")
+	flags.String(&clientConfig.Addr, "addr")
+	flags.String(&clientConfig.TLSDir, "tls")
 
 	args, err := flags.Parse(args)
 	if err != nil {
@@ -44,21 +61,11 @@ func run(ctx context.Context, args []string) error {
 		Run(ctx context.Context, logger *slog.Logger, args []string) error
 	}
 
-	// shared config
-	clientCmd := &ClientCmd{
-		Addr:   os.Getenv("YAT_ADDR"),
-		TLSDir: os.Getenv("YAT_TLS_DIR"),
-	}
-
-	if clientCmd.Addr == "" {
-		clientCmd.Addr = "localhost:25120"
-	}
-
 	switch name {
 	case "publish", "pub":
 		cmd = &PublishCmd{
-			ClientCmd: clientCmd,
-			File:      "/dev/stdin",
+			Config: clientConfig,
+			File:   "/dev/stdin",
 		}
 
 	case "seed":
@@ -71,8 +78,8 @@ func run(ctx context.Context, args []string) error {
 
 	case "subscribe", "sub":
 		cmd = &SubscribeCmd{
-			ClientCmd: clientCmd,
-			Format:    "raw",
+			Config: clientConfig,
+			Format: "raw",
 		}
 
 	default:

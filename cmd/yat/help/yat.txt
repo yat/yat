@@ -1,0 +1,28 @@
+Yat is a message server.
+
+Usage:
+
+  yat COMMAND ARGS
+
+Commands:
+
+  publish     publish a message
+  subscribe   print selected messages
+  serve       run a server instance
+  seed        generate local creds
+
+Client Flags:
+
+  -addr localhost:25120 ($YAT_ADDR)
+      Address of the Yat server.
+      The default port is 443.
+
+  -tls PATH ($YAT_TLS)
+      Path to a directory containing client.crt and client.key files.
+      If ca.crt exists, it is used to verify server certificates.
+
+Shared Flags:
+
+  -log-level INFO ($YAT_LOG_LEVEL)
+      Sets the minimum log level.
+      Values are DEBUG, WARN, INFO, and ERROR.

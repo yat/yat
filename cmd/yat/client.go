@@ -3,31 +3,20 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"log/slog"
 	"net"
 
 	"yat.io/yat"
-	"yat.io/yat/cmd/yat/internal/flagset"
 	"yat.io/yat/cmd/yat/internal/tlsdir"
 )
 
-type ClientCmd struct {
+type ClientConfig struct {
 	Addr   string
 	TLSDir string
 }
 
-func (cmd *ClientCmd) AddFlags(flags *flagset.Set) {
-	flags.String(&cmd.Addr, "addr")
-	flags.String(&cmd.TLSDir, "tls-dir")
-}
-
-func (cmd *ClientCmd) newClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
-	if cmd.TLSDir == "" {
-		return nil, errors.New("missing required -tls-dir flag")
-	}
-
-	host, _, err := net.SplitHostPort(cmd.Addr)
+func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
+	addr, serverName, err := cmd.parseAddr()
 	if err != nil {
 		return nil, err
 	}
@@ -35,21 +24,42 @@ func (cmd *ClientCmd) newClient(ctx context.Context, logger *slog.Logger) (*yat.
 	baseConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		NextProtos: []string{"y0"},
-		ServerName: host,
+		ServerName: serverName,
 	}
 
-	dc, err := tlsdir.LoadClientConfig(cmd.TLSDir, baseConfig)
-	if err != nil {
-		return nil, err
+	getConfig := func() *tls.Config {
+		return baseConfig
 	}
 
-	go dc.Watch(ctx, logger)
+	if cmd.TLSDir != "" {
+		d, err := tlsdir.LoadClientConfig(cmd.TLSDir, baseConfig)
+		if err != nil {
+			return nil, err
+		}
+
+		getConfig = d.TLSConfig
+		go d.Watch(ctx, logger)
+	}
 
 	dial := func(ctx context.Context) (net.Conn, error) {
-		return (&tls.Dialer{Config: dc.TLSConfig()}).DialContext(ctx, "tcp", cmd.Addr)
+		return (&tls.Dialer{Config: getConfig()}).DialContext(ctx, "tcp", addr)
 	}
 
 	return yat.NewClient(dial, yat.ClientConfig{
 		Logger: logger,
 	})
+}
+
+func (cmd ClientConfig) parseAddr() (addr, serverName string, err error) {
+	if serverName, _, err = net.SplitHostPort(cmd.Addr); err == nil {
+		addr = cmd.Addr
+		return
+	}
+
+	cmd.Addr += ":443"
+	if serverName, _, err = net.SplitHostPort(cmd.Addr); err == nil {
+		addr = cmd.Addr
+	}
+
+	return
 }

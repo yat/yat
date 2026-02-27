@@ -13,12 +13,11 @@ import (
 )
 
 type SubscribeCmd struct {
-	*ClientCmd
+	Config *ClientConfig
 	Format string
 }
 
 func (cmd *SubscribeCmd) AddFlags(flags *flagset.Set) {
-	cmd.ClientCmd.AddFlags(flags)
 	flags.String(&cmd.Format, "format")
 }
 
@@ -32,7 +31,7 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		return err
 	}
 
-	yc, err := cmd.newClient(ctx, logger)
+	yc, err := cmd.Config.NewClient(ctx, logger)
 	if err != nil {
 		return err
 	}

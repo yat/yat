@@ -7,7 +7,7 @@ Usage:
 Flags:
 
   -format raw
-    Formats the printed messages.
-    The default, raw, simply prints each message's data.
-    The other valid value is json, which prints JSON lines.
-    All other format values are treated like raw.
+      Formats the printed messages.
+      The default, raw, simply prints each message's data.
+      The other valid value is json, which prints JSON lines.
+      All other format values are treated like raw.
