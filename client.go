@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 	"yat.io/yat/api"
@@ -216,8 +217,6 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error
 func (c *Client) connect(dial DialFunc) {
 	defer close(c.connC)
 
-	const redialWait = 250 * time.Millisecond
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -228,6 +227,13 @@ func (c *Client) connect(dial DialFunc) {
 		case <-ctx.Done():
 		}
 	}()
+
+	redialBackoff := &backoff.ExponentialBackOff{
+		InitialInterval:     200 * time.Millisecond,
+		RandomizationFactor: 0.5,
+		Multiplier:          1.6,
+		MaxInterval:         5 * time.Second,
+	}
 
 	var ndial int
 
@@ -266,12 +272,14 @@ func (c *Client) connect(dial DialFunc) {
 			case <-ctx.Done():
 				return
 
-			case <-time.After(redialWait):
+			case <-time.After(redialBackoff.NextBackOff()):
 				continue
 			}
 		}
 
+		redialBackoff.Reset()
 		start := time.Now()
+
 		logger := c.config.Logger.With(
 			"local", conn.LocalAddr().String(),
 			"remote", conn.RemoteAddr().String())
@@ -281,7 +289,7 @@ func (c *Client) connect(dial DialFunc) {
 			logger.DebugContext(ctx, "connection opened")
 
 		default:
-			logger.InfoContext(ctx, "connection reëstablished")
+			logger.InfoContext(ctx, "connection established")
 		}
 
 		c.mu.Lock()
@@ -327,7 +335,7 @@ func (c *Client) connect(dial DialFunc) {
 		case <-ctx.Done():
 			return
 
-		case <-time.After(redialWait):
+		case <-time.After(redialBackoff.NextBackOff()):
 			continue
 		}
 	}

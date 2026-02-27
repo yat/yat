@@ -3,6 +3,7 @@ module yat.io/yat
 go 1.26.0
 
 require (
+	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/google/uuid v1.6.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
