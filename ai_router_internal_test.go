@@ -8,7 +8,7 @@ import (
 func TestRouter_internalNoopBranches(t *testing.T) {
 	t.Run("update with nil old and new is a no-op", func(t *testing.T) {
 		rr := NewRouter()
-		rr.update(nil, nil)
+		rr.update()
 	})
 
 	t.Run("match on zero path returns no entries", func(t *testing.T) {

@@ -32,6 +32,20 @@ type rent struct {
 	Do  func(Msg, []byte)
 }
 
+// rop is a router operation.
+// rops are applied in batches by update.
+type rop struct {
+	Type  ropType
+	Entry *rent
+}
+
+type ropType bool
+
+const (
+	ropIns ropType = true
+	ropDel ropType = false
+)
+
 var errNilCallback = errors.New("nil callback func")
 
 // NewRouter returns a new router.
@@ -93,37 +107,28 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 		},
 	}
 
-	rr.update(nil, e)
-	unsub = sync.OnceFunc(func() { rr.update(e, nil) })
+	rr.update(rop{ropIns, e})
+	unsub = sync.OnceFunc(func() { rr.update(rop{ropDel, e}) })
 
 	return
 }
 
-// update atomically removes old from the router and adds new.
-// If old or new is nil, it is ignored.
-func (rr *Router) update(old, new *rent) {
-	if old == nil && new == nil {
+func (rr *Router) update(batch ...rop) {
+	if len(batch) == 0 {
 		return
 	}
 
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 
-	if old != nil {
-		rr.tree.Del(old)
-	}
+	for _, op := range batch {
+		switch op.Type {
+		case ropIns:
+			rr.tree.Ins(op.Entry)
 
-	if new != nil {
-		rr.tree.Ins(new)
-	}
-}
-
-// removeAll is called to clean up router entries after a connection is closed.
-func (rr *Router) removeAll(entries []*rent) {
-	rr.mu.Lock()
-	defer rr.mu.Unlock()
-	for _, e := range entries {
-		rr.tree.Del(e)
+		case ropDel:
+			rr.tree.Del(op.Entry)
+		}
 	}
 }
 

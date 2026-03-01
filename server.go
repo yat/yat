@@ -106,14 +106,14 @@ func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Co
 
 	defer func() {
 		if len(sc.subs) > 0 {
-			rents := map[*Router][]*rent{}
+			rents := map[*Router][]rop{}
 
 			for _, e := range sc.subs {
-				rents[e.rr] = append(rents[e.rr], e)
+				rents[e.rr] = append(rents[e.rr], rop{ropDel, e})
 			}
 
-			for rr, ee := range rents {
-				rr.removeAll(ee)
+			for rr, ops := range rents {
+				rr.update(ops...)
 			}
 		}
 	}()
@@ -229,7 +229,12 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	conn.subs[num] = e
 	conn.mu.Unlock()
 
-	rr.update(old, e)
+	var ops []rop
+	if old != nil {
+		ops = append(ops, rop{ropDel, old})
+	}
+	ops = append(ops, rop{ropIns, e})
+	rr.update(ops...)
 
 	return nil
 }
@@ -251,7 +256,7 @@ func (s *Server) handleUnsub(ctx context.Context, logger *slog.Logger, conn *ser
 	conn.mu.Unlock()
 
 	if found {
-		old.rr.update(old, nil)
+		old.rr.update(rop{ropDel, old})
 	}
 
 	return nil
