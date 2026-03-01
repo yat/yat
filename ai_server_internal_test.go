@@ -113,8 +113,17 @@ func TestServer_readFrames(t *testing.T) {
 		}
 	})
 
-	t.Run("reserved inbox error is returned", func(t *testing.T) {
+	t.Run("dollar inbox is handled", func(t *testing.T) {
 		s := mustNewServerForTest(t)
+		msgC := make(chan Msg, 1)
+		unsub, err := s.router.Subscribe(Sel{Path: NewPath("chat/room")}, func(m Msg) {
+			msgC <- m
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unsub()
+
 		wire := appendFrame(nil, pubFrameType, func(b []byte) []byte {
 			return appendMsgFields(b, Msg{
 				Path:  NewPath("chat/room"),
@@ -123,9 +132,17 @@ func TestServer_readFrames(t *testing.T) {
 		})
 		sc := newBareServerConn(newTestConnWithBytes(wire))
 
-		err := s.readFrames(context.Background(), discardLogger, sc)
-		if !errors.Is(err, errReservedInbox) {
+		err = s.readFrames(context.Background(), discardLogger, sc)
+		if !errors.Is(err, io.EOF) {
 			t.Fatalf("error: %v", err)
+		}
+
+		got := <-msgC
+		if got.Path.String() != "chat/room" {
+			t.Fatalf("path: %q != %q", got.Path.String(), "chat/room")
+		}
+		if got.Inbox.String() != "$svr/events/stop" {
+			t.Fatalf("inbox: %q != %q", got.Inbox.String(), "$svr/events/stop")
 		}
 	})
 
@@ -153,7 +170,7 @@ func TestServer_handlePub(t *testing.T) {
 		}
 	})
 
-	t.Run("reserved inbox is rejected", func(t *testing.T) {
+	t.Run("dollar inbox is delivered", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
 		unsub, err := s.router.Subscribe(Sel{Path: NewPath("chat/room")}, func(m Msg) {
@@ -169,18 +186,23 @@ func TestServer_handlePub(t *testing.T) {
 			Data:  []byte("hi"),
 			Inbox: NewPath("$svr/events/stop"),
 		})
-		if err := s.handlePub(context.Background(), discardLogger, newBareServerConn(&testConn{}), body); !errors.Is(err, errReservedInbox) {
+		if err := s.handlePub(context.Background(), discardLogger, newBareServerConn(&testConn{}), body); err != nil {
 			t.Fatalf("error: %v", err)
 		}
 
-		select {
-		case got := <-msgC:
-			t.Fatalf("unexpected message: path=%q data=%q inbox=%q", got.Path.String(), got.Data, got.Inbox.String())
-		default:
+		got := <-msgC
+		if got.Path.String() != "chat/room" {
+			t.Fatalf("path: %q != %q", got.Path.String(), "chat/room")
+		}
+		if !bytes.Equal(got.Data, []byte("hi")) {
+			t.Fatalf("data: %q != %q", got.Data, "hi")
+		}
+		if got.Inbox.String() != "$svr/events/stop" {
+			t.Fatalf("inbox: %q != %q", got.Inbox.String(), "$svr/events/stop")
 		}
 	})
 
-	t.Run("system path is dropped", func(t *testing.T) {
+	t.Run("dollar path is delivered", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
 		unsub, err := s.router.Subscribe(Sel{Path: NewPath("$sys/pub")}, func(m Msg) {
@@ -200,10 +222,15 @@ func TestServer_handlePub(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		select {
-		case got := <-msgC:
-			t.Fatalf("unexpected message: path=%q data=%q inbox=%q", got.Path.String(), got.Data, got.Inbox.String())
-		default:
+		got := <-msgC
+		if got.Path.String() != "$sys/pub" {
+			t.Fatalf("path: %q != %q", got.Path.String(), "$sys/pub")
+		}
+		if !bytes.Equal(got.Data, []byte("hi")) {
+			t.Fatalf("data: %q != %q", got.Data, "hi")
+		}
+		if got.Inbox.String() != "reply/room" {
+			t.Fatalf("inbox: %q != %q", got.Inbox.String(), "reply/room")
 		}
 	})
 
@@ -259,7 +286,7 @@ func TestServer_handleSub(t *testing.T) {
 		}
 	})
 
-	t.Run("system path is local-only", func(t *testing.T) {
+	t.Run("dollar path is routed normally", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		sc := newBareServerConn(&testConn{})
 
@@ -269,12 +296,8 @@ func TestServer_handleSub(t *testing.T) {
 		if len(sc.subs) != 1 {
 			t.Fatalf("len(subs): %d != 1", len(sc.subs))
 		}
-		sub, found := sc.subs[1]
-		if !found {
+		if _, found := sc.subs[1]; !found {
 			t.Fatal("sub not found")
-		}
-		if sub.rr != s.local {
-			t.Fatal("sub router is not local")
 		}
 
 		if err := s.router.Publish(Msg{Path: NewPath("$sys/sub"), Data: []byte("msg")}); err != nil {
@@ -283,18 +306,8 @@ func TestServer_handleSub(t *testing.T) {
 		sc.mu.Lock()
 		n := len(sc.wbufs)
 		sc.mu.Unlock()
-		if n != 0 {
-			t.Fatalf("public path delivered %d buffers", n)
-		}
-
-		if err := s.local.Publish(Msg{Path: NewPath("$sys/sub"), Data: []byte("msg")}); err != nil {
-			t.Fatal(err)
-		}
-		sc.mu.Lock()
-		n = len(sc.wbufs)
-		sc.mu.Unlock()
 		if n == 0 {
-			t.Fatal("local path not delivered")
+			t.Fatal("dollar path not delivered")
 		}
 	})
 
@@ -386,7 +399,7 @@ func TestServer_handleUnsub(t *testing.T) {
 		}
 	})
 
-	t.Run("existing system sub is removed", func(t *testing.T) {
+	t.Run("existing dollar path sub is removed", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		sc := newBareServerConn(&testConn{})
 
@@ -403,7 +416,7 @@ func TestServer_handleUnsub(t *testing.T) {
 		sc.mu.Lock()
 		sc.wbufs = nil
 		sc.mu.Unlock()
-		if err := s.local.Publish(Msg{Path: NewPath("$sys/ok"), Data: []byte("gone")}); err != nil {
+		if err := s.router.Publish(Msg{Path: NewPath("$sys/ok"), Data: []byte("gone")}); err != nil {
 			t.Fatal(err)
 		}
 		sc.mu.Lock()
@@ -569,7 +582,7 @@ func TestServer_serve_removesAllConnSubsOnReturn(t *testing.T) {
 	}
 }
 
-func TestServer_serve_removesAllConnSubsOnReturn_reservedAndPublic(t *testing.T) {
+func TestServer_serve_removesAllConnSubsOnReturn_multiplePaths(t *testing.T) {
 	s := mustNewServerForTest(t)
 
 	wire := appendFrames(
@@ -583,57 +596,11 @@ func TestServer_serve_removesAllConnSubsOnReturn_reservedAndPublic(t *testing.T)
 
 	got := s.router.tree.Match(NewPath("chat/room"))
 	if len(got) != 0 {
-		t.Fatalf("len(public entries): %d != 0", len(got))
+		t.Fatalf("len(chat entries): %d != 0", len(got))
 	}
 
-	got = s.local.tree.Match(NewPath("$sys/sub"))
+	got = s.router.tree.Match(NewPath("$sys/sub"))
 	if len(got) != 0 {
-		t.Fatalf("len(local entries): %d != 0", len(got))
+		t.Fatalf("len(dollar entries): %d != 0", len(got))
 	}
 }
-
-func TestServer_Serve_publishesStopEvent(t *testing.T) {
-	s := mustNewServerForTest(t)
-
-	msgC := make(chan Msg, 1)
-	unsub, err := s.local.Subscribe(Sel{Path: NewPath("$svr/events/stop")}, func(m Msg) {
-		msgC <- m
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unsub()
-
-	err = s.Serve(closedListener{})
-	if !errors.Is(err, net.ErrClosed) {
-		t.Fatalf("error: %v", err)
-	}
-
-	select {
-	case got := <-msgC:
-		if got.Path.String() != "$svr/events/stop" {
-			t.Fatalf("path: %q != %q", got.Path.String(), "$svr/events/stop")
-		}
-
-	case <-time.After(1 * time.Second):
-		t.Fatal("stop event not delivered")
-	}
-}
-
-func TestServer_getRouter(t *testing.T) {
-	s := mustNewServerForTest(t)
-
-	if got := s.getRouter(NewPath("chat/room")); got != s.router {
-		t.Fatal("chat router mismatch")
-	}
-
-	if got := s.getRouter(NewPath("$sys/sub")); got != s.local {
-		t.Fatal("system router mismatch")
-	}
-}
-
-type closedListener struct{}
-
-func (closedListener) Accept() (net.Conn, error) { return nil, net.ErrClosed }
-func (closedListener) Close() error              { return nil }
-func (closedListener) Addr() net.Addr            { return testAddr("closed-listener") }

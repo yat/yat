@@ -27,7 +27,6 @@ type rnode struct {
 
 // rent is an entry in the route tree.
 type rent struct {
-	rr  *Router
 	Sel Sel
 	Do  func(Msg, []byte)
 }
@@ -67,10 +66,6 @@ func (rr *Router) Publish(m Msg) error {
 		return errWildInbox
 	}
 
-	if isReserved(m.Inbox) {
-		return errReservedInbox
-	}
-
 	ee := rr.route(m)
 	if len(ee) == 0 {
 		return nil
@@ -100,7 +95,6 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 	}
 
 	e := &rent{
-		rr:  rr,
 		Sel: sel,
 		Do: func(m Msg, _ []byte) {
 			go callback(m)

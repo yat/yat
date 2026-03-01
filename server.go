@@ -19,7 +19,6 @@ import (
 type Server struct {
 	router *Router
 	config ServerConfig
-	local  *Router
 }
 
 type ServerConfig struct {
@@ -43,12 +42,10 @@ func NewServer(router *Router, config ServerConfig) (*Server, error) {
 	}
 
 	config = config.withDefaults()
-	local := NewRouter()
 
 	s := &Server{
 		router: router,
 		config: config,
-		local:  local,
 	}
 
 	return s, nil
@@ -63,10 +60,6 @@ func (s *Server) Serve(l net.Listener) error {
 
 	for {
 		conn, err := l.Accept()
-		if errors.Is(err, net.ErrClosed) {
-			s.local.Publish(Msg{Path: NewPath("$svr/events/stop")})
-		}
-
 		if err != nil {
 			return err
 		}
@@ -106,15 +99,11 @@ func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Co
 
 	defer func() {
 		if len(sc.subs) > 0 {
-			rents := map[*Router][]rop{}
-
+			var ops []rop
 			for _, e := range sc.subs {
-				rents[e.rr] = append(rents[e.rr], rop{ropDel, e})
+				ops = append(ops, rop{ropDel, e})
 			}
-
-			for rr, ops := range rents {
-				rr.update(ops...)
-			}
+			s.router.update(ops...)
 		}
 	}()
 
@@ -176,15 +165,6 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	if isReserved(msg.Inbox) {
-		return errReservedInbox
-	}
-
-	// no publishable $paths yet
-	if isReserved(msg.Path) {
-		return nil
-	}
-
 	ee := s.router.route(msg)
 	s.router.deliver(ee, msg, raw)
 
@@ -203,11 +183,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	rr := s.getRouter(p)
-
 	e := &rent{
-		rr: rr,
-
 		Sel: Sel{
 			Path: p,
 		},
@@ -234,7 +210,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		ops = append(ops, rop{ropDel, old})
 	}
 	ops = append(ops, rop{ropIns, e})
-	rr.update(ops...)
+	s.router.update(ops...)
 
 	return nil
 }
@@ -256,7 +232,7 @@ func (s *Server) handleUnsub(ctx context.Context, logger *slog.Logger, conn *ser
 	conn.mu.Unlock()
 
 	if found {
-		old.rr.update(rop{ropDel, old})
+		s.router.update(rop{ropDel, old})
 	}
 
 	return nil
@@ -335,19 +311,6 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 				}
 			}
 		}
-	}
-}
-
-// getRouter returns the appropriate router for the given path.
-// If the path is reserved, getRouter returns the server's internal router.
-// Otherwise it returns the router passed to [NewServer].
-func (s *Server) getRouter(p Path) *Router {
-	switch {
-	case isReserved(p):
-		return s.local
-
-	default:
-		return s.router
 	}
 }
 

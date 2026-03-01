@@ -39,13 +39,12 @@ const (
 )
 
 var (
-	errShortFrame    = errors.New("short frame")
-	errLongFrame     = errors.New("long frame")
-	errEmptyPath     = errors.New("empty path")
-	errSelPath       = errors.New("selector path changed")
-	errWildPath      = errors.New("wildcard path")
-	errWildInbox     = errors.New("wildcard inbox")
-	errReservedInbox = errors.New("reserved inbox")
+	errShortFrame = errors.New("short frame")
+	errLongFrame  = errors.New("long frame")
+	errEmptyPath  = errors.New("empty path")
+	errSelPath    = errors.New("selector path changed")
+	errWildPath   = errors.New("wildcard path")
+	errWildInbox  = errors.New("wildcard inbox")
 )
 
 func (h frameHdr) Len() int {
@@ -247,12 +246,6 @@ func msgFieldsLen(m Msg) int {
 	}
 
 	return n
-}
-
-// isReserved returns true if the path is reserved for internal use.
-// Reserved paths start with a $.
-func isReserved(p Path) bool {
-	return len(p.p) > 0 && p.p[0] == '$'
 }
 
 // isWild returns true if the path contains a * or ** wildcard.

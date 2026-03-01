@@ -99,10 +99,6 @@ func (c *Client) Publish(m Msg) error {
 		return errWildInbox
 	}
 
-	if isReserved(m.Inbox) {
-		return errReservedInbox
-	}
-
 	// TODO: return a less protocol-centric error here,
 	// the data field is actually what's too long
 
