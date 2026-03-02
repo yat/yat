@@ -13,13 +13,16 @@ Commands:
 
 Client Flags:
 
-  -addr localhost:25120 ($YAT_ADDR)
+  -server localhost:25120 ($YAT_SERVER)
       Address of the Yat server.
       The default port is 443.
 
-  -tls PATH ($YAT_TLS)
+  -jwt PATH ($YAT_JWT_FILE)
+      Path to a file containing a JSON Web Token.
+
+  -tls PATH ($YAT_TLS_DIR)
       Path to a directory containing client.crt and client.key files.
-      If ca.crt exists, it is used to verify server certificates.
+      The directory may also contain a ca.crt file to verify the server.
 
 Shared Flags:
 

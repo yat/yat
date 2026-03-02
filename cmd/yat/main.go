@@ -32,17 +32,19 @@ func run(ctx context.Context, args []string) error {
 
 	// embedded in client cmds
 	clientConfig := &ClientConfig{
-		Addr:   os.Getenv("YAT_ADDR"),
-		TLSDir: os.Getenv("YAT_TLS"),
+		Server:  os.Getenv("YAT_SERVER"),
+		TLSDir:  os.Getenv("YAT_TLS_DIR"),
+		JWTFile: os.Getenv("YAT_JWT_FILE"),
 	}
 
-	if clientConfig.Addr == "" {
-		clientConfig.Addr = "localhost:25120"
+	if clientConfig.Server == "" {
+		clientConfig.Server = "localhost:25120"
 	}
 
 	flags := flagset.New()
 	flags.Text(&logLevel, "log-level")
-	flags.String(&clientConfig.Addr, "addr")
+	flags.String(&clientConfig.Server, "server")
+	flags.String(&clientConfig.JWTFile, "jwt")
 	flags.String(&clientConfig.TLSDir, "tls")
 
 	args, err := flags.Parse(args)
@@ -76,6 +78,7 @@ func run(ctx context.Context, args []string) error {
 	case "serve", "server":
 		cmd = &ServeCmd{
 			BindAddr: "localhost:25120",
+			TLSDir:   ".",
 		}
 
 	case "subscribe", "sub":

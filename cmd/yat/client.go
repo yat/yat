@@ -5,14 +5,16 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"net"
+	"os"
 
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/tlsdir"
 )
 
 type ClientConfig struct {
-	Addr   string
-	TLSDir string
+	Server  string
+	JWTFile string
+	TLSDir  string
 }
 
 const clientALPN = "y0"
@@ -47,20 +49,28 @@ func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*ya
 		return (&tls.Dialer{Config: getConfig()}).DialContext(ctx, "tcp", addr)
 	}
 
-	return yat.NewClient(dial, yat.ClientConfig{
+	cfg := yat.ClientConfig{
 		Logger: logger,
-	})
+	}
+
+	if cmd.JWTFile != "" {
+		cfg.GetToken = func(context.Context) ([]byte, error) {
+			return os.ReadFile(cmd.JWTFile)
+		}
+	}
+
+	return yat.NewClient(dial, cfg)
 }
 
 func (cmd ClientConfig) parseAddr() (addr, serverName string, err error) {
-	if serverName, _, err = net.SplitHostPort(cmd.Addr); err == nil {
-		addr = cmd.Addr
+	if serverName, _, err = net.SplitHostPort(cmd.Server); err == nil {
+		addr = cmd.Server
 		return
 	}
 
-	cmd.Addr += ":443"
-	if serverName, _, err = net.SplitHostPort(cmd.Addr); err == nil {
-		addr = cmd.Addr
+	cmd.Server += ":443"
+	if serverName, _, err = net.SplitHostPort(cmd.Server); err == nil {
+		addr = cmd.Server
 	}
 
 	return

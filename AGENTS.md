@@ -146,7 +146,8 @@ If intent is unclear and behavior could change, ask one clarifying question befo
 
 ## Pre-submit checklist
 
-- [ ] I reviewed `git diff --cached` and `git diff` first.
+- [ ] I quietly reviewed `git diff --cached` and `git diff` first.
+- [ ] I excluded WIP-marked code from findings unless it breaks requested non-WIP behavior.
 - [ ] Every changed line is directly tied to the request.
 - [ ] I avoided unnecessary helpers/abstractions/defensive ceremony.
 - [ ] Log messages/fields exactly match user direction.

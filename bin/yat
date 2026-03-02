@@ -4,7 +4,7 @@ set -eu
 
 bin/build
 
-export YAT_ADDR=localhost:25120
-export YAT_TLS=tmp/tls
+export YAT_SERVER=localhost:25120
+export YAT_TLS_DIR=tmp/tls
 
 exec ./yat "$@"

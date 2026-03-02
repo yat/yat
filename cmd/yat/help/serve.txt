@@ -9,11 +9,20 @@ Flags:
   -bind localhost:25120
       The address the server should bind.
 
+  -tls-dir .
+      Path to a directory containing server.crt and server.key files.
+      If ca.crt exists, it is used to verify client certificates.
+
   -config PATH
-      Path to a YAML file.
+      Path to a JSON or YAML config file.
       This flag can be set more than once.
       Run 'yat help server-config' for details.
 
-  -tls-dir PATH
-      Path to a directory containing server.crt and server.key files.
-      If ca.crt exists, it is used to verify client certificates.
+  -issuer URL
+      URL of an OIDC-compliant JWT issuer.
+      The server accepts client tokens signed by the issuer.
+      This flag can be set more than once.
+
+  -no-rules
+      If this flag is set, the server allows all operations.
+      Configured rules are still parsed, but not enforced.
