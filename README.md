@@ -2,7 +2,8 @@
 
 ```
 bin/setup
-bin/server
+bin/air
+# or bin/serve
 ```
 
 ```
