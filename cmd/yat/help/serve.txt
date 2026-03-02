@@ -20,8 +20,8 @@ Flags:
 
   -issuer URL
       URL of an OIDC-compliant JWT issuer.
-      The server accepts client tokens signed by the issuer.
       This flag can be set more than once.
+      The server accepts tokens signed by the issuer.
 
   -no-rules
       If this flag is set, the server allows all operations.

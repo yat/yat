@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"go.yaml.in/yaml/v4"
 	"golang.org/x/net/http2"
 	"yat.io/yat"
@@ -69,14 +70,24 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	vv := map[string]*oidc.IDTokenVerifier{}
-	for _, iss := range cmd.IssuerURLs {
-		op, err := oidc.NewProvider(ctx, iss)
+	issuerMap := map[string]string{}
+	verifiers := map[string]*oidc.IDTokenVerifier{}
+	for _, iu := range cmd.IssuerURLs {
+		ctx, iss, err := issuerContext(ctx, iu)
 		if err != nil {
 			return err
 		}
 
-		vv[iss] = op.Verifier(&oidc.Config{
+		if iss != iu {
+			issuerMap[iu] = iss
+		}
+
+		op, err := oidc.NewProvider(ctx, iu)
+		if err != nil {
+			return err
+		}
+
+		verifiers[iss] = op.Verifier(&oidc.Config{
 			SkipClientIDCheck: true,
 		})
 	}
@@ -86,7 +97,17 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		return err
 	}
 
-	ruleSet, err := yat.NewRuleSet(rules, vv)
+	for _, r := range rules {
+		if r.Token == nil {
+			continue
+		}
+
+		if iss, ok := issuerMap[r.Token.Issuer]; ok {
+			r.Token.Issuer = iss
+		}
+	}
+
+	ruleSet, err := yat.NewRuleSet(rules, verifiers)
 	if err != nil {
 		return err
 	}
@@ -156,6 +177,30 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	return err
+}
+
+func issuerContext(parent context.Context, issuerURL string) (ctx context.Context, iss string, err error) {
+	if issuerURL != "https://kubernetes.default.svc" {
+		return parent, issuerURL, nil
+	}
+
+	rawToken, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return
+	}
+
+	parsed, err := jwt.ParseSigned(string(rawToken), yat.ValidJOSEAlgs)
+	if err != nil {
+		return
+	}
+
+	var claims jwt.Claims
+	err = parsed.UnsafeClaimsWithoutVerification(&claims)
+	if err != nil {
+		return
+	}
+
+	return oidc.InsecureIssuerURLContext(parent, claims.Issuer), claims.Issuer, nil
 }
 
 func loadServeConfig(cfg *serveConfig, src string) error {

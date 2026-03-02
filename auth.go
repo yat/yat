@@ -59,9 +59,9 @@ type Identity struct {
 	Token *Token
 }
 
-// jwtValidAlgs are the alg values supported by [Auth.Verify].
+// ValidJOSEAlgs are the alg values supported by [Auth.Verify].
 // A particular provider may not support all of these algs.
-var jwtValidAlgs = []jose.SignatureAlgorithm{
+var ValidJOSEAlgs = []jose.SignatureAlgorithm{
 	jose.EdDSA,
 	jose.ES256,
 	jose.PS256,
@@ -86,7 +86,7 @@ func NoRules() *RuleSet {
 
 func (rs *RuleSet) Verify(ctx context.Context, jwtBytes []byte) (*Token, error) {
 	unparsed := string(jwtBytes)
-	parsed, err := jwt.ParseSigned(unparsed, jwtValidAlgs)
+	parsed, err := jwt.ParseSigned(unparsed, ValidJOSEAlgs)
 	if err != nil {
 		return nil, err
 	}

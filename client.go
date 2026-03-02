@@ -275,7 +275,7 @@ func (c *Client) connect(dial DialFunc) {
 		if err == nil && c.config.GetToken != nil {
 			var jwtBytes []byte
 			if jwtBytes, err = c.config.GetToken(dctx); err == nil {
-				if _, err = jose.ParseSignedCompact(string(jwtBytes), jwtValidAlgs); err == nil {
+				if _, err = jose.ParseSignedCompact(string(jwtBytes), ValidJOSEAlgs); err == nil {
 					jwtFrame := appendFrameBytes(nil, jwtFrameType, jwtBytes)
 					deadline, _ := dctx.Deadline()
 					if err = conn.SetWriteDeadline(deadline); err == nil {
