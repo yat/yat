@@ -1,4 +1,5 @@
 #!/bin/sh
+# run yat client commands
 
 set -eu
 

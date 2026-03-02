@@ -1,4 +1,5 @@
 #!/bin/sh
+# seed the local dev env
 
 set -eux
 

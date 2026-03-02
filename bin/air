@@ -1,3 +1,4 @@
 #!/bin/sh
+# bin/serve reloader
 
 exec go tool air -c .air.toml

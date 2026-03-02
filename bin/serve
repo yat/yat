@@ -1,3 +1,4 @@
 #!/bin/sh
+# run the local dev server
 
 exec go tool logfmt ./yat serve -log-level debug -tls-dir tmp/tls -no-rules
