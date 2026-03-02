@@ -25,10 +25,11 @@ const frameHdrLen = 4
 
 const (
 	_              = 0
-	pubFrameType   = 1
-	subFrameType   = 2
-	unsubFrameType = 3
-	msgFrameType   = 4
+	jwtFrameType   = 1
+	pubFrameType   = 2
+	subFrameType   = 3
+	unsubFrameType = 4
+	msgFrameType   = 16
 )
 
 const (
@@ -39,12 +40,13 @@ const (
 )
 
 var (
-	errShortFrame = errors.New("short frame")
-	errLongFrame  = errors.New("long frame")
-	errEmptyPath  = errors.New("empty path")
-	errSelPath    = errors.New("selector path changed")
-	errWildPath   = errors.New("wildcard path")
-	errWildInbox  = errors.New("wildcard inbox")
+	errShortFrame  = errors.New("short frame")
+	errLongFrame   = errors.New("long frame")
+	errDupJWTFrame = errors.New("duplicate jwt frame")
+	errEmptyPath   = errors.New("empty path")
+	errSelPath     = errors.New("selector path changed")
+	errWildPath    = errors.New("wildcard path")
+	errWildInbox   = errors.New("wildcard inbox")
 )
 
 func (h frameHdr) Len() int {
@@ -77,6 +79,13 @@ func appendFrame(buf []byte, typ byte, f func([]byte) []byte) []byte {
 	buf[off+2] = byte(n >> 16)
 
 	return buf
+}
+
+// appendFrameBytes appends a frame header and static body to buf and returns the extended slice.
+func appendFrameBytes(buf []byte, typ byte, body []byte) []byte {
+	return appendFrame(buf, typ, func(b []byte) []byte {
+		return append(b, body...)
+	})
 }
 
 // parseMsg parses a proto into a message.

@@ -61,6 +61,7 @@ Reason: this repo often has staged and unstaged work at the same time. If you on
 5. Avoid hidden behavior changes.
 - Do not silently shift semantics while "cleaning up".
 - Keep changes narrowly scoped to the requested behavior.
+- When introducing optional configuration, preserve existing behavior when it is unset unless the request explicitly changes the default.
 
 6. Optimize for maintainer review speed.
 - A maintainer should understand the diff at a glance.
@@ -74,6 +75,7 @@ When a maintainer requests a structural change, preserve everything not explicit
 - Do not make speculative style or micro-optimization substitutions. If a change is not required for correctness or explicitly requested, leave it alone.
 - For hot-path "cleanups", prioritize reviewer intent over personal preference: equivalent behavior with smaller, clearer diffs.
 - If a potential improvement is optional, present it separately after completing the requested change.
+- When semantics change, keep code, comments, and tests aligned to the same contract.
 
 ## API goroutine ownership
 
@@ -121,7 +123,8 @@ If intent is unclear and behavior could change, ask one clarifying question befo
 - Do not add docs/comments for "basic reasoning" unless requested.
 
 4. Respect declared review scope for WIP code.
-- If a review request says to ignore `panic("wip")` placeholders, ignore them.
+- If the user marks a diff layer, file, or hunk as WIP or out of scope, treat it as context only.
+- Do not review it, summarize it, or suggest changes to it unless it directly conflicts with the requested scope.
 
 5. Calibrate API breakage concerns to current usage.
 - This package currently has no external consumers.

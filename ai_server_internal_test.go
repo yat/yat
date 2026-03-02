@@ -9,6 +9,10 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 func mustNewServerForTest(t *testing.T) *Server {
@@ -159,6 +163,62 @@ func TestServer_readFrames(t *testing.T) {
 			t.Fatalf("error: %v", err)
 		}
 	})
+
+	t.Run("jwt frame authenticates subsequent sub", func(t *testing.T) {
+		now := time.Unix(1_700_000_000, 0).UTC()
+		issuer := "https://issuer.example"
+		clientID := "client-123"
+
+		key := newAuthTestKey(t, jose.RS256)
+		rs, err := NewRuleSet([]Rule{{
+			Token: AnyToken(),
+			Grants: []Grant{{
+				Path:    NewPath("private/**"),
+				Actions: []Action{SubAction},
+			}},
+		}}, map[string]*oidc.IDTokenVerifier{
+			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
+			Issuer:   issuer,
+			Subject:  "user-123",
+			Audience: jwt.Audience{clientID},
+			IssuedAt: jwt.NewNumericDate(now),
+			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
+		}, nil)
+
+		wire := appendFrames(
+			newJWTFrame(raw),
+			newSubFrame(1, NewPath("private/feed")),
+		)
+
+		sc := &serverConn{
+			allow: rs.Compile(Identity{}),
+			subs:  map[uint64]*rent{},
+			wbufC: make(chan struct{}, 1),
+			Conn:  newTestConnWithBytes(wire),
+		}
+
+		err = s.readFrames(context.Background(), discardLogger, sc)
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("error: %v", err)
+		}
+		if sc.token == nil {
+			t.Fatal("token not set")
+		}
+		if _, ok := sc.subs[1]; !ok {
+			t.Fatal("sub not installed")
+		}
+	})
 }
 
 func TestServer_handlePub(t *testing.T) {
@@ -265,6 +325,158 @@ func TestServer_handlePub(t *testing.T) {
 			t.Fatalf("inbox: %q != %q", got.Inbox.String(), "reply/room")
 		}
 	})
+
+	t.Run("denied inbox drops publish", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		msgC := make(chan Msg, 1)
+		unsub, err := s.router.Subscribe(Sel{Path: NewPath("chat/room")}, func(m Msg) {
+			msgC <- m
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unsub()
+
+		sc := newBareServerConn(&testConn{})
+		sc.allow = func(p Path, a Action) bool {
+			return a == PubAction && p.Equal(NewPath("chat/room"))
+		}
+
+		body := appendMsgFields(nil, Msg{
+			Path:  NewPath("chat/room"),
+			Data:  []byte("hi"),
+			Inbox: NewPath("reply/room"),
+		})
+		if err := s.handlePub(context.Background(), discardLogger, sc, body); err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case got := <-msgC:
+			t.Fatalf("unexpected message: %+v", got)
+		default:
+		}
+	})
+}
+
+func TestServer_handleJWT(t *testing.T) {
+	t.Run("no rules ignores jwt", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		sc := newBareServerConn(&testConn{})
+
+		if err := s.handleJWT(context.Background(), discardLogger, sc, []byte("jwt")); err != nil {
+			t.Fatal(err)
+		}
+		if sc.token != nil {
+			t.Fatal("unexpected token")
+		}
+	})
+
+	t.Run("verify failure is returned", func(t *testing.T) {
+		rs, err := NewRuleSet(nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sc := newBareServerConn(&testConn{})
+		sc.allow = rs.Compile(Identity{})
+
+		if err := s.handleJWT(context.Background(), discardLogger, sc, []byte("bad")); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("valid token updates auth state", func(t *testing.T) {
+		now := time.Unix(1_700_000_000, 0).UTC()
+		issuer := "https://issuer.example"
+		clientID := "client-123"
+
+		key := newAuthTestKey(t, jose.RS256)
+		rs, err := NewRuleSet([]Rule{{
+			Token: AnyToken(),
+			Grants: []Grant{{
+				Path:    NewPath("private/**"),
+				Actions: []Action{PubAction, SubAction},
+			}},
+		}}, map[string]*oidc.IDTokenVerifier{
+			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sc := newBareServerConn(&testConn{})
+		sc.allow = rs.Compile(Identity{})
+		if sc.allow(NewPath("private/feed"), SubAction) {
+			t.Fatal("anonymous access allowed")
+		}
+
+		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
+			Issuer:   issuer,
+			Subject:  "user-123",
+			Audience: jwt.Audience{clientID},
+			IssuedAt: jwt.NewNumericDate(now),
+			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
+		}, nil)
+
+		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); err != nil {
+			t.Fatal(err)
+		}
+		if sc.token == nil {
+			t.Fatal("token not set")
+		}
+		if !sc.allow(NewPath("private/feed"), SubAction) {
+			t.Fatal("authenticated access denied")
+		}
+	})
+
+	t.Run("duplicate jwt fails", func(t *testing.T) {
+		now := time.Unix(1_700_000_000, 0).UTC()
+		issuer := "https://issuer.example"
+		clientID := "client-123"
+
+		key := newAuthTestKey(t, jose.RS256)
+		rs, err := NewRuleSet([]Rule{{
+			Token: AnyToken(),
+			Grants: []Grant{{
+				Path:    NewPath("private/**"),
+				Actions: []Action{SubAction},
+			}},
+		}}, map[string]*oidc.IDTokenVerifier{
+			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sc := newBareServerConn(&testConn{})
+		sc.allow = rs.Compile(Identity{})
+
+		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
+			Issuer:   issuer,
+			Subject:  "user-123",
+			Audience: jwt.Audience{clientID},
+			IssuedAt: jwt.NewNumericDate(now),
+			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
+		}, nil)
+
+		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); !errors.Is(err, errDupJWTFrame) {
+			t.Fatalf("error: %v", err)
+		}
+	})
 }
 
 func TestServer_handleSub(t *testing.T) {
@@ -346,6 +558,19 @@ func TestServer_handleSub(t *testing.T) {
 		sc.mu.Unlock()
 		if n != 0 {
 			t.Fatalf("new path delivered %d buffers", n)
+		}
+	})
+
+	t.Run("denied sub is ignored", func(t *testing.T) {
+		s := mustNewServerForTest(t)
+		sc := newBareServerConn(&testConn{})
+		sc.allow = func(Path, Action) bool { return false }
+
+		if err := s.handleSub(context.Background(), discardLogger, sc, newSubFrame(1, NewPath("private/feed"))[frameHdrLen:]); err != nil {
+			t.Fatal(err)
+		}
+		if len(sc.subs) != 0 {
+			t.Fatalf("len(subs): %d != 0", len(sc.subs))
 		}
 	})
 }

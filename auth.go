@@ -3,6 +3,7 @@ package yat
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -20,7 +21,8 @@ type Rule struct {
 	Grants []Grant
 }
 
-// The zero TokenSpec never matches.
+// TokenSpec specifies a JWT matcher.
+// The zero spec never matches.
 type TokenSpec struct {
 	Issuer   string
 	Audience string
@@ -37,8 +39,7 @@ type Grant struct {
 	Actions []Action
 }
 
-// Action is the set of possible actions.
-// Valid actions are [PubAction] or [SubAction].
+// Action is the set of possible client actions.
 type Action string
 
 const (
@@ -54,12 +55,13 @@ type Token struct {
 }
 
 type Identity struct {
+	Conn  net.Conn // not yet supported by auth rules
 	Token *Token
 }
 
-// validAlgs are the alg values supported by [Auth.Verify].
+// jwtValidAlgs are the alg values supported by [Auth.Verify].
 // A particular provider may not support all of these algs.
-var validAlgs = []jose.SignatureAlgorithm{
+var jwtValidAlgs = []jose.SignatureAlgorithm{
 	jose.EdDSA,
 	jose.ES256,
 	jose.PS256,
@@ -72,8 +74,19 @@ func NewRuleSet(rules []Rule, verifiers map[string]*oidc.IDTokenVerifier) (*Rule
 	return &RuleSet{rules, verifiers}, nil
 }
 
-func (rs *RuleSet) Verify(ctx context.Context, rawToken string) (*Token, error) {
-	parsed, err := jwt.ParseSigned(rawToken, validAlgs)
+// NoRules returns a rule set that allows all actions.
+func NoRules() *RuleSet {
+	return &RuleSet{rr: []Rule{{
+		Grants: []Grant{{
+			Path:    NewPath("**"),
+			Actions: []Action{PubAction, SubAction},
+		}},
+	}}}
+}
+
+func (rs *RuleSet) Verify(ctx context.Context, jwtBytes []byte) (*Token, error) {
+	unparsed := string(jwtBytes)
+	parsed, err := jwt.ParseSigned(unparsed, jwtValidAlgs)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +104,7 @@ func (rs *RuleSet) Verify(ctx context.Context, rawToken string) (*Token, error) 
 		return nil, errUnknownIssuer
 	}
 
-	verified, err := v.Verify(ctx, rawToken)
+	verified, err := v.Verify(ctx, unparsed)
 	if err != nil {
 		return nil, err
 	}

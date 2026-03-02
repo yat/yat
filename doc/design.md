@@ -42,10 +42,11 @@ struct {
 
 frame types
 
-1. PubFrame; sent by the client to publish a message
-2. SubFrame; sent by the client to subscribe to a stream of messages
-3. UnsubFrame; sent by the client to cancel a subscription
-4. MsgFrame; sent by the server to deliver a message
+- JWTFrame; optionally sent by the client to identify itself
+- PubFrame; sent by the client to publish a message
+- SubFrame; sent by the client to subscribe to a stream of messages
+- UnsubFrame; sent by the client to cancel a subscription
+- MsgFrame; sent by the server to deliver a message
 
 transport
 

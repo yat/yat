@@ -342,7 +342,9 @@ func startTestServer(t *testing.T) (*yat.Router, *pipeListener) {
 func startTestServerWithRouter(t *testing.T, rr *yat.Router) *pipeListener {
 	t.Helper()
 
-	srv, err := yat.NewServer(rr, yat.ServerConfig{})
+	srv, err := yat.NewServer(rr, yat.ServerConfig{
+		Rules: yat.NoRules(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

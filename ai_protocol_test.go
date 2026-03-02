@@ -57,6 +57,20 @@ func Test_readFrameHdr(t *testing.T) {
 	})
 }
 
+func Test_appendFrameBytes(t *testing.T) {
+	prefix := []byte{0xaa, 0xbb}
+	body := []byte("jwt")
+
+	got := appendFrameBytes(bytes.Clone(prefix), jwtFrameType, body)
+	want := appendFrame(bytes.Clone(prefix), jwtFrameType, func(b []byte) []byte {
+		return append(b, body...)
+	})
+
+	if !bytes.Equal(got, want) {
+		t.Fatalf("frame: %x != %x", got, want)
+	}
+}
+
 func Test_parsePubFrame(t *testing.T) {
 	t.Run("parses and compacts known fields", func(t *testing.T) {
 		buf := make([]byte, 0, 64)

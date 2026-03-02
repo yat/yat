@@ -67,6 +67,7 @@ func newBareClient() *Client {
 
 func newBareServerConn(conn net.Conn) *serverConn {
 	return &serverConn{
+		allow: NoRules().Compile(Identity{}),
 		subs:  map[uint64]*rent{},
 		wbufC: make(chan struct{}, 1),
 		Conn:  conn,
@@ -96,6 +97,12 @@ func newMsgFrame(num uint64, m Msg) []byte {
 		b = protowire.AppendTag(b, numField, protowire.VarintType)
 		b = protowire.AppendVarint(b, num)
 		return appendMsgFields(b, m)
+	})
+}
+
+func newJWTFrame(token []byte) []byte {
+	return appendFrame(nil, jwtFrameType, func(b []byte) []byte {
+		return append(b, token...)
 	})
 }
 

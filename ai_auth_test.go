@@ -334,7 +334,7 @@ func signExternalAuthTestToken(
 	key any,
 	claims jwt.Claims,
 	privateClaims map[string]any,
-) string {
+) []byte {
 	t.Helper()
 
 	signer, err := jose.NewSigner(jose.SigningKey{
@@ -354,5 +354,5 @@ func signExternalAuthTestToken(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw
+	return []byte(raw)
 }

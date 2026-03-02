@@ -25,10 +25,24 @@ type ServerConfig struct {
 	// Logger is where the server writes logs.
 	// If it is nil, server logs are discarded.
 	Logger *slog.Logger
+
+	// Rules determine which client operations are allowed.
+	// If it is nil, all client operations are denied.
+	// Set it to [NoRules] to allow anonymous operations.
+	Rules *RuleSet
 }
 
 type serverConn struct {
-	mu    sync.Mutex
+	mu sync.Mutex
+
+	// allow decides whether client actions are allowed.
+	// It is initially compiled when a connection is accepted
+	// and recompiled the first time the conn handles a JWT frame.
+	allow func(Path, Action) bool
+
+	// token is set the first time the conn handles a JWT frame.
+	token *Token
+
 	subs  map[uint64]*rent
 	wbufs net.Buffers
 	wbufC chan struct{}
@@ -92,9 +106,16 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) {
 
 func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
 	sc := &serverConn{
+		allow: func(Path, Action) bool { return false },
 		subs:  map[uint64]*rent{},
 		wbufC: make(chan struct{}, 1),
 		Conn:  conn,
+	}
+
+	if s.config.Rules != nil {
+		sc.allow = s.config.Rules.Compile(Identity{
+			Conn: conn,
+		})
 	}
 
 	defer func() {
@@ -128,6 +149,9 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 		var handle func(context.Context, *slog.Logger, *serverConn, []byte) error
 
 		switch hdr.Type() {
+		case jwtFrameType:
+			handle = s.handleJWT
+
 		case pubFrameType:
 			handle = s.handlePub
 
@@ -159,10 +183,51 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 	}
 }
 
+func (s *Server) handleJWT(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
+	if s.config.Rules == nil {
+		return nil
+	}
+
+	token, err := s.config.Rules.Verify(ctx, body)
+	if err != nil {
+		return err
+	}
+
+	allow := s.config.Rules.Compile(Identity{
+		Conn:  conn.Conn,
+		Token: token,
+	})
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+
+	if conn.token != nil {
+		return errDupJWTFrame
+	}
+
+	conn.token = token
+	conn.allow = allow
+
+	return nil
+}
+
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
 	_, msg, raw, err := parseMsg(body)
 	if err != nil {
 		return err
+	}
+
+	var (
+		pathAllowed  = conn.allow(msg.Path, PubAction)
+		inboxAllowed = msg.Inbox.IsZero() || conn.allow(msg.Inbox, SubAction)
+	)
+
+	if !pathAllowed || !inboxAllowed {
+		if logger.Enabled(ctx, slog.LevelDebug-1) {
+			logger.Log(ctx, slog.LevelDebug-1, "publish denied", "path", msg.Path, "inbox", msg.Inbox)
+		}
+
+		return nil
 	}
 
 	ee := s.router.route(msg)
@@ -181,6 +246,14 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	p, _, err := ParsePath(f.GetPath())
 	if err != nil {
 		return err
+	}
+
+	if !conn.allow(p, SubAction) {
+		if logger.Enabled(ctx, slog.LevelDebug-1) {
+			logger.Log(ctx, slog.LevelDebug-1, "subscribe denied", "path", p)
+		}
+
+		return nil
 	}
 
 	e := &rent{
