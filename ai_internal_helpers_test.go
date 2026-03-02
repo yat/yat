@@ -67,7 +67,7 @@ func newBareClient() *Client {
 
 func newBareServerConn(conn net.Conn) *serverConn {
 	return &serverConn{
-		allow: NoRules().Compile(Identity{}),
+		allow: AllowAll().Compile(Identity{}),
 		subs:  map[uint64]*rent{},
 		wbufC: make(chan struct{}, 1),
 		Conn:  conn,

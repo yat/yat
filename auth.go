@@ -43,8 +43,8 @@ type Grant struct {
 type Action string
 
 const (
-	PubAction = Action("pub") // publish a message
-	SubAction = Action("sub") // subscribe to a stream of messages
+	ActionPub = Action("pub") // publish a message
+	ActionSub = Action("sub") // subscribe to a stream of messages
 )
 
 // Token is a JWT parsed and verified by [RuleSet.Verify].
@@ -74,12 +74,12 @@ func NewRuleSet(rules []Rule, verifiers map[string]*oidc.IDTokenVerifier) (*Rule
 	return &RuleSet{rules, verifiers}, nil
 }
 
-// NoRules returns a rule set that allows all actions.
-func NoRules() *RuleSet {
+// AllowAll returns a rule set that allows all actions on all paths.
+func AllowAll() *RuleSet {
 	return &RuleSet{rr: []Rule{{
 		Grants: []Grant{{
 			Path:    NewPath("**"),
-			Actions: []Action{PubAction, SubAction},
+			Actions: []Action{ActionPub, ActionSub},
 		}},
 	}}}
 }

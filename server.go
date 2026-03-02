@@ -218,8 +218,8 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	var (
-		pathAllowed  = conn.allow(msg.Path, PubAction)
-		inboxAllowed = msg.Inbox.IsZero() || conn.allow(msg.Inbox, SubAction)
+		pathAllowed  = conn.allow(msg.Path, ActionPub)
+		inboxAllowed = msg.Inbox.IsZero() || conn.allow(msg.Inbox, ActionSub)
 	)
 
 	if !pathAllowed || !inboxAllowed {
@@ -248,7 +248,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	if !conn.allow(p, SubAction) {
+	if !conn.allow(p, ActionSub) {
 		if logger.Enabled(ctx, slog.LevelDebug-1) {
 			logger.Log(ctx, slog.LevelDebug-1, "subscribe denied", "path", p)
 		}

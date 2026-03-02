@@ -18,11 +18,6 @@ Flags:
       This flag can be set more than once.
       Run 'yat help server-config' for details.
 
-  -issuer URL
-      URL of an OIDC-compliant JWT issuer.
-      This flag can be set more than once.
-      The server accepts tokens signed by the issuer.
-
-  -no-rules
+  -allow-all
       If this flag is set, the server allows all operations.
-      Configured rules are still parsed, but not enforced.
+      Any configured rules are parsed, but not enforced.

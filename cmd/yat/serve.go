@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"go.yaml.in/yaml/v4"
 	"golang.org/x/net/http2"
@@ -21,11 +20,10 @@ import (
 )
 
 type ServeCmd struct {
-	BindAddr     string
-	TLSDir       string
-	ConfigURLs   []string
-	DisableRules bool
-	IssuerURLs   []string
+	BindAddr   string
+	TLSDir     string
+	ConfigURLs []string
+	AllowAll   bool
 }
 
 type serveConfig struct {
@@ -50,8 +48,7 @@ func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
 	flags.String(&cmd.TLSDir, "tls-dir")
 	flags.Strings(&cmd.ConfigURLs, "config")
-	flags.Strings(&cmd.IssuerURLs, "issuer")
-	flags.Bool(&cmd.DisableRules, "no-rules")
+	flags.Bool(&cmd.AllowAll, "allow-all")
 }
 
 func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
@@ -70,52 +67,6 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	issuerMap := map[string]string{} // for rules
-	verifiers := map[string]*oidc.IDTokenVerifier{}
-	for _, iurl := range cmd.IssuerURLs {
-		iss, err := parseIssuer(iurl)
-		if err != nil {
-			return err
-		}
-
-		if iss != iurl {
-			issuerMap[iurl] = iss
-		}
-
-		op, err := oidc.NewProvider(ctx, iss)
-		if err != nil {
-			return err
-		}
-
-		verifiers[iss] = op.Verifier(&oidc.Config{
-			SkipClientIDCheck: true,
-		})
-	}
-
-	rules, err := cfg.CompileRules()
-	if err != nil {
-		return err
-	}
-
-	for _, r := range rules {
-		if r.Token == nil {
-			continue
-		}
-
-		if iss, ok := issuerMap[r.Token.Issuer]; ok {
-			r.Token.Issuer = iss
-		}
-	}
-
-	ruleSet, err := yat.NewRuleSet(rules, verifiers)
-	if err != nil {
-		return err
-	}
-
-	if cmd.DisableRules {
-		ruleSet = yat.NoRules()
-	}
-
 	baseTLSConfig := &tls.Config{
 		MinVersion: tls.VersionTLS13,
 		NextProtos: []string{clientALPN, "h2", "http/1.1"},
@@ -128,6 +79,11 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 	go td.Watch(ctx, logger)
 
+	var rules *yat.RuleSet
+	if cmd.AllowAll {
+		rules = yat.AllowAll()
+	}
+
 	l, err := tls.Listen("tcp", cmd.BindAddr, td.TLSConfig())
 	if err != nil {
 		return err
@@ -139,7 +95,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 	ys, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
 		Logger: logger,
-		Rules:  ruleSet,
+		Rules:  rules,
 	})
 
 	if err != nil {
@@ -263,7 +219,7 @@ func (cfg *serveConfig) CompileRules() ([]yat.Rule, error) {
 			var actions []yat.Action
 			for _, action := range g.Actions {
 				switch yat.Action(action) {
-				case yat.PubAction, yat.SubAction:
+				case yat.ActionPub, yat.ActionSub:
 					actions = append(actions, yat.Action(action))
 				default:
 					return nil, fmt.Errorf("%s: unknown action", scope)

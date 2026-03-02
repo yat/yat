@@ -174,7 +174,7 @@ func TestServer_readFrames(t *testing.T) {
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
-				Actions: []Action{SubAction},
+				Actions: []Action{ActionSub},
 			}},
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
@@ -339,7 +339,7 @@ func TestServer_handlePub(t *testing.T) {
 
 		sc := newBareServerConn(&testConn{})
 		sc.allow = func(p Path, a Action) bool {
-			return a == PubAction && p.Equal(NewPath("chat/room"))
+			return a == ActionPub && p.Equal(NewPath("chat/room"))
 		}
 
 		body := appendMsgFields(nil, Msg{
@@ -399,7 +399,7 @@ func TestServer_handleJWT(t *testing.T) {
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
-				Actions: []Action{PubAction, SubAction},
+				Actions: []Action{ActionPub, ActionSub},
 			}},
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
@@ -414,7 +414,7 @@ func TestServer_handleJWT(t *testing.T) {
 
 		sc := newBareServerConn(&testConn{})
 		sc.allow = rs.Compile(Identity{})
-		if sc.allow(NewPath("private/feed"), SubAction) {
+		if sc.allow(NewPath("private/feed"), ActionSub) {
 			t.Fatal("anonymous access allowed")
 		}
 
@@ -432,7 +432,7 @@ func TestServer_handleJWT(t *testing.T) {
 		if sc.token == nil {
 			t.Fatal("token not set")
 		}
-		if !sc.allow(NewPath("private/feed"), SubAction) {
+		if !sc.allow(NewPath("private/feed"), ActionSub) {
 			t.Fatal("authenticated access denied")
 		}
 	})
@@ -447,7 +447,7 @@ func TestServer_handleJWT(t *testing.T) {
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
-				Actions: []Action{SubAction},
+				Actions: []Action{ActionSub},
 			}},
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),

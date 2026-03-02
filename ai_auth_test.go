@@ -43,14 +43,14 @@ func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
 					},
 					Grants: []yat.Grant{{
 						Path:    yat.NewPath("topic/" + string(alg)),
-						Actions: []yat.Action{yat.PubAction, yat.SubAction},
+						Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
 					}},
 				},
 				{
 					Token: &yat.TokenSpec{Issuer: issuer},
 					Grants: []yat.Grant{{
 						Path:    yat.NewPath("feeds/**"),
-						Actions: []yat.Action{yat.SubAction},
+						Actions: []yat.Action{yat.ActionSub},
 					}},
 				},
 			}, map[string]*oidc.IDTokenVerifier{
@@ -74,16 +74,16 @@ func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
 			}
 
 			allow := rs.Compile(yat.Identity{Token: tok})
-			if !allow(yat.NewPath("topic/"+string(alg)), yat.PubAction) {
+			if !allow(yat.NewPath("topic/"+string(alg)), yat.ActionPub) {
 				t.Fatal("pub not allowed")
 			}
-			if !allow(yat.NewPath("topic/"+string(alg)), yat.SubAction) {
+			if !allow(yat.NewPath("topic/"+string(alg)), yat.ActionSub) {
 				t.Fatal("sub not allowed")
 			}
-			if !allow(yat.NewPath("feeds/private"), yat.SubAction) {
+			if !allow(yat.NewPath("feeds/private"), yat.ActionSub) {
 				t.Fatal("feed sub not allowed")
 			}
-			if allow(yat.NewPath("feeds/private"), yat.PubAction) {
+			if allow(yat.NewPath("feeds/private"), yat.ActionPub) {
 				t.Fatal("unexpected pub grant")
 			}
 		})
@@ -101,28 +101,28 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 		{
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("public/**"),
-				Actions: []yat.Action{yat.SubAction},
+				Actions: []yat.Action{yat.ActionSub},
 			}},
 		},
 		{
 			Token: &yat.TokenSpec{Issuer: issuer},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("private/**"),
-				Actions: []yat.Action{yat.SubAction},
+				Actions: []yat.Action{yat.ActionSub},
 			}},
 		},
 		{
 			Token: &yat.TokenSpec{Subject: subject},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("subject/**"),
-				Actions: []yat.Action{yat.PubAction},
+				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
 		{
 			Token: &yat.TokenSpec{Audience: "other-client"},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("other/**"),
-				Actions: []yat.Action{yat.PubAction},
+				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
 	}, map[string]*oidc.IDTokenVerifier{
@@ -146,27 +146,27 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 	}
 
 	anon := rs.Compile(yat.Identity{})
-	if !anon(yat.NewPath("public/feed"), yat.SubAction) {
+	if !anon(yat.NewPath("public/feed"), yat.ActionSub) {
 		t.Fatal("anonymous public access denied")
 	}
-	if anon(yat.NewPath("private/feed"), yat.SubAction) {
+	if anon(yat.NewPath("private/feed"), yat.ActionSub) {
 		t.Fatal("anonymous authenticated grant allowed")
 	}
 
 	authd := rs.Compile(yat.Identity{Token: tok})
-	if !authd(yat.NewPath("public/feed"), yat.SubAction) {
+	if !authd(yat.NewPath("public/feed"), yat.ActionSub) {
 		t.Fatal("authenticated public access denied")
 	}
-	if !authd(yat.NewPath("private/feed"), yat.SubAction) {
+	if !authd(yat.NewPath("private/feed"), yat.ActionSub) {
 		t.Fatal("authenticated access denied")
 	}
-	if !authd(yat.NewPath("subject/feed"), yat.PubAction) {
+	if !authd(yat.NewPath("subject/feed"), yat.ActionPub) {
 		t.Fatal("subject grant denied")
 	}
-	if authd(yat.NewPath("subject/feed"), yat.SubAction) {
+	if authd(yat.NewPath("subject/feed"), yat.ActionSub) {
 		t.Fatal("unexpected subject sub grant")
 	}
-	if authd(yat.NewPath("other/feed"), yat.PubAction) {
+	if authd(yat.NewPath("other/feed"), yat.ActionPub) {
 		t.Fatal("unexpected audience grant")
 	}
 }

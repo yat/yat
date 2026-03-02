@@ -152,19 +152,19 @@ func TestRule_match(t *testing.T) {
 func TestGrant_allow(t *testing.T) {
 	grant := Grant{
 		Path:    NewPath("chat/**"),
-		Actions: []Action{PubAction},
+		Actions: []Action{ActionPub},
 	}
 
-	if !grant.allow(NewPath("chat/room"), PubAction) {
+	if !grant.allow(NewPath("chat/room"), ActionPub) {
 		t.Fatal("no match")
 	}
-	if grant.allow(NewPath("chat/room"), SubAction) {
+	if grant.allow(NewPath("chat/room"), ActionSub) {
 		t.Fatal("unexpected action match")
 	}
-	if grant.allow(NewPath("other/room"), PubAction) {
+	if grant.allow(NewPath("other/room"), ActionPub) {
 		t.Fatal("unexpected path match")
 	}
-	if (Grant{}).allow(NewPath("chat/room"), PubAction) {
+	if (Grant{}).allow(NewPath("chat/room"), ActionPub) {
 		t.Fatal("zero grant matched")
 	}
 }
