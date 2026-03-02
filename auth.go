@@ -40,7 +40,7 @@ const (
 	SubAction = Action("sub") // subscribe to a stream of messages
 )
 
-// Token is a JWT returned by [RuleSet.Verify].
+// Token is a JWT parsed and verified by [RuleSet.Verify].
 type Token struct {
 	pub jwt.Claims
 	all map[string]any
@@ -125,7 +125,7 @@ func (r Rule) match(id Identity) bool {
 }
 
 func (ts TokenSpec) match(t *Token) bool {
-	if t == nil {
+	if t == nil || (ts == TokenSpec{}) {
 		return false
 	}
 

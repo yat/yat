@@ -33,10 +33,10 @@ func TestTokenSpec_match(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "empty spec matches verified token",
+			name: "empty spec never matches",
 			spec: TokenSpec{},
 			tok:  matched,
-			want: true,
+			want: false,
 		},
 		{
 			name: "nil token never matches",
@@ -92,14 +92,14 @@ func TestRule_match(t *testing.T) {
 		}
 	})
 
-	t.Run("empty token spec requires a token", func(t *testing.T) {
+	t.Run("empty token spec never matches", func(t *testing.T) {
 		rule := Rule{Token: &TokenSpec{}}
 
 		if rule.match(Identity{}) {
 			t.Fatal("unexpected match")
 		}
-		if !rule.match(authed) {
-			t.Fatal("no match")
+		if rule.match(authed) {
+			t.Fatal("unexpected match")
 		}
 	})
 

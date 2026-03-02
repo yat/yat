@@ -105,7 +105,7 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 			}},
 		},
 		{
-			Token: &yat.TokenSpec{},
+			Token: &yat.TokenSpec{Issuer: issuer},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("private/**"),
 				Actions: []yat.Action{yat.SubAction},
