@@ -70,19 +70,19 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	issuerMap := map[string]string{}
+	issuerMap := map[string]string{} // for rules
 	verifiers := map[string]*oidc.IDTokenVerifier{}
-	for _, iu := range cmd.IssuerURLs {
-		ctx, iss, err := issuerContext(ctx, iu)
+	for _, iurl := range cmd.IssuerURLs {
+		iss, err := parseIssuer(iurl)
 		if err != nil {
 			return err
 		}
 
-		if iss != iu {
-			issuerMap[iu] = iss
+		if iss != iurl {
+			issuerMap[iurl] = iss
 		}
 
-		op, err := oidc.NewProvider(ctx, iu)
+		op, err := oidc.NewProvider(ctx, iss)
 		if err != nil {
 			return err
 		}
@@ -179,9 +179,9 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	return err
 }
 
-func issuerContext(parent context.Context, issuerURL string) (ctx context.Context, iss string, err error) {
+func parseIssuer(issuerURL string) (iss string, err error) {
 	if issuerURL != "https://kubernetes.default.svc" {
-		return parent, issuerURL, nil
+		return issuerURL, nil
 	}
 
 	rawToken, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
@@ -200,7 +200,7 @@ func issuerContext(parent context.Context, issuerURL string) (ctx context.Contex
 		return
 	}
 
-	return oidc.InsecureIssuerURLContext(parent, claims.Issuer), claims.Issuer, nil
+	return claims.Issuer, nil
 }
 
 func loadServeConfig(cfg *serveConfig, src string) error {
