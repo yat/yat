@@ -20,10 +20,16 @@ type Rule struct {
 	Grants []Grant
 }
 
+// The zero TokenSpec never matches.
 type TokenSpec struct {
 	Issuer   string
 	Audience string
 	Subject  string
+
+	// anyToken is true for tokens returned by [AnyToken].
+	// It causes [Rule.match] to ignore the spec fields
+	// and match any valid token.
+	anyToken bool
 }
 
 type Grant struct {
@@ -42,8 +48,9 @@ const (
 
 // Token is a JWT parsed and verified by [RuleSet.Verify].
 type Token struct {
-	pub jwt.Claims
-	all map[string]any
+	claims map[string]any
+	public jwt.Claims
+	valid  bool
 }
 
 type Identity struct {
@@ -90,12 +97,13 @@ func (rs *RuleSet) Verify(ctx context.Context, rawToken string) (*Token, error) 
 	}
 
 	var token Token
-	for _, v := range []any{&token.pub, &token.all} {
+	for _, v := range []any{&token.public, &token.claims} {
 		if err := verified.Claims(v); err != nil {
 			return nil, err
 		}
 	}
 
+	token.valid = true
 	return &token, nil
 }
 
@@ -114,29 +122,40 @@ func (rs *RuleSet) Compile(id Identity) func(Path, Action) bool {
 	}
 }
 
+// AnyToken returns an auth token spec matching any verified token.
+func AnyToken() *TokenSpec {
+	return &TokenSpec{anyToken: true}
+}
+
 func (r Rule) match(id Identity) bool {
 	if spec := r.Token; spec != nil {
-		if !spec.match(id.Token) {
+		if id.Token == nil {
 			return false
 		}
+
+		return spec.match(*id.Token)
 	}
 
 	return true
 }
 
-func (ts TokenSpec) match(t *Token) bool {
-	if t == nil || (ts == TokenSpec{}) {
+func (ts TokenSpec) match(t Token) bool {
+	if (ts == TokenSpec{}) || !t.valid {
 		return false
 	}
 
+	if ts.anyToken {
+		return true
+	}
+
 	switch {
-	case ts.Issuer != "" && t.pub.Issuer != ts.Issuer:
+	case ts.Issuer != "" && t.public.Issuer != ts.Issuer:
 		return false
 
-	case ts.Audience != "" && !t.pub.Audience.Contains(ts.Audience):
+	case ts.Audience != "" && !t.public.Audience.Contains(ts.Audience):
 		return false
 
-	case ts.Subject != "" && t.pub.Subject != ts.Subject:
+	case ts.Subject != "" && t.public.Subject != ts.Subject:
 		return false
 
 	default:

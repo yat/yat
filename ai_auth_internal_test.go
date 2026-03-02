@@ -18,30 +18,25 @@ import (
 )
 
 func TestTokenSpec_match(t *testing.T) {
-	matched := &Token{
-		pub: jwt.Claims{
+	matched := Token{
+		public: jwt.Claims{
 			Issuer:   "https://issuer.example",
 			Audience: jwt.Audience{"client-1", "client-2"},
 			Subject:  "user-123",
 		},
+		valid: true,
 	}
 
 	tcs := []struct {
 		name string
 		spec TokenSpec
-		tok  *Token
+		tok  Token
 		want bool
 	}{
 		{
 			name: "empty spec never matches",
 			spec: TokenSpec{},
 			tok:  matched,
-			want: false,
-		},
-		{
-			name: "nil token never matches",
-			spec: TokenSpec{},
-			tok:  nil,
 			want: false,
 		},
 		{
@@ -84,7 +79,7 @@ func TestTokenSpec_match(t *testing.T) {
 }
 
 func TestRule_match(t *testing.T) {
-	authed := Identity{Token: &Token{}}
+	authed := Identity{Token: &Token{valid: true}}
 
 	t.Run("nil token spec matches anonymous identity", func(t *testing.T) {
 		if !(Rule{}).match(Identity{}) {
@@ -103,13 +98,48 @@ func TestRule_match(t *testing.T) {
 		}
 	})
 
+	t.Run("AnyToken matches authenticated identity", func(t *testing.T) {
+		rule := Rule{Token: AnyToken()}
+
+		if rule.match(Identity{}) {
+			t.Fatal("unexpected match")
+		}
+		if !rule.match(authed) {
+			t.Fatal("no match")
+		}
+	})
+
+	t.Run("AnyToken rejects invalid token", func(t *testing.T) {
+		rule := Rule{Token: AnyToken()}
+
+		if rule.match(Identity{Token: &Token{}}) {
+			t.Fatal("unexpected match")
+		}
+	})
+
+	t.Run("claim match rejects invalid token", func(t *testing.T) {
+		rule := Rule{
+			Token: &TokenSpec{Subject: "user-123"},
+		}
+		id := Identity{
+			Token: &Token{
+				public: jwt.Claims{Subject: "user-123"},
+			},
+		}
+
+		if rule.match(id) {
+			t.Fatal("unexpected match")
+		}
+	})
+
 	t.Run("matching token spec delegates to token claims", func(t *testing.T) {
 		rule := Rule{
 			Token: &TokenSpec{Subject: "user-123"},
 		}
 		id := Identity{
 			Token: &Token{
-				pub: jwt.Claims{Subject: "user-123"},
+				public: jwt.Claims{Subject: "user-123"},
+				valid:  true,
 			},
 		}
 
@@ -169,22 +199,22 @@ func TestRuleSetVerify_internalClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if tok.pub.Issuer != issuer {
-		t.Fatalf("issuer: %q != %q", tok.pub.Issuer, issuer)
+	if tok.public.Issuer != issuer {
+		t.Fatalf("issuer: %q != %q", tok.public.Issuer, issuer)
 	}
-	if tok.pub.Subject != subject {
-		t.Fatalf("subject: %q != %q", tok.pub.Subject, subject)
+	if tok.public.Subject != subject {
+		t.Fatalf("subject: %q != %q", tok.public.Subject, subject)
 	}
-	if !tok.pub.Audience.Contains(clientID) {
+	if !tok.public.Audience.Contains(clientID) {
 		t.Fatalf("audience missing %q", clientID)
 	}
-	if got := tok.all["role"]; got != "admin" {
+	if got := tok.claims["role"]; got != "admin" {
 		t.Fatalf("role: %v != %q", got, "admin")
 	}
 
-	scopes, ok := tok.all["scp"].([]any)
+	scopes, ok := tok.claims["scp"].([]any)
 	if !ok {
-		t.Fatalf("scp type: %T", tok.all["scp"])
+		t.Fatalf("scp type: %T", tok.claims["scp"])
 	}
 	if len(scopes) != 2 || scopes[0] != "pub" || scopes[1] != "sub" {
 		t.Fatalf("scp: %v", scopes)
