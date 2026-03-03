@@ -9,10 +9,8 @@ Flags:
   -bind localhost:25120
       The address the server should bind.
 
-  -tls-dir .
-      Path to a directory containing server.crt and server.key files.
-      If ca.crt exists, it is used to verify client certificates.
-
   -allow-all
       If this flag is set, the server allows all operations.
       Any configured rules are parsed, but not enforced.
+
+The -tls-dir flag or YAT_TLS_DIR environment variable must be set.

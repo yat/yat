@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/coreos/go-oidc/v3 v3.17.0
-	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-jose/go-jose/v4 v4.1.3
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260213171211-a408498e5541
@@ -21,6 +20,7 @@ require (
 	github.com/bep/godartsass/v2 v2.5.0 // indirect
 	github.com/bep/golibsass v1.2.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/gohugoio/hugo v0.149.1 // indirect
 	github.com/jbarnette/logfmt v0.0.2 // indirect

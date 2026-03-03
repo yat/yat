@@ -8,19 +8,18 @@ import (
 	"os"
 
 	"yat.io/yat"
-	"yat.io/yat/cmd/yat/internal/tlsdir"
 )
 
 type ClientConfig struct {
+	*SharedConfig
 	Server  string
 	JWTFile string
-	TLSDir  string
 }
 
 const clientALPN = "y0"
 
-func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
-	addr, serverName, err := cmd.parseAddr()
+func (cc ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
+	addr, serverName, err := cc.parseAddr()
 	if err != nil {
 		return nil, err
 	}
@@ -35,14 +34,14 @@ func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*ya
 		return baseConfig
 	}
 
-	if cmd.TLSDir != "" {
-		d, err := tlsdir.LoadClientConfig(cmd.TLSDir, baseConfig)
+	if cc.TLSDir != "" {
+		td, err := cc.LoadTLSConfig(baseConfig)
 		if err != nil {
 			return nil, err
 		}
 
-		getConfig = d.TLSConfig
-		go d.Watch(ctx, logger)
+		getConfig = td.ClientConfig
+		go td.Watch(ctx, logger)
 	}
 
 	dial := func(ctx context.Context) (net.Conn, error) {
@@ -53,9 +52,9 @@ func (cmd ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*ya
 		Logger: logger,
 	}
 
-	if cmd.JWTFile != "" {
+	if cc.JWTFile != "" {
 		cfg.GetToken = func(context.Context) ([]byte, error) {
-			return os.ReadFile(cmd.JWTFile)
+			return os.ReadFile(cc.JWTFile)
 		}
 	}
 

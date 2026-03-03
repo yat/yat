@@ -32,18 +32,22 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	logLevel := slog.LevelInfo
+	sharedConfig := &SharedConfig{
+		LogLevel: slog.LevelInfo,
+		TLSDir:   os.Getenv("YAT_TLS_DIR"),
+	}
+
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
-		if err := logLevel.UnmarshalText([]byte(ll)); err != nil {
+		if err := sharedConfig.LogLevel.UnmarshalText([]byte(ll)); err != nil {
 			return err
 		}
 	}
 
 	// embedded in client cmds
 	clientConfig := &ClientConfig{
-		Server:  os.Getenv("YAT_SERVER"),
-		TLSDir:  os.Getenv("YAT_TLS_DIR"),
-		JWTFile: os.Getenv("YAT_JWT_FILE"),
+		SharedConfig: sharedConfig,
+		Server:       os.Getenv("YAT_SERVER"),
+		JWTFile:      os.Getenv("YAT_JWT_FILE"),
 	}
 
 	if clientConfig.Server == "" {
@@ -51,10 +55,10 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	flags := flagset.New()
-	flags.Text(&logLevel, "log-level")
+	flags.Text(&sharedConfig.LogLevel, "log-level")
+	flags.String(&sharedConfig.TLSDir, "tls-dir")
 	flags.String(&clientConfig.Server, "server")
 	flags.String(&clientConfig.JWTFile, "jwt")
-	flags.String(&clientConfig.TLSDir, "tls")
 
 	args, err := flags.Parse(args)
 	if err != nil {
@@ -80,8 +84,8 @@ func run(ctx context.Context, args []string) error {
 
 	case "publish", "pub":
 		cmd = &PublishCmd{
-			Config: clientConfig,
-			File:   "/dev/stdin",
+			ClientConfig: clientConfig,
+			File:         "/dev/stdin",
 		}
 
 	case "seed":
@@ -89,14 +93,14 @@ func run(ctx context.Context, args []string) error {
 
 	case "serve", "server":
 		cmd = &ServeCmd{
-			BindAddr: "localhost:25120",
-			TLSDir:   ".",
+			SharedConfig: sharedConfig,
+			BindAddr:     "localhost:25120",
 		}
 
 	case "subscribe", "sub":
 		cmd = &SubscribeCmd{
-			Config: clientConfig,
-			Format: "raw",
+			ClientConfig: clientConfig,
+			Format:       "raw",
 		}
 
 	default:
@@ -128,7 +132,7 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: logLevel,
+		Level: sharedConfig.LogLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			switch a.Value.Kind() {
 			case slog.KindDuration:

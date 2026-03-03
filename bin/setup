@@ -1,6 +1,6 @@
 #!/bin/sh
-# seed the local dev env
+# generate local dev creds
 
 set -eux
 
-bin/yat seed tmp
+bin/yat seed tmp/seed

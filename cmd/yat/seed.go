@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -20,25 +21,15 @@ func (cmd *SeedCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 	}
 
 	dir := args[0]
-	tlsDir := filepath.Join(dir, "tls")
-	if err := os.MkdirAll(tlsDir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 
 	var (
-		tlsServerCertFile = filepath.Join(tlsDir, "server.crt")
-		tlsServerKeyFile  = filepath.Join(tlsDir, "server.key")
-		tlsClientCertFile = filepath.Join(tlsDir, "client.crt")
-		tlsClientKeyFile  = filepath.Join(tlsDir, "client.key")
-		tlsCAFile         = filepath.Join(tlsDir, "ca.crt")
-
-		tlsFiles = []string{
-			tlsServerCertFile,
-			tlsServerKeyFile,
-			tlsClientCertFile,
-			tlsClientKeyFile,
-			tlsCAFile,
-		}
+		tlsCertFile = filepath.Join(dir, "tls.crt")
+		tlsKeyFile  = filepath.Join(dir, "tls.key")
+		tlsCAFile   = filepath.Join(dir, "ca.crt")
+		tlsFiles    = []string{tlsCertFile, tlsKeyFile, tlsCAFile}
 	)
 
 	for _, name := range tlsFiles {
@@ -47,48 +38,34 @@ func (cmd *SeedCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 		}
 	}
 
-	caCrt, caKey, err := pkigen.NewRoot()
+	caCrt, caKey, err := pkigen.NewRoot(
+		pkigen.URI("spiffe://yat"),
+	)
 	if err != nil {
 		return err
 	}
 
-	serverCrt, serverKey, err := pkigen.NewLeaf(caCrt, caKey,
-		pkigen.CN("yat-server"), pkigen.DNS("localhost"))
-
+	tlsCrt, tlsKey, err := pkigen.NewLeaf(caCrt, caKey,
+		pkigen.CN("yat-dev"),
+		pkigen.DNS("localhost"),
+		pkigen.IP(net.IPv4(127, 0, 0, 1)),
+		pkigen.IP(net.IPv6loopback),
+		pkigen.URI("spiffe://yat/dev"),
+	)
 	if err != nil {
 		return err
 	}
 
-	clientCrt, clientKey, err := pkigen.NewLeaf(caCrt, caKey,
-		pkigen.CN("yat-client"))
-
+	tlsKeyPEM, err := pkigen.EncodePrivateKey(tlsKey)
 	if err != nil {
 		return err
 	}
 
-	serverKeyPEM, err := pkigen.EncodePrivateKey(serverKey)
-	if err != nil {
+	if err := os.WriteFile(tlsCertFile, pkigen.EncodeCerts(tlsCrt), 0o600); err != nil {
 		return err
 	}
 
-	clientKeyPEM, err := pkigen.EncodePrivateKey(clientKey)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(tlsServerCertFile, pkigen.EncodeCerts(serverCrt), 0o600); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(tlsServerKeyFile, serverKeyPEM, 0o600); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(tlsClientCertFile, pkigen.EncodeCerts(clientCrt), 0o600); err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(tlsClientKeyFile, clientKeyPEM, 0o600); err != nil {
+	if err := os.WriteFile(tlsKeyFile, tlsKeyPEM, 0o600); err != nil {
 		return err
 	}
 

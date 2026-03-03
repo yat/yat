@@ -11,18 +11,16 @@ import (
 	"golang.org/x/net/http2"
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
-	"yat.io/yat/cmd/yat/internal/tlsdir"
 )
 
 type ServeCmd struct {
+	*SharedConfig
 	BindAddr string
-	TLSDir   string
 	AllowAll bool
 }
 
 func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
-	flags.String(&cmd.TLSDir, "tls-dir")
 	flags.Bool(&cmd.AllowAll, "allow-all")
 }
 
@@ -43,7 +41,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		NextProtos: []string{clientALPN, "h2", "http/1.1"},
 	}
 
-	td, err := tlsdir.LoadServerConfig(cmd.TLSDir, baseTLSConfig)
+	td, err := cmd.LoadTLSConfig(baseTLSConfig)
 	if err != nil {
 		return err
 	}
@@ -55,7 +53,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		rules = yat.AllowAll()
 	}
 
-	l, err := tls.Listen("tcp", cmd.BindAddr, td.TLSConfig())
+	l, err := tls.Listen("tcp", cmd.BindAddr, td.ServerConfig())
 	if err != nil {
 		return err
 	}

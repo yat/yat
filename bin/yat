@@ -6,6 +6,6 @@ set -eu
 bin/build
 
 export YAT_SERVER=localhost:25120
-export YAT_TLS_DIR=tmp/tls
+export YAT_TLS_DIR=tmp/seed
 
 exec ./yat "$@"

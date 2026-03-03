@@ -6,17 +6,11 @@ Usage:
 
 Generated Files:
 
-  tls/client.crt
-      PEM-encoded x.509 client certificate.
+  tls.crt
+      PEM-encoded x.509 certificate for client and server use.
 
-  tls/client.key
-      PEM-encoded client private key.
+  tls.key
+      PEM-encoded private key for the generated certificate.
 
-  tls/server.crt
-      PEM-encoded x.509 server certificate.
-
-  tls/server.key
-      PEM-encoded server private key.
-
-  tls/ca.crt
+  ca.crt
       PEM-encoded signing certificate.

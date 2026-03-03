@@ -10,10 +10,10 @@ import (
 )
 
 type PublishCmd struct {
-	Config *ClientConfig
-	Empty  bool
-	File   string
-	Inbox  string
+	*ClientConfig
+	Empty bool
+	File  string
+	Inbox string
 }
 
 func (cmd *PublishCmd) AddFlags(flags *flagset.Set) {
@@ -56,7 +56,7 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		}
 	}
 
-	yc, err := cmd.Config.NewClient(ctx, logger)
+	yc, err := cmd.NewClient(ctx, logger)
 	if err != nil {
 		return err
 	}

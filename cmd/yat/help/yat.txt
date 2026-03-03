@@ -20,12 +20,12 @@ Client Flags:
   -jwt PATH ($YAT_JWT_FILE)
       Path to a file containing a JSON Web Token.
 
-  -tls PATH ($YAT_TLS_DIR)
-      Path to a directory containing client.crt and client.key files.
-      The directory may also contain a ca.crt file to verify the server.
-
 Shared Flags:
 
-  -log-level INFO ($YAT_LOG_LEVEL)
+  -tls-dir PATH ($YAT_TLS_DIR)
+      Path to a directory containing tls.crt and tls.key files.
+      The directory may also contain a ca.crt file for verification.
+
+  -log-level info ($YAT_LOG_LEVEL)
       Sets the minimum log level.
-      Values are DEBUG, WARN, INFO, and ERROR.
+      Values are debug, warn, info, and error.
