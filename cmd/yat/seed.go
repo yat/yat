@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,7 +13,10 @@ type SeedCmd struct{}
 
 func (cmd *SeedCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if len(args) != 1 {
-		return errors.New("seed takes exactly 1 argument (a directory)")
+		return usageError{
+			Usage: "yat seed DIR",
+			Topic: "seed",
+		}
 	}
 
 	dir := args[0]

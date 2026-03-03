@@ -2,7 +2,7 @@ Serve runs a Yat server.
 
 Usage:
 
-  yat serve [flags]
+  yat serve
 
 Flags:
 

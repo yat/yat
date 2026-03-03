@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -23,7 +22,10 @@ func (cmd *SubscribeCmd) AddFlags(flags *flagset.Set) {
 
 func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if len(args) == 0 {
-		return errors.New("subscribe takes at least 1 pattern argument")
+		return usageError{
+			Usage: "yat subscribe PATH ...",
+			Topic: "subscribe",
+		}
 	}
 
 	yc, err := cmd.Config.NewClient(ctx, logger)

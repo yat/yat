@@ -28,7 +28,10 @@ func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 
 func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if len(args) != 0 {
-		return errors.New("serve doesn't take arguments")
+		return usageError{
+			Usage: "yat serve",
+			Topic: "serve",
+		}
 	}
 
 	if cmd.TLSDir == "" {

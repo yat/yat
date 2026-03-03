@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 
@@ -25,7 +24,10 @@ func (cmd *PublishCmd) AddFlags(flags *flagset.Set) {
 
 func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if len(args) != 1 {
-		return errors.New("publish takes exactly 1 argument (a path)")
+		return usageError{
+			Usage: "yat publish PATH",
+			Topic: "publish",
+		}
 	}
 
 	path, _, err := yat.ParsePath(args[0])

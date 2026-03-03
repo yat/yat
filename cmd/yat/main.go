@@ -15,6 +15,15 @@ import (
 	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
+type usageError struct {
+	Usage string
+	Topic string
+}
+
+var errNoCommand = usageError{
+	Usage: "yat [flags] COMMAND [args]",
+}
+
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -54,7 +63,7 @@ func run(ctx context.Context, args []string) error {
 
 	// a subcommand is required
 	if len(args) == 0 || args[0][0] == '-' {
-		panic("usage")
+		return errNoCommand
 	}
 
 	ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
@@ -66,6 +75,9 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch name {
+	case "help":
+		cmd = &HelpCmd{}
+
 	case "publish", "pub":
 		cmd = &PublishCmd{
 			Config: clientConfig,
@@ -88,7 +100,7 @@ func run(ctx context.Context, args []string) error {
 		}
 
 	default:
-		panic("unknown command")
+		return fmt.Errorf("yat %s: unknown command", name)
 	}
 
 	// if the command has its own flags, merge them in
@@ -130,4 +142,17 @@ func run(ctx context.Context, args []string) error {
 
 	logger = logger.With("this", uuid.New())
 	return cmd.Run(ctx, logger, args)
+}
+
+func (ue usageError) Error() string {
+	if ue == (usageError{}) {
+		return "usage error"
+	}
+
+	help := "yat help"
+	if len(ue.Topic) > 0 {
+		help += " " + ue.Topic
+	}
+
+	return fmt.Sprintf("usage: %s\nRun '%s' for details.", ue.Usage, help)
 }
