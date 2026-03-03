@@ -1,10 +1,22 @@
-Optional server configuration can be loaded from YAML files.
+Additional static configuration can be loaded from YAML files.
+The files have the same structure as a Kubernetes manifest.
 
 Usage
 
   yat serve -config PATH [-config PATH]
 
-Example
+RuleSet Example (unimplemented)
 
-# add a tag attribute to the logger
-tag: "mostly just for testing"
+  apiVersion: yat.io/v1alpha1
+  kind: RuleSet
+
+  metadata:
+    name: example
+
+  rules:
+    # allows everything
+    # if you can connect,
+    # you can pubsub
+    - allow:
+        - path: "**"
+          actions: [pub, sub]
