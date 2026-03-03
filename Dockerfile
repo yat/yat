@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH bin/build -trimpath
+RUN GOARM=7 GOOS=$TARGETOS GOARCH=$TARGETARCH bin/build -trimpath
 
 FROM scratch
 
