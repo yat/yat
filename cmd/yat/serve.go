@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/go-jose/go-jose/v4/jwt"
 	"go.yaml.in/yaml/v4"
 	"golang.org/x/net/http2"
 	"yat.io/yat"
@@ -133,30 +132,6 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	return err
-}
-
-func parseIssuer(issuerURL string) (iss string, err error) {
-	if issuerURL != "https://kubernetes.default.svc" {
-		return issuerURL, nil
-	}
-
-	rawToken, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
-	if err != nil {
-		return
-	}
-
-	parsed, err := jwt.ParseSigned(string(rawToken), yat.ValidJOSEAlgs)
-	if err != nil {
-		return
-	}
-
-	var claims jwt.Claims
-	err = parsed.UnsafeClaimsWithoutVerification(&claims)
-	if err != nil {
-		return
-	}
-
-	return claims.Issuer, nil
 }
 
 func loadServeConfig(cfg *serveConfig, src string) error {
