@@ -8,17 +8,19 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/coreos/go-oidc/v3/oidc/oidctest"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"yat.io/yat"
 )
 
 func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
+	now := time.Now().UTC()
 
 	algs := []jose.SignatureAlgorithm{
 		jose.RS256,
@@ -29,12 +31,12 @@ func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
 
 	for _, alg := range algs {
 		t.Run(string(alg), func(t *testing.T) {
-			issuer := "https://issuer.example/" + string(alg)
+			key := newExternalAuthTestKey(t, alg)
+			issuer := newExternalAuthTestIssuer(t, alg, key.public)
 			clientID := "client-" + string(alg)
 			subject := "user-" + string(alg)
 
-			key := newExternalAuthTestKey(t, alg)
-			rs, err := yat.NewRuleSet([]yat.Rule{
+			rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 				{
 					Token: &yat.TokenSpec{
 						Issuer:   issuer,
@@ -53,8 +55,6 @@ func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
 						Actions: []yat.Action{yat.ActionSub},
 					}},
 				},
-			}, map[string]*oidc.IDTokenVerifier{
-				issuer: newExternalAuthTestVerifier(issuer, clientID, alg, key.public, now),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -91,13 +91,13 @@ func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
 }
 
 func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
-	issuer := "https://issuer.example"
+	now := time.Now().UTC()
 	clientID := "client-123"
 	subject := "user-123"
 
 	key := newExternalAuthTestKey(t, jose.RS256)
-	rs, err := yat.NewRuleSet([]yat.Rule{
+	issuer := newExternalAuthTestIssuer(t, jose.RS256, key.public)
+	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 		{
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("public/**"),
@@ -112,21 +112,19 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 			}},
 		},
 		{
-			Token: &yat.TokenSpec{Subject: subject},
+			Token: &yat.TokenSpec{Issuer: issuer, Subject: subject},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("subject/**"),
 				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
 		{
-			Token: &yat.TokenSpec{Audience: "other-client"},
+			Token: &yat.TokenSpec{Issuer: issuer, Audience: "other-client"},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("other/**"),
 				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
-	}, map[string]*oidc.IDTokenVerifier{
-		issuer: newExternalAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -172,18 +170,10 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 }
 
 func TestRuleSetVerifyRejectsUnknownIssuer(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
+	now := time.Now().UTC()
 	key := newExternalAuthTestKey(t, jose.RS256)
 
-	rs, err := yat.NewRuleSet(nil, map[string]*oidc.IDTokenVerifier{
-		"https://known.example": newExternalAuthTestVerifier(
-			"https://known.example",
-			"client-123",
-			jose.RS256,
-			key.public,
-			now,
-		),
-	})
+	rs, err := yat.NewRuleSet(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +192,7 @@ func TestRuleSetVerifyRejectsUnknownIssuer(t *testing.T) {
 }
 
 func TestRuleSetVerifyRejectsUnsupportedAlgorithm(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
+	now := time.Now().UTC()
 	raw := signExternalAuthTestToken(t, jose.HS256, []byte("0123456789abcdef0123456789abcdef"), jwt.Claims{
 		Issuer:   "https://issuer.example",
 		Subject:  "user-123",
@@ -211,7 +201,7 @@ func TestRuleSetVerifyRejectsUnsupportedAlgorithm(t *testing.T) {
 		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
 	}, nil)
 
-	rs, err := yat.NewRuleSet(nil, nil)
+	rs, err := yat.NewRuleSet(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,16 +212,17 @@ func TestRuleSetVerifyRejectsUnsupportedAlgorithm(t *testing.T) {
 }
 
 func TestRuleSetVerifyRejectsInvalidSignature(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
+	now := time.Now().UTC()
 	issuer := "https://issuer.example"
 	clientID := "client-123"
 
 	good := newExternalAuthTestKey(t, jose.RS256)
 	bad := newExternalAuthTestKey(t, jose.RS256)
+	issuer = newExternalAuthTestIssuer(t, jose.RS256, good.public)
 
-	rs, err := yat.NewRuleSet(nil, map[string]*oidc.IDTokenVerifier{
-		issuer: newExternalAuthTestVerifier(issuer, clientID, jose.RS256, good.public, now),
-	})
+	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
+		Token: &yat.TokenSpec{Issuer: issuer},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,14 +240,22 @@ func TestRuleSetVerifyRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
-func TestRuleSetVerifyRejectsAudienceMismatch(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
-	issuer := "https://issuer.example"
+func TestRuleSetCompileRejectsAudienceMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	clientID := "client-expected"
 
 	key := newExternalAuthTestKey(t, jose.RS256)
-	rs, err := yat.NewRuleSet(nil, map[string]*oidc.IDTokenVerifier{
-		issuer: newExternalAuthTestVerifier(issuer, "client-expected", jose.RS256, key.public, now),
-	})
+	issuer := newExternalAuthTestIssuer(t, jose.RS256, key.public)
+	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
+		Token: &yat.TokenSpec{
+			Issuer:   issuer,
+			Audience: clientID,
+		},
+		Grants: []yat.Grant{{
+			Path:    yat.NewPath("private/**"),
+			Actions: []yat.Action{yat.ActionSub},
+		}},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,9 +268,32 @@ func TestRuleSetVerifyRejectsAudienceMismatch(t *testing.T) {
 		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
 	}, nil)
 
-	if _, err := rs.Verify(context.Background(), raw); err == nil {
-		t.Fatal("no error")
+	tok, err := rs.Verify(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	allow := rs.Compile(yat.Identity{Token: tok})
+	if allow(yat.NewPath("private/feed"), yat.ActionSub) {
+		t.Fatal("unexpected access")
+	}
+}
+
+func newExternalAuthTestIssuer(t *testing.T, alg jose.SignatureAlgorithm, public crypto.PublicKey) string {
+	t.Helper()
+
+	s := &oidctest.Server{
+		PublicKeys: []oidctest.PublicKey{{
+			PublicKey: public,
+			KeyID:     "test-key",
+			Algorithm: string(alg),
+		}},
+		Algorithms: []string{string(alg)},
+	}
+	srv := httptest.NewServer(s)
+	s.SetIssuer(srv.URL)
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 type externalAuthTestKey struct {

@@ -2,8 +2,13 @@ package yat
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
+	"os"
 	"slices"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -70,18 +75,95 @@ var ValidJOSEAlgs = []jose.SignatureAlgorithm{
 
 var errUnknownIssuer = errors.New("unknown issuer")
 
-func NewRuleSet(rules []Rule, verifiers map[string]*oidc.IDTokenVerifier) (*RuleSet, error) {
-	return &RuleSet{rules, verifiers}, nil
+func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
+	vv := map[string]*oidc.IDTokenVerifier{}
+	for i, r := range rules {
+		if r.Token != nil {
+			if r.Token.Issuer == "" {
+				return nil, fmt.Errorf("rules[%d].token: missing issuer", i)
+			}
+
+			ctx := ctx
+			iss := r.Token.Issuer
+
+			// special treatment:
+			// - the iss claim may differ
+			// - use cluster ca cert for discovery
+			// - use pod token for discovery
+			if iss == "https://kubernetes.default.svc" {
+				tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+				if err != nil {
+					return nil, err
+				}
+
+				unparsedToken := string(tokenBytes)
+				parsed, err := jwt.ParseSigned(string(unparsedToken), ValidJOSEAlgs)
+				if err != nil {
+					return nil, err
+				}
+
+				var claims jwt.Claims
+				if err := parsed.UnsafeClaimsWithoutVerification(&claims); err != nil {
+					return nil, err
+				}
+
+				rawRoots, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+				if err != nil {
+					return nil, err
+				}
+
+				roots := x509.NewCertPool()
+				if !roots.AppendCertsFromPEM(rawRoots) {
+					return nil, errors.New("no roots")
+				}
+
+				iss = claims.Issuer
+				r.Token.Issuer = iss
+				ctx = oidc.InsecureIssuerURLContext(ctx, iss)
+				ctx = oidc.ClientContext(ctx, &http.Client{
+					Transport: authTransport{
+						Token: unparsedToken,
+						RoundTripper: &http.Transport{
+							TLSClientConfig: &tls.Config{
+								RootCAs: roots,
+							},
+						},
+					},
+				})
+			}
+
+			op, err := oidc.NewProvider(ctx, r.Token.Issuer)
+			if err != nil {
+				return nil, err
+			}
+
+			vv[iss] = op.Verifier(&oidc.Config{
+				SkipClientIDCheck: true,
+			})
+		}
+	}
+
+	return &RuleSet{rules, vv}, nil
 }
 
 // AllowAll returns a rule set that allows all actions on all paths.
 func AllowAll() *RuleSet {
-	return &RuleSet{rr: []Rule{{
-		Grants: []Grant{{
-			Path:    NewPath("**"),
-			Actions: []Action{ActionPub, ActionSub},
-		}},
-	}}}
+	rs, err := NewRuleSet(context.Background(), []Rule{
+		{
+			Grants: []Grant{
+				{
+					Path:    NewPath("**"),
+					Actions: []Action{ActionPub, ActionSub},
+				},
+			},
+		},
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	return rs
 }
 
 func (rs *RuleSet) Verify(ctx context.Context, jwtBytes []byte) (*Token, error) {
@@ -178,4 +260,15 @@ func (ts TokenSpec) match(t Token) bool {
 
 func (g Grant) allow(p Path, a Action) bool {
 	return g.Path.Match(p) && slices.Contains(g.Actions, a)
+}
+
+type authTransport struct {
+	Token string
+	http.RoundTripper
+}
+
+func (at authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.Header.Set("authorization", "Bearer "+at.Token)
+	return at.RoundTripper.RoundTrip(r)
 }

@@ -170,7 +170,7 @@ func TestServer_readFrames(t *testing.T) {
 		clientID := "client-123"
 
 		key := newAuthTestKey(t, jose.RS256)
-		rs, err := NewRuleSet([]Rule{{
+		rs := newInjectedRuleSet([]Rule{{
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
@@ -179,9 +179,6 @@ func TestServer_readFrames(t *testing.T) {
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 
 		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
 		if err != nil {
@@ -373,10 +370,7 @@ func TestServer_handleJWT(t *testing.T) {
 	})
 
 	t.Run("verify failure is returned", func(t *testing.T) {
-		rs, err := NewRuleSet(nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rs := newInjectedRuleSet(nil, nil)
 		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
 		if err != nil {
 			t.Fatal(err)
@@ -395,7 +389,7 @@ func TestServer_handleJWT(t *testing.T) {
 		clientID := "client-123"
 
 		key := newAuthTestKey(t, jose.RS256)
-		rs, err := NewRuleSet([]Rule{{
+		rs := newInjectedRuleSet([]Rule{{
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
@@ -404,9 +398,6 @@ func TestServer_handleJWT(t *testing.T) {
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
 		if err != nil {
 			t.Fatal(err)
@@ -443,7 +434,7 @@ func TestServer_handleJWT(t *testing.T) {
 		clientID := "client-123"
 
 		key := newAuthTestKey(t, jose.RS256)
-		rs, err := NewRuleSet([]Rule{{
+		rs := newInjectedRuleSet([]Rule{{
 			Token: AnyToken(),
 			Grants: []Grant{{
 				Path:    NewPath("private/**"),
@@ -452,9 +443,6 @@ func TestServer_handleJWT(t *testing.T) {
 		}}, map[string]*oidc.IDTokenVerifier{
 			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
 		if err != nil {
 			t.Fatal(err)

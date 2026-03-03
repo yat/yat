@@ -17,6 +17,14 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
+func newInjectedRuleSet(rules []Rule, verifiers map[string]*oidc.IDTokenVerifier) *RuleSet {
+	if verifiers == nil {
+		verifiers = map[string]*oidc.IDTokenVerifier{}
+	}
+
+	return &RuleSet{rr: rules, vv: verifiers}
+}
+
 func TestTokenSpec_match(t *testing.T) {
 	matched := Token{
 		public: jwt.Claims{
@@ -187,12 +195,9 @@ func TestRuleSetVerify_internalClaims(t *testing.T) {
 		"scp":  []string{"pub", "sub"},
 	})
 
-	rs, err := NewRuleSet(nil, map[string]*oidc.IDTokenVerifier{
+	rs := newInjectedRuleSet(nil, map[string]*oidc.IDTokenVerifier{
 		issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	tok, err := rs.Verify(context.Background(), raw)
 	if err != nil {
@@ -233,7 +238,7 @@ func TestRuleSetVerify_unknownIssuer(t *testing.T) {
 		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
 	}, nil)
 
-	rs, err := NewRuleSet(nil, map[string]*oidc.IDTokenVerifier{
+	rs := newInjectedRuleSet(nil, map[string]*oidc.IDTokenVerifier{
 		"https://issuer.example": newAuthTestVerifier(
 			"https://issuer.example",
 			"client-123",
@@ -242,11 +247,8 @@ func TestRuleSetVerify_unknownIssuer(t *testing.T) {
 			now,
 		),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	_, err = rs.Verify(context.Background(), raw)
+	_, err := rs.Verify(context.Background(), raw)
 	if !errors.Is(err, errUnknownIssuer) {
 		t.Fatalf("error: %v", err)
 	}
