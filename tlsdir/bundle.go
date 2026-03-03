@@ -1,3 +1,4 @@
+// Package tlsdir loads (and reloads) TLS credentials from a local directory.
 package tlsdir
 
 import (

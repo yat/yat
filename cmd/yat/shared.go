@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 
-	"yat.io/yat/cmd/yat/internal/tlsdir"
+	"yat.io/yat/tlsdir"
 )
 
 type SharedConfig struct {
