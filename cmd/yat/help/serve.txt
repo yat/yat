@@ -13,13 +13,6 @@ Flags:
       Path to a directory containing server.crt and server.key files.
       If ca.crt exists, it is used to verify client certificates.
 
-  -config PATH
-      Path to a JSON or YAML config file.
-      This flag can be set more than once.
-      Run 'yat help server-config' for details.
-      This feature is not yet implemented!
-      Passing -config will cause an error.
-
   -allow-all
       If this flag is set, the server allows all operations.
       Any configured rules are parsed, but not enforced.
