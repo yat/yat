@@ -1,103 +1,108 @@
 package yat_test
 
 import (
-	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
-	"net/http/httptest"
+	"crypto/tls"
+	"crypto/x509"
+	"io"
+	"net"
+	"net/url"
 	"testing"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/coreos/go-oidc/v3/oidc/oidctest"
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
 	"yat.io/yat"
 )
 
-func TestRuleSetVerifySupportedAlgorithms(t *testing.T) {
-	now := time.Now().UTC()
+func TestNewRuleSet(t *testing.T) {
+	t.Run("valid rules", func(t *testing.T) {
+		_, err := yat.NewRuleSet([]yat.Rule{
+			{
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("public/**"),
+					Actions: []yat.Action{yat.ActionSub},
+				}},
+			},
+			{
+				SPIFFE: &yat.SPIFFESpec{
+					Domain: "example.org",
+					Path:   yat.NewPath("svc/*"),
+				},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("private/**"),
+					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+				}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 
-	algs := []jose.SignatureAlgorithm{
-		jose.RS256,
-		jose.PS256,
-		jose.ES256,
-		jose.EdDSA,
+	tcs := []struct {
+		name  string
+		rules []yat.Rule
+	}{
+		{
+			name: "empty spiffe domain",
+			rules: []yat.Rule{{
+				SPIFFE: &yat.SPIFFESpec{},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("topic"),
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
+		{
+			name: "invalid spiffe domain",
+			rules: []yat.Rule{{
+				SPIFFE: &yat.SPIFFESpec{Domain: "Example.Org"},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("topic"),
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
+		{
+			name:  "empty grants",
+			rules: []yat.Rule{{}},
+		},
+		{
+			name: "empty grant path",
+			rules: []yat.Rule{{
+				Grants: []yat.Grant{{
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
+		{
+			name: "empty grant actions",
+			rules: []yat.Rule{{
+				Grants: []yat.Grant{{
+					Path: yat.NewPath("topic"),
+				}},
+			}},
+		},
+		{
+			name: "invalid grant action",
+			rules: []yat.Rule{{
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("topic"),
+					Actions: []yat.Action{"delete"},
+				}},
+			}},
+		},
 	}
 
-	for _, alg := range algs {
-		t.Run(string(alg), func(t *testing.T) {
-			key := newExternalAuthTestKey(t, alg)
-			issuer := newExternalAuthTestIssuer(t, alg, key.public)
-			clientID := "client-" + string(alg)
-			subject := "user-" + string(alg)
-
-			rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{
-				{
-					Token: &yat.TokenSpec{
-						Issuer:   issuer,
-						Audience: clientID,
-						Subject:  subject,
-					},
-					Grants: []yat.Grant{{
-						Path:    yat.NewPath("topic/" + string(alg)),
-						Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
-					}},
-				},
-				{
-					Token: &yat.TokenSpec{Issuer: issuer},
-					Grants: []yat.Grant{{
-						Path:    yat.NewPath("feeds/**"),
-						Actions: []yat.Action{yat.ActionSub},
-					}},
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			raw := signExternalAuthTestToken(t, alg, key.private, jwt.Claims{
-				Issuer:   issuer,
-				Subject:  subject,
-				Audience: jwt.Audience{clientID},
-				IssuedAt: jwt.NewNumericDate(now),
-				Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-			}, nil)
-
-			tok, err := rs.Verify(context.Background(), raw)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			allow := rs.Compile(yat.Identity{Token: tok})
-			if !allow(yat.NewPath("topic/"+string(alg)), yat.ActionPub) {
-				t.Fatal("pub not allowed")
-			}
-			if !allow(yat.NewPath("topic/"+string(alg)), yat.ActionSub) {
-				t.Fatal("sub not allowed")
-			}
-			if !allow(yat.NewPath("feeds/private"), yat.ActionSub) {
-				t.Fatal("feed sub not allowed")
-			}
-			if allow(yat.NewPath("feeds/private"), yat.ActionPub) {
-				t.Fatal("unexpected pub grant")
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := yat.NewRuleSet(tc.rules); err == nil {
+				t.Fatal("expected error")
 			}
 		})
 	}
 }
 
-func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
-	now := time.Now().UTC()
-	clientID := "client-123"
-	subject := "user-123"
-
-	key := newExternalAuthTestKey(t, jose.RS256)
-	issuer := newExternalAuthTestIssuer(t, jose.RS256, key.public)
-	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{
+func TestRuleSetCompile(t *testing.T) {
+	rs, err := yat.NewRuleSet([]yat.Rule{
 		{
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("public/**"),
@@ -105,23 +110,19 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 			}},
 		},
 		{
-			Token: &yat.TokenSpec{Issuer: issuer},
+			SPIFFE: &yat.SPIFFESpec{Domain: "example.org"},
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("private/**"),
 				Actions: []yat.Action{yat.ActionSub},
 			}},
 		},
 		{
-			Token: &yat.TokenSpec{Issuer: issuer, Subject: subject},
+			SPIFFE: &yat.SPIFFESpec{
+				Domain: "example.org",
+				Path:   yat.NewPath("svc/*"),
+			},
 			Grants: []yat.Grant{{
-				Path:    yat.NewPath("subject/**"),
-				Actions: []yat.Action{yat.ActionPub},
-			}},
-		},
-		{
-			Token: &yat.TokenSpec{Issuer: issuer, Audience: "other-client"},
-			Grants: []yat.Grant{{
-				Path:    yat.NewPath("other/**"),
+				Path:    yat.NewPath("publish/**"),
 				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
@@ -130,251 +131,81 @@ func TestRuleSetCompileAnonymousAndAuthenticated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := signExternalAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-		Issuer:   issuer,
-		Subject:  subject,
-		Audience: jwt.Audience{clientID},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	tok, err := rs.Verify(context.Background(), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	anon := rs.Compile(yat.Identity{})
+	anon := rs.Compile(yat.Principal{})
 	if !anon(yat.NewPath("public/feed"), yat.ActionSub) {
 		t.Fatal("anonymous public access denied")
 	}
 	if anon(yat.NewPath("private/feed"), yat.ActionSub) {
-		t.Fatal("anonymous authenticated grant allowed")
+		t.Fatal("anonymous spiffe grant allowed")
 	}
 
-	authd := rs.Compile(yat.Identity{Token: tok})
+	authd := rs.Compile(yat.Principal{
+		Conn: newExternalAuthConn(t, "spiffe://example.org/svc/api"),
+	})
 	if !authd(yat.NewPath("public/feed"), yat.ActionSub) {
 		t.Fatal("authenticated public access denied")
 	}
 	if !authd(yat.NewPath("private/feed"), yat.ActionSub) {
-		t.Fatal("authenticated access denied")
+		t.Fatal("domain grant denied")
 	}
-	if !authd(yat.NewPath("subject/feed"), yat.ActionPub) {
-		t.Fatal("subject grant denied")
+	if !authd(yat.NewPath("publish/feed"), yat.ActionPub) {
+		t.Fatal("path grant denied")
 	}
-	if authd(yat.NewPath("subject/feed"), yat.ActionSub) {
-		t.Fatal("unexpected subject sub grant")
-	}
-	if authd(yat.NewPath("other/feed"), yat.ActionPub) {
-		t.Fatal("unexpected audience grant")
-	}
-}
-
-func TestRuleSetVerifyRejectsUnknownIssuer(t *testing.T) {
-	now := time.Now().UTC()
-	key := newExternalAuthTestKey(t, jose.RS256)
-
-	rs, err := yat.NewRuleSet(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
+	if authd(yat.NewPath("publish/feed"), yat.ActionSub) {
+		t.Fatal("unexpected publish sub grant")
 	}
 
-	raw := signExternalAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-		Issuer:   "https://unknown.example",
-		Subject:  "user-123",
-		Audience: jwt.Audience{"client-123"},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	if _, err := rs.Verify(context.Background(), raw); err == nil {
-		t.Fatal("no error")
-	}
-}
-
-func TestRuleSetVerifyRejectsUnsupportedAlgorithm(t *testing.T) {
-	now := time.Now().UTC()
-	raw := signExternalAuthTestToken(t, jose.HS256, []byte("0123456789abcdef0123456789abcdef"), jwt.Claims{
-		Issuer:   "https://issuer.example",
-		Subject:  "user-123",
-		Audience: jwt.Audience{"client-123"},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	rs, err := yat.NewRuleSet(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := rs.Verify(context.Background(), raw); err == nil {
-		t.Fatal("no error")
-	}
-}
-
-func TestRuleSetVerifyRejectsInvalidSignature(t *testing.T) {
-	now := time.Now().UTC()
-	issuer := "https://issuer.example"
-	clientID := "client-123"
-
-	good := newExternalAuthTestKey(t, jose.RS256)
-	bad := newExternalAuthTestKey(t, jose.RS256)
-	issuer = newExternalAuthTestIssuer(t, jose.RS256, good.public)
-
-	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
-		Token: &yat.TokenSpec{Issuer: issuer},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	raw := signExternalAuthTestToken(t, jose.RS256, bad.private, jwt.Claims{
-		Issuer:   issuer,
-		Subject:  "user-123",
-		Audience: jwt.Audience{clientID},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	if _, err := rs.Verify(context.Background(), raw); err == nil {
-		t.Fatal("no error")
-	}
-}
-
-func TestRuleSetCompileRejectsAudienceMismatch(t *testing.T) {
-	now := time.Now().UTC()
-	clientID := "client-expected"
-
-	key := newExternalAuthTestKey(t, jose.RS256)
-	issuer := newExternalAuthTestIssuer(t, jose.RS256, key.public)
-	rs, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
-		Token: &yat.TokenSpec{
-			Issuer:   issuer,
-			Audience: clientID,
-		},
-		Grants: []yat.Grant{{
-			Path:    yat.NewPath("private/**"),
-			Actions: []yat.Action{yat.ActionSub},
-		}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	raw := signExternalAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-		Issuer:   issuer,
-		Subject:  "user-123",
-		Audience: jwt.Audience{"client-other"},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	tok, err := rs.Verify(context.Background(), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	allow := rs.Compile(yat.Identity{Token: tok})
-	if allow(yat.NewPath("private/feed"), yat.ActionSub) {
-		t.Fatal("unexpected access")
-	}
-}
-
-func newExternalAuthTestIssuer(t *testing.T, alg jose.SignatureAlgorithm, public crypto.PublicKey) string {
-	t.Helper()
-
-	s := &oidctest.Server{
-		PublicKeys: []oidctest.PublicKey{{
-			PublicKey: public,
-			KeyID:     "test-key",
-			Algorithm: string(alg),
-		}},
-		Algorithms: []string{string(alg)},
-	}
-	srv := httptest.NewServer(s)
-	s.SetIssuer(srv.URL)
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-type externalAuthTestKey struct {
-	private any
-	public  crypto.PublicKey
-}
-
-func newExternalAuthTestKey(t *testing.T, alg jose.SignatureAlgorithm) externalAuthTestKey {
-	t.Helper()
-
-	switch alg {
-	case jose.RS256, jose.PS256:
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return externalAuthTestKey{private: key, public: &key.PublicKey}
-
-	case jose.ES256:
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return externalAuthTestKey{private: key, public: &key.PublicKey}
-
-	case jose.EdDSA:
-		public, private, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return externalAuthTestKey{private: private, public: public}
-
-	default:
-		t.Fatalf("unsupported algorithm %q", alg)
-		return externalAuthTestKey{}
-	}
-}
-
-func newExternalAuthTestVerifier(
-	issuer string,
-	clientID string,
-	alg jose.SignatureAlgorithm,
-	public crypto.PublicKey,
-	now time.Time,
-) *oidc.IDTokenVerifier {
-	return oidc.NewVerifier(issuer, &oidc.StaticKeySet{
-		PublicKeys: []crypto.PublicKey{public},
-	}, &oidc.Config{
-		ClientID:             clientID,
-		SupportedSigningAlgs: []string{string(alg)},
-		Now: func() time.Time {
-			return now
-		},
+	other := rs.Compile(yat.Principal{
+		Conn: newExternalAuthConn(t, "spiffe://other.org/svc/api"),
 	})
+	if other(yat.NewPath("private/feed"), yat.ActionSub) {
+		t.Fatal("unexpected other-domain grant")
+	}
 }
 
-func signExternalAuthTestToken(
-	t *testing.T,
-	alg jose.SignatureAlgorithm,
-	key any,
-	claims jwt.Claims,
-	privateClaims map[string]any,
-) []byte {
+func TestAllowAll(t *testing.T) {
+	allow := yat.AllowAll().Compile(yat.Principal{})
+
+	if !allow(yat.NewPath("topic/pub"), yat.ActionPub) {
+		t.Fatal("pub denied")
+	}
+	if !allow(yat.NewPath("topic/sub"), yat.ActionSub) {
+		t.Fatal("sub denied")
+	}
+}
+
+type externalAuthConn struct {
+	state tls.ConnectionState
+}
+
+func (c externalAuthConn) ConnectionState() tls.ConnectionState { return c.state }
+func (externalAuthConn) Read([]byte) (int, error)               { return 0, io.EOF }
+func (externalAuthConn) Write(p []byte) (int, error)            { return len(p), nil }
+func (externalAuthConn) Close() error                           { return nil }
+func (externalAuthConn) LocalAddr() net.Addr                    { return externalAuthAddr("local") }
+func (externalAuthConn) RemoteAddr() net.Addr                   { return externalAuthAddr("remote") }
+func (externalAuthConn) SetDeadline(time.Time) error            { return nil }
+func (externalAuthConn) SetReadDeadline(time.Time) error        { return nil }
+func (externalAuthConn) SetWriteDeadline(time.Time) error       { return nil }
+
+type externalAuthAddr string
+
+func (a externalAuthAddr) Network() string { return "test" }
+func (a externalAuthAddr) String() string  { return string(a) }
+
+func newExternalAuthConn(t *testing.T, raw string) net.Conn {
 	t.Helper()
 
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: alg,
-		Key:       key,
-	}, nil)
+	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	builder := jwt.Signed(signer).Claims(claims)
-	if privateClaims != nil {
-		builder = builder.Claims(privateClaims)
+	return externalAuthConn{
+		state: tls.ConnectionState{
+			VerifiedChains: [][]*x509.Certificate{{
+				{URIs: []*url.URL{u}},
+			}},
+		},
 	}
-
-	raw, err := builder.Serialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []byte(raw)
 }

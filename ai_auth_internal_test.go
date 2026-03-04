@@ -1,161 +1,14 @@
 package yat
 
 import (
-	"context"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
-	"errors"
+	"crypto/tls"
+	"crypto/x509"
+	"io"
+	"net"
+	"net/url"
 	"testing"
 	"time"
-
-	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
 )
-
-func newInjectedRuleSet(rules []Rule, verifiers map[string]*oidc.IDTokenVerifier) *RuleSet {
-	if verifiers == nil {
-		verifiers = map[string]*oidc.IDTokenVerifier{}
-	}
-
-	return &RuleSet{rr: rules, vv: verifiers}
-}
-
-func TestTokenSpec_match(t *testing.T) {
-	matched := Token{
-		public: jwt.Claims{
-			Issuer:   "https://issuer.example",
-			Audience: jwt.Audience{"client-1", "client-2"},
-			Subject:  "user-123",
-		},
-		valid: true,
-	}
-
-	tcs := []struct {
-		name string
-		spec TokenSpec
-		tok  Token
-		want bool
-	}{
-		{
-			name: "empty spec never matches",
-			spec: TokenSpec{},
-			tok:  matched,
-			want: false,
-		},
-		{
-			name: "issuer mismatch",
-			spec: TokenSpec{Issuer: "https://other.example"},
-			tok:  matched,
-			want: false,
-		},
-		{
-			name: "audience mismatch",
-			spec: TokenSpec{Audience: "other-client"},
-			tok:  matched,
-			want: false,
-		},
-		{
-			name: "subject mismatch",
-			spec: TokenSpec{Subject: "other-user"},
-			tok:  matched,
-			want: false,
-		},
-		{
-			name: "all fields match",
-			spec: TokenSpec{
-				Issuer:   "https://issuer.example",
-				Audience: "client-2",
-				Subject:  "user-123",
-			},
-			tok:  matched,
-			want: true,
-		},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.spec.match(tc.tok); got != tc.want {
-				t.Fatalf("match: %t != %t", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRule_match(t *testing.T) {
-	authed := Identity{Token: &Token{valid: true}}
-
-	t.Run("nil token spec matches anonymous identity", func(t *testing.T) {
-		if !(Rule{}).match(Identity{}) {
-			t.Fatal("no match")
-		}
-	})
-
-	t.Run("empty token spec never matches", func(t *testing.T) {
-		rule := Rule{Token: &TokenSpec{}}
-
-		if rule.match(Identity{}) {
-			t.Fatal("unexpected match")
-		}
-		if rule.match(authed) {
-			t.Fatal("unexpected match")
-		}
-	})
-
-	t.Run("AnyToken matches authenticated identity", func(t *testing.T) {
-		rule := Rule{Token: AnyToken()}
-
-		if rule.match(Identity{}) {
-			t.Fatal("unexpected match")
-		}
-		if !rule.match(authed) {
-			t.Fatal("no match")
-		}
-	})
-
-	t.Run("AnyToken rejects invalid token", func(t *testing.T) {
-		rule := Rule{Token: AnyToken()}
-
-		if rule.match(Identity{Token: &Token{}}) {
-			t.Fatal("unexpected match")
-		}
-	})
-
-	t.Run("claim match rejects invalid token", func(t *testing.T) {
-		rule := Rule{
-			Token: &TokenSpec{Subject: "user-123"},
-		}
-		id := Identity{
-			Token: &Token{
-				public: jwt.Claims{Subject: "user-123"},
-			},
-		}
-
-		if rule.match(id) {
-			t.Fatal("unexpected match")
-		}
-	})
-
-	t.Run("matching token spec delegates to token claims", func(t *testing.T) {
-		rule := Rule{
-			Token: &TokenSpec{Subject: "user-123"},
-		}
-		id := Identity{
-			Token: &Token{
-				public: jwt.Claims{Subject: "user-123"},
-				valid:  true,
-			},
-		}
-
-		if !rule.match(id) {
-			t.Fatal("no match")
-		}
-	})
-}
 
 func TestGrant_allow(t *testing.T) {
 	grant := Grant{
@@ -177,162 +30,193 @@ func TestGrant_allow(t *testing.T) {
 	}
 }
 
-func TestRuleSetVerify_internalClaims(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
-	issuer := "https://issuer.example"
-	clientID := "client-123"
-	subject := "user-123"
-
-	key := newAuthTestKey(t, jose.RS256)
-	raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-		Issuer:   issuer,
-		Subject:  subject,
-		Audience: jwt.Audience{clientID},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, map[string]any{
-		"role": "admin",
-		"scp":  []string{"pub", "sub"},
-	})
-
-	rs := newInjectedRuleSet(nil, map[string]*oidc.IDTokenVerifier{
-		issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
-	})
-
-	tok, err := rs.Verify(context.Background(), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if tok.public.Issuer != issuer {
-		t.Fatalf("issuer: %q != %q", tok.public.Issuer, issuer)
-	}
-	if tok.public.Subject != subject {
-		t.Fatalf("subject: %q != %q", tok.public.Subject, subject)
-	}
-	if !tok.public.Audience.Contains(clientID) {
-		t.Fatalf("audience missing %q", clientID)
-	}
-	if got := tok.claims["role"]; got != "admin" {
-		t.Fatalf("role: %v != %q", got, "admin")
-	}
-
-	scopes, ok := tok.claims["scp"].([]any)
-	if !ok {
-		t.Fatalf("scp type: %T", tok.claims["scp"])
-	}
-	if len(scopes) != 2 || scopes[0] != "pub" || scopes[1] != "sub" {
-		t.Fatalf("scp: %v", scopes)
-	}
-}
-
-func TestRuleSetVerify_unknownIssuer(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0).UTC()
-
-	key := newAuthTestKey(t, jose.RS256)
-	raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-		Issuer:   "https://unknown.example",
-		Subject:  "user-123",
-		Audience: jwt.Audience{"client-123"},
-		IssuedAt: jwt.NewNumericDate(now),
-		Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-	}, nil)
-
-	rs := newInjectedRuleSet(nil, map[string]*oidc.IDTokenVerifier{
-		"https://issuer.example": newAuthTestVerifier(
-			"https://issuer.example",
-			"client-123",
-			jose.RS256,
-			key.public,
-			now,
-		),
-	})
-
-	_, err := rs.Verify(context.Background(), raw)
-	if !errors.Is(err, errUnknownIssuer) {
-		t.Fatalf("error: %v", err)
-	}
-}
-
-type authTestKey struct {
-	private any
-	public  crypto.PublicKey
-}
-
-func newAuthTestKey(t *testing.T, alg jose.SignatureAlgorithm) authTestKey {
-	t.Helper()
-
-	switch alg {
-	case jose.RS256, jose.PS256:
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return authTestKey{private: key, public: &key.PublicKey}
-
-	case jose.ES256:
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return authTestKey{private: key, public: &key.PublicKey}
-
-	case jose.EdDSA:
-		public, private, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return authTestKey{private: private, public: public}
-
-	default:
-		t.Fatalf("unsupported algorithm %q", alg)
-		return authTestKey{}
-	}
-}
-
-func newAuthTestVerifier(
-	issuer string,
-	clientID string,
-	alg jose.SignatureAlgorithm,
-	public crypto.PublicKey,
-	now time.Time,
-) *oidc.IDTokenVerifier {
-	return oidc.NewVerifier(issuer, &oidc.StaticKeySet{
-		PublicKeys: []crypto.PublicKey{public},
-	}, &oidc.Config{
-		ClientID:             clientID,
-		SupportedSigningAlgs: []string{string(alg)},
-		Now: func() time.Time {
-			return now
+func TestSPIFFESpec_match(t *testing.T) {
+	tcs := []struct {
+		name string
+		spec SPIFFESpec
+		p    Principal
+		want bool
+	}{
+		{
+			name: "nil conn",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    Principal{},
 		},
-	})
+		{
+			name: "conn without state",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    Principal{Conn: authNoStateConn{}},
+		},
+		{
+			name: "no verified chains",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p: Principal{Conn: authStateConn{
+				state: tls.ConnectionState{},
+			}},
+		},
+		{
+			name: "empty verified chain",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p: Principal{Conn: authStateConn{
+				state: tls.ConnectionState{
+					VerifiedChains: [][]*x509.Certificate{{}},
+				},
+			}},
+		},
+		{
+			name: "no uri sans",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(),
+		},
+		{
+			name: "multiple uri sans",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p: newAuthPrincipal(
+				mustParseAuthURL(t, "spiffe://example.org/workload"),
+				mustParseAuthURL(t, "spiffe://example.org/other"),
+			),
+		},
+		{
+			name: "wrong scheme",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "https://example.org/workload")),
+		},
+		{
+			name: "query rejected",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/workload?a=b")),
+		},
+		{
+			name: "force query rejected",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/workload?")),
+		},
+		{
+			name: "userinfo rejected",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://user@example.org/workload")),
+		},
+		{
+			name: "invalid trust domain rejected",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org:443/workload")),
+		},
+		{
+			name: "wild path rejected",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/*")),
+		},
+		{
+			name: "domain mismatch",
+			spec: SPIFFESpec{Domain: "other.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/workload")),
+		},
+		{
+			name: "path mismatch",
+			spec: SPIFFESpec{Domain: "example.org", Path: NewPath("svc/api")},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/svc/web")),
+		},
+		{
+			name: "pathless id matches domain rule",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org")),
+			want: true,
+		},
+		{
+			name: "pathful id matches domain rule",
+			spec: SPIFFESpec{Domain: "example.org"},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/svc/api")),
+			want: true,
+		},
+		{
+			name: "exact path match",
+			spec: SPIFFESpec{Domain: "example.org", Path: NewPath("svc/api")},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/svc/api")),
+			want: true,
+		},
+		{
+			name: "wildcard path match",
+			spec: SPIFFESpec{Domain: "example.org", Path: NewPath("svc/*")},
+			p:    newAuthPrincipal(mustParseAuthURL(t, "spiffe://example.org/svc/api")),
+			want: true,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.spec.match(tc.p); got != tc.want {
+				t.Fatalf("match: %t != %t", got, tc.want)
+			}
+		})
+	}
 }
 
-func signAuthTestToken(
-	t *testing.T,
-	alg jose.SignatureAlgorithm,
-	key any,
-	claims jwt.Claims,
-	privateClaims map[string]any,
-) []byte {
+func TestRuleSet_Compile_clonesGrants(t *testing.T) {
+	rs := &RuleSet{rr: []Rule{{
+		Grants: []Grant{{
+			Path:    NewPath("chat/room"),
+			Actions: []Action{ActionPub},
+		}},
+	}}}
+
+	allow := rs.Compile(Principal{})
+
+	rs.rr[0].Grants[0].Path = NewPath("chat/other")
+	rs.rr[0].Grants[0].Actions[0] = ActionSub
+
+	if !allow(NewPath("chat/room"), ActionPub) {
+		t.Fatal("compiled grant changed")
+	}
+	if allow(NewPath("chat/other"), ActionPub) {
+		t.Fatal("unexpected mutated path grant")
+	}
+	if allow(NewPath("chat/room"), ActionSub) {
+		t.Fatal("unexpected mutated action grant")
+	}
+}
+
+type authStateConn struct {
+	state tls.ConnectionState
+}
+
+func (c authStateConn) ConnectionState() tls.ConnectionState { return c.state }
+func (authStateConn) Read([]byte) (int, error)               { return 0, io.EOF }
+func (authStateConn) Write(p []byte) (int, error)            { return len(p), nil }
+func (authStateConn) Close() error                           { return nil }
+func (authStateConn) LocalAddr() net.Addr                    { return testAddr("local") }
+func (authStateConn) RemoteAddr() net.Addr                   { return testAddr("remote") }
+func (authStateConn) SetDeadline(time.Time) error            { return nil }
+func (authStateConn) SetReadDeadline(time.Time) error        { return nil }
+func (authStateConn) SetWriteDeadline(time.Time) error       { return nil }
+
+type authNoStateConn struct{}
+
+func (authNoStateConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (authNoStateConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (authNoStateConn) Close() error                     { return nil }
+func (authNoStateConn) LocalAddr() net.Addr              { return testAddr("local") }
+func (authNoStateConn) RemoteAddr() net.Addr             { return testAddr("remote") }
+func (authNoStateConn) SetDeadline(time.Time) error      { return nil }
+func (authNoStateConn) SetReadDeadline(time.Time) error  { return nil }
+func (authNoStateConn) SetWriteDeadline(time.Time) error { return nil }
+
+func newAuthPrincipal(uris ...*url.URL) Principal {
+	return Principal{Conn: authStateConn{
+		state: tls.ConnectionState{
+			VerifiedChains: [][]*x509.Certificate{{
+				{URIs: uris},
+			}},
+		},
+	}}
+}
+
+func mustParseAuthURL(t *testing.T, raw string) *url.URL {
 	t.Helper()
 
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: alg,
-		Key:       key,
-	}, nil)
+	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	builder := jwt.Signed(signer).Claims(claims)
-	if privateClaims != nil {
-		builder = builder.Claims(privateClaims)
-	}
-
-	raw, err := builder.Serialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return []byte(raw)
+	return u
 }

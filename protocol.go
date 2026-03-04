@@ -25,7 +25,7 @@ const frameHdrLen = 4
 
 const (
 	_              = 0
-	jwtFrameType   = 1
+	_              = 1
 	pubFrameType   = 2
 	subFrameType   = 3
 	unsubFrameType = 4
@@ -40,13 +40,12 @@ const (
 )
 
 var (
-	errShortFrame  = errors.New("short frame")
-	errLongFrame   = errors.New("long frame")
-	errDupJWTFrame = errors.New("duplicate jwt frame")
-	errEmptyPath   = errors.New("empty path")
-	errSelPath     = errors.New("selector path changed")
-	errWildPath    = errors.New("wildcard path")
-	errWildInbox   = errors.New("wildcard inbox")
+	errShortFrame = errors.New("short frame")
+	errLongFrame  = errors.New("long frame")
+	errEmptyPath  = errors.New("empty path")
+	errSelPath    = errors.New("selector path changed")
+	errWildPath   = errors.New("wildcard path")
+	errWildInbox  = errors.New("wildcard inbox")
 )
 
 func (h frameHdr) Len() int {

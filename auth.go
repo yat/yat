@@ -1,42 +1,28 @@
 package yat
 
 import (
-	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"os"
+	"regexp"
 	"slices"
-
-	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
+	"strings"
 )
 
 type RuleSet struct {
 	rr []Rule
-	vv map[string]*oidc.IDTokenVerifier
 }
 
+// A Rule containing only Grants applies to all principals.
 type Rule struct {
-	Token  *TokenSpec
+	SPIFFE *SPIFFESpec
 	Grants []Grant
 }
 
-// TokenSpec specifies a JWT matcher.
-// The zero spec never matches.
-type TokenSpec struct {
-	Issuer   string
-	Audience string
-	Subject  string
-
-	// anyToken is true for tokens returned by [AnyToken].
-	// It causes [Rule.match] to ignore the spec fields
-	// and match any valid token.
-	anyToken bool
+// SPIFFESpec requires a principal to have a matching SPIFFE ID.
+type SPIFFESpec struct {
+	Domain string
+	Path   Path
 }
 
 type Grant struct {
@@ -52,103 +38,58 @@ const (
 	ActionSub = Action("sub") // subscribe to a stream of messages
 )
 
-// Token is a JWT parsed and verified by [RuleSet.Verify].
-type Token struct {
-	claims map[string]any
-	public jwt.Claims
-	valid  bool
+type Principal struct {
+	Conn net.Conn
 }
 
-type Identity struct {
-	Conn  net.Conn // not yet supported by auth rules
-	Token *Token
-}
+// spiffe://trust-domain/workload
+var validTrustDomain = regexp.MustCompile("^[-_.a-z0-9]+$")
 
-// ValidJOSEAlgs are the alg values supported by [Auth.Verify].
-// A particular provider may not support all of these algs.
-var ValidJOSEAlgs = []jose.SignatureAlgorithm{
-	jose.EdDSA,
-	jose.ES256,
-	jose.PS256,
-	jose.RS256,
-}
-
-var errUnknownIssuer = errors.New("unknown issuer")
-
-func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
-	vv := map[string]*oidc.IDTokenVerifier{}
+// NewRuleSet returns a new rule set based on the given rules.
+// It returns an error if the rules are invalid.
+func NewRuleSet(rules []Rule) (*RuleSet, error) {
 	for i, r := range rules {
-		if r.Token != nil {
-			if r.Token.Issuer == "" {
-				return nil, fmt.Errorf("rules[%d].token: missing issuer", i)
+		if r.SPIFFE != nil {
+			if r.SPIFFE.Domain == "" {
+				return nil, fmt.Errorf("rules[%d].spiffe: empty domain", i)
 			}
 
-			ctx := ctx
-			iss := r.Token.Issuer
+			if !validTrustDomain.MatchString(r.SPIFFE.Domain) {
+				return nil, fmt.Errorf("rules[%d].spiffe: invalid domain", i)
+			}
+		}
 
-			// special treatment:
-			// - the iss claim may differ
-			// - use cluster ca cert for discovery
-			// - use pod token for discovery
-			if iss == "https://kubernetes.default.svc" {
-				tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
-				if err != nil {
-					return nil, err
-				}
+		if len(r.Grants) == 0 {
+			return nil, fmt.Errorf("rules[%d]: empty grants", i)
+		}
 
-				unparsedToken := string(tokenBytes)
-				parsed, err := jwt.ParseSigned(string(unparsedToken), ValidJOSEAlgs)
-				if err != nil {
-					return nil, err
-				}
-
-				var claims jwt.Claims
-				if err := parsed.UnsafeClaimsWithoutVerification(&claims); err != nil {
-					return nil, err
-				}
-
-				rawRoots, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
-				if err != nil {
-					return nil, err
-				}
-
-				roots := x509.NewCertPool()
-				if !roots.AppendCertsFromPEM(rawRoots) {
-					return nil, errors.New("no roots")
-				}
-
-				iss = claims.Issuer
-				r.Token.Issuer = iss
-				ctx = oidc.InsecureIssuerURLContext(ctx, iss)
-				ctx = oidc.ClientContext(ctx, &http.Client{
-					Transport: authTransport{
-						Token: unparsedToken,
-						RoundTripper: &http.Transport{
-							TLSClientConfig: &tls.Config{
-								RootCAs: roots,
-							},
-						},
-					},
-				})
+		for j, g := range r.Grants {
+			if g.Path.IsZero() {
+				return nil, fmt.Errorf("rules[%d].grants[%d]: empty path", i, j)
 			}
 
-			op, err := oidc.NewProvider(ctx, r.Token.Issuer)
-			if err != nil {
-				return nil, err
+			if len(g.Actions) == 0 {
+				return nil, fmt.Errorf("rules[%d].grants[%d]: empty actions", i, j)
 			}
 
-			vv[iss] = op.Verifier(&oidc.Config{
-				SkipClientIDCheck: true,
-			})
+			for _, a := range g.Actions {
+				if a != ActionPub && a != ActionSub {
+					return nil, fmt.Errorf("rules[%d].grants[%d]: invalid action: %s", i, j, a)
+				}
+			}
 		}
 	}
 
-	return &RuleSet{rules, vv}, nil
+	rs := &RuleSet{
+		rr: rules,
+	}
+
+	return rs, nil
 }
 
 // AllowAll returns a rule set that allows all actions on all paths.
 func AllowAll() *RuleSet {
-	rs, err := NewRuleSet(context.Background(), []Rule{
+	rs, err := NewRuleSet([]Rule{
 		{
 			Grants: []Grant{
 				{
@@ -166,109 +107,83 @@ func AllowAll() *RuleSet {
 	return rs
 }
 
-func (rs *RuleSet) Verify(ctx context.Context, jwtBytes []byte) (*Token, error) {
-	unparsed := string(jwtBytes)
-	parsed, err := jwt.ParseSigned(unparsed, ValidJOSEAlgs)
-	if err != nil {
-		return nil, err
-	}
+func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
+	var gg []Grant
 
-	var unverified struct {
-		Iss string `json:"iss"`
-	}
-
-	if err := parsed.UnsafeClaimsWithoutVerification(&unverified); err != nil {
-		return nil, err
-	}
-
-	v, known := rs.vv[unverified.Iss]
-	if !known {
-		return nil, errUnknownIssuer
-	}
-
-	verified, err := v.Verify(ctx, unparsed)
-	if err != nil {
-		return nil, err
-	}
-
-	var token Token
-	for _, v := range []any{&token.public, &token.claims} {
-		if err := verified.Claims(v); err != nil {
-			return nil, err
-		}
-	}
-
-	token.valid = true
-	return &token, nil
-}
-
-func (rs *RuleSet) Compile(id Identity) func(Path, Action) bool {
-	var grants []Grant
 	for _, r := range rs.rr {
-		if r.match(id) {
-			grants = append(grants, r.Grants...)
+		if r.SPIFFE != nil && !r.SPIFFE.match(p) {
+			continue
+		}
+
+		for _, g := range r.Grants {
+			gg = append(gg, Grant{
+				Path:    g.Path.Clone(),
+				Actions: slices.Clone(g.Actions),
+			})
 		}
 	}
 
 	return func(p Path, a Action) bool {
-		return slices.ContainsFunc(grants, func(g Grant) bool {
+		return slices.ContainsFunc(gg, func(g Grant) bool {
 			return g.allow(p, a)
 		})
 	}
 }
 
-// AnyToken returns an auth token spec matching any verified token.
-func AnyToken() *TokenSpec {
-	return &TokenSpec{anyToken: true}
-}
+func (ss SPIFFESpec) match(p Principal) bool {
+	if p.Conn == nil {
+		return false
+	}
 
-func (r Rule) match(id Identity) bool {
-	if spec := r.Token; spec != nil {
-		if id.Token == nil {
-			return false
-		}
+	tc, hasConnState := p.Conn.(interface{ ConnectionState() tls.ConnectionState })
+	if !hasConnState {
+		return false
+	}
 
-		return spec.match(*id.Token)
+	// extract a SPIFFE ID from the client cert
+	chains := tc.ConnectionState().VerifiedChains
+	if len(chains) == 0 || len(chains[0]) == 0 {
+		return false
+	}
+
+	cert := chains[0][0]
+	if len(cert.URIs) == 0 || len(cert.URIs) > 1 {
+		return false
+	}
+
+	id := cert.URIs[0]
+	if id.Scheme != "spiffe" || len(id.RawQuery) > 0 || id.ForceQuery || id.RawFragment != "" || id.User != nil {
+		return false
+	}
+
+	var path Path
+	var wild bool
+	var err error
+
+	if raw := strings.TrimPrefix(id.Path, "/"); raw != "" {
+		path, wild, err = ParsePath(raw)
+	}
+
+	if wild || err != nil {
+		return false
+	}
+
+	domain := id.Host
+	if !validTrustDomain.MatchString(domain) {
+		return false
+	}
+
+	if ss.Domain != "" && domain != ss.Domain {
+		return false
+	}
+
+	if !ss.Path.IsZero() && !ss.Path.Match(path) {
+		return false
 	}
 
 	return true
 }
 
-func (ts TokenSpec) match(t Token) bool {
-	if (ts == TokenSpec{}) || !t.valid {
-		return false
-	}
-
-	if ts.anyToken {
-		return true
-	}
-
-	switch {
-	case ts.Issuer != "" && t.public.Issuer != ts.Issuer:
-		return false
-
-	case ts.Audience != "" && !t.public.Audience.Contains(ts.Audience):
-		return false
-
-	case ts.Subject != "" && t.public.Subject != ts.Subject:
-		return false
-
-	default:
-		return true
-	}
-}
-
 func (g Grant) allow(p Path, a Action) bool {
 	return g.Path.Match(p) && slices.Contains(g.Actions, a)
-}
-
-type authTransport struct {
-	Token string
-	http.RoundTripper
-}
-
-func (at authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	r := req.Clone(req.Context())
-	r.Header.Set("authorization", "Bearer "+at.Token)
-	return at.RoundTripper.RoundTrip(r)
 }

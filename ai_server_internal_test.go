@@ -9,10 +9,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 func mustNewServerForTest(t *testing.T) *Server {
@@ -163,59 +159,6 @@ func TestServer_readFrames(t *testing.T) {
 			t.Fatalf("error: %v", err)
 		}
 	})
-
-	t.Run("jwt frame authenticates subsequent sub", func(t *testing.T) {
-		now := time.Unix(1_700_000_000, 0).UTC()
-		issuer := "https://issuer.example"
-		clientID := "client-123"
-
-		key := newAuthTestKey(t, jose.RS256)
-		rs := newInjectedRuleSet([]Rule{{
-			Token: AnyToken(),
-			Grants: []Grant{{
-				Path:    NewPath("private/**"),
-				Actions: []Action{ActionSub},
-			}},
-		}}, map[string]*oidc.IDTokenVerifier{
-			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
-		})
-
-		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-			Issuer:   issuer,
-			Subject:  "user-123",
-			Audience: jwt.Audience{clientID},
-			IssuedAt: jwt.NewNumericDate(now),
-			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-		}, nil)
-
-		wire := appendFrames(
-			newJWTFrame(raw),
-			newSubFrame(1, NewPath("private/feed")),
-		)
-
-		sc := &serverConn{
-			allow: rs.Compile(Identity{}),
-			subs:  map[uint64]*rent{},
-			wbufC: make(chan struct{}, 1),
-			Conn:  newTestConnWithBytes(wire),
-		}
-
-		err = s.readFrames(context.Background(), discardLogger, sc)
-		if !errors.Is(err, io.EOF) {
-			t.Fatalf("error: %v", err)
-		}
-		if sc.token == nil {
-			t.Fatal("token not set")
-		}
-		if _, ok := sc.subs[1]; !ok {
-			t.Fatal("sub not installed")
-		}
-	})
 }
 
 func TestServer_handlePub(t *testing.T) {
@@ -352,117 +295,6 @@ func TestServer_handlePub(t *testing.T) {
 		case got := <-msgC:
 			t.Fatalf("unexpected message: %+v", got)
 		default:
-		}
-	})
-}
-
-func TestServer_handleJWT(t *testing.T) {
-	t.Run("no rules ignores jwt", func(t *testing.T) {
-		s := mustNewServerForTest(t)
-		sc := newBareServerConn(&testConn{})
-
-		if err := s.handleJWT(context.Background(), discardLogger, sc, []byte("jwt")); err != nil {
-			t.Fatal(err)
-		}
-		if sc.token != nil {
-			t.Fatal("unexpected token")
-		}
-	})
-
-	t.Run("verify failure is returned", func(t *testing.T) {
-		rs := newInjectedRuleSet(nil, nil)
-		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sc := newBareServerConn(&testConn{})
-		sc.allow = rs.Compile(Identity{})
-
-		if err := s.handleJWT(context.Background(), discardLogger, sc, []byte("bad")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-
-	t.Run("valid token updates auth state", func(t *testing.T) {
-		now := time.Unix(1_700_000_000, 0).UTC()
-		issuer := "https://issuer.example"
-		clientID := "client-123"
-
-		key := newAuthTestKey(t, jose.RS256)
-		rs := newInjectedRuleSet([]Rule{{
-			Token: AnyToken(),
-			Grants: []Grant{{
-				Path:    NewPath("private/**"),
-				Actions: []Action{ActionPub, ActionSub},
-			}},
-		}}, map[string]*oidc.IDTokenVerifier{
-			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
-		})
-		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		sc := newBareServerConn(&testConn{})
-		sc.allow = rs.Compile(Identity{})
-		if sc.allow(NewPath("private/feed"), ActionSub) {
-			t.Fatal("anonymous access allowed")
-		}
-
-		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-			Issuer:   issuer,
-			Subject:  "user-123",
-			Audience: jwt.Audience{clientID},
-			IssuedAt: jwt.NewNumericDate(now),
-			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-		}, nil)
-
-		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); err != nil {
-			t.Fatal(err)
-		}
-		if sc.token == nil {
-			t.Fatal("token not set")
-		}
-		if !sc.allow(NewPath("private/feed"), ActionSub) {
-			t.Fatal("authenticated access denied")
-		}
-	})
-
-	t.Run("duplicate jwt fails", func(t *testing.T) {
-		now := time.Unix(1_700_000_000, 0).UTC()
-		issuer := "https://issuer.example"
-		clientID := "client-123"
-
-		key := newAuthTestKey(t, jose.RS256)
-		rs := newInjectedRuleSet([]Rule{{
-			Token: AnyToken(),
-			Grants: []Grant{{
-				Path:    NewPath("private/**"),
-				Actions: []Action{ActionSub},
-			}},
-		}}, map[string]*oidc.IDTokenVerifier{
-			issuer: newAuthTestVerifier(issuer, clientID, jose.RS256, key.public, now),
-		})
-		s, err := NewServer(NewRouter(), ServerConfig{Rules: rs})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sc := newBareServerConn(&testConn{})
-		sc.allow = rs.Compile(Identity{})
-
-		raw := signAuthTestToken(t, jose.RS256, key.private, jwt.Claims{
-			Issuer:   issuer,
-			Subject:  "user-123",
-			Audience: jwt.Audience{clientID},
-			IssuedAt: jwt.NewNumericDate(now),
-			Expiry:   jwt.NewNumericDate(now.Add(time.Hour)),
-		}, nil)
-
-		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.handleJWT(context.Background(), discardLogger, sc, raw); !errors.Is(err, errDupJWTFrame) {
-			t.Fatalf("error: %v", err)
 		}
 	})
 }

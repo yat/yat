@@ -3,8 +3,6 @@ package yat
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"errors"
 	"io"
 	"net"
@@ -12,9 +10,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 func TestClient_NewClient(t *testing.T) {
@@ -354,121 +349,6 @@ func TestClient_connect(t *testing.T) {
 		})
 	})
 
-	t.Run("dial failures do not call GetToken", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			c := newBareClient()
-			t.Cleanup(func() {
-				select {
-				case <-c.doneC:
-				default:
-					close(c.doneC)
-				}
-				<-c.connC
-			})
-
-			var tokenCalls atomic.Int32
-			c.config.GetToken = func(context.Context) ([]byte, error) {
-				tokenCalls.Add(1)
-				return nil, errors.New("token failed")
-			}
-
-			var dialCalls atomic.Int32
-			go c.connect(func(context.Context) (net.Conn, error) {
-				dialCalls.Add(1)
-				return nil, errors.New("dial failed")
-			})
-
-			synctest.Wait()
-			time.Sleep(500 * time.Millisecond)
-			synctest.Wait()
-			if got := dialCalls.Load(); got < 2 {
-				t.Fatalf("dial calls: %d < 2", got)
-			}
-			if got := tokenCalls.Load(); got != 0 {
-				t.Fatalf("token calls: %d != 0", got)
-			}
-		})
-	})
-
-	t.Run("token setup failures close conn and retry", func(t *testing.T) {
-		validJWT := mustCompactJWT(t)
-
-		for _, tt := range []struct {
-			name     string
-			getToken func(context.Context) ([]byte, error)
-			firstErr error
-		}{
-			{
-				name: "get token error",
-				getToken: func(context.Context) ([]byte, error) {
-					return nil, errors.New("token failed")
-				},
-			},
-			{
-				name: "invalid token",
-				getToken: func(context.Context) ([]byte, error) {
-					return []byte("jwt"), nil
-				},
-			},
-			{
-				name: "jwt frame write error",
-				getToken: func(context.Context) ([]byte, error) {
-					return validJWT, nil
-				},
-				firstErr: errors.New("write failed"),
-			},
-		} {
-			t.Run(tt.name, func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					c := newBareClient()
-					t.Cleanup(func() {
-						select {
-						case <-c.doneC:
-						default:
-							close(c.doneC)
-						}
-						<-c.connC
-					})
-
-					var tokenCalls atomic.Int32
-					c.config.GetToken = func(ctx context.Context) ([]byte, error) {
-						tokenCalls.Add(1)
-						return tt.getToken(ctx)
-					}
-
-					var dialCalls atomic.Int32
-					connC := make(chan *testConn, 4)
-					go c.connect(func(context.Context) (net.Conn, error) {
-						n := dialCalls.Add(1)
-						tc := &testConn{}
-						if n == 1 && tt.firstErr != nil {
-							tc.writeErr = tt.firstErr
-						}
-						connC <- tc
-						return tc, nil
-					})
-
-					first := <-connC
-					synctest.Wait()
-					if !first.closed.Load() {
-						t.Fatal("first conn not closed")
-					}
-
-					time.Sleep(500 * time.Millisecond)
-					<-connC
-					synctest.Wait()
-
-					if got := tokenCalls.Load(); got < 2 {
-						t.Fatalf("token calls: %d < 2", got)
-					}
-					if got := dialCalls.Load(); got < 2 {
-						t.Fatalf("dial calls: %d < 2", got)
-					}
-				})
-			})
-		}
-	})
-
 	t.Run("serve errors trigger redial loop", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			c := newBareClient()
@@ -497,48 +377,6 @@ func TestClient_connect(t *testing.T) {
 			synctest.Wait()
 			if got := calls.Load(); got < 2 {
 				t.Fatalf("calls: %d < 2", got)
-			}
-		})
-	})
-
-	t.Run("writes token before buffered frames", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			c := newBareClient()
-			t.Cleanup(func() {
-				select {
-				case <-c.doneC:
-				default:
-					close(c.doneC)
-				}
-				<-c.connC
-			})
-
-			token := mustCompactJWT(t)
-			c.config.GetToken = func(context.Context) ([]byte, error) { return token, nil }
-
-			subPath := NewPath("chat/auth")
-			if _, err := c.Subscribe(Sel{Path: subPath}, func(Msg) {}); err != nil {
-				t.Fatal(err)
-			}
-
-			connC := make(chan *testConn, 4)
-			go c.connect(func(context.Context) (net.Conn, error) {
-				tc := &testConn{}
-				connC <- tc
-				return tc, nil
-			})
-
-			first := <-connC
-			synctest.Wait()
-			if got, want := first.wrote(), appendFrames(newJWTFrame(token), newSubFrame(1, subPath)); !bytes.Equal(got, want) {
-				t.Fatalf("first write: %x != %x", got, want)
-			}
-
-			time.Sleep(500 * time.Millisecond)
-			second := <-connC
-			synctest.Wait()
-			if got, want := second.wrote(), appendFrames(newJWTFrame(token), newSubFrame(1, subPath)); !bytes.Equal(got, want) {
-				t.Fatalf("second write: %x != %x", got, want)
 			}
 		})
 	})
@@ -581,28 +419,4 @@ func TestClient_connect(t *testing.T) {
 			}
 		})
 	})
-}
-
-func mustCompactJWT(t *testing.T) []byte {
-	t.Helper()
-
-	_, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.EdDSA,
-		Key:       private,
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	raw, err := jwt.Signed(signer).Claims(jwt.Claims{Issuer: "test"}).Serialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return []byte(raw)
 }

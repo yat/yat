@@ -47,7 +47,6 @@ func run(ctx context.Context, args []string) error {
 	clientConfig := &ClientConfig{
 		SharedConfig: sharedConfig,
 		Server:       os.Getenv("YAT_SERVER"),
-		JWTFile:      os.Getenv("YAT_JWT_FILE"),
 	}
 
 	if clientConfig.Server == "" {
@@ -58,7 +57,6 @@ func run(ctx context.Context, args []string) error {
 	flags.Text(&sharedConfig.LogLevel, "log-level")
 	flags.String(&sharedConfig.TLSDir, "tls-dir")
 	flags.String(&clientConfig.Server, "server")
-	flags.String(&clientConfig.JWTFile, "jwt")
 
 	args, err := flags.Parse(args)
 	if err != nil {

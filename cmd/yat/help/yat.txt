@@ -17,9 +17,6 @@ Client Flags:
       Address of the Yat server.
       The default port is 443.
 
-  -jwt PATH ($YAT_JWT_FILE)
-      Path to a file containing a JSON Web Token.
-
 Shared Flags:
 
   -tls-dir PATH ($YAT_TLS_DIR)

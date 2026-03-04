@@ -5,15 +5,13 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"net"
-	"os"
 
 	"yat.io/yat"
 )
 
 type ClientConfig struct {
 	*SharedConfig
-	Server  string
-	JWTFile string
+	Server string
 }
 
 const clientALPN = "y0"
@@ -50,12 +48,6 @@ func (cc ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat
 
 	cfg := yat.ClientConfig{
 		Logger: logger,
-	}
-
-	if cc.JWTFile != "" {
-		cfg.GetToken = func(context.Context) ([]byte, error) {
-			return os.ReadFile(cc.JWTFile)
-		}
 	}
 
 	return yat.NewClient(dial, cfg)

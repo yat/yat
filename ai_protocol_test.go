@@ -59,10 +59,10 @@ func Test_readFrameHdr(t *testing.T) {
 
 func Test_appendFrameBytes(t *testing.T) {
 	prefix := []byte{0xaa, 0xbb}
-	body := []byte("jwt")
+	body := []byte("pub")
 
-	got := appendFrameBytes(bytes.Clone(prefix), jwtFrameType, body)
-	want := appendFrame(bytes.Clone(prefix), jwtFrameType, func(b []byte) []byte {
+	got := appendFrameBytes(bytes.Clone(prefix), pubFrameType, body)
+	want := appendFrame(bytes.Clone(prefix), pubFrameType, func(b []byte) []byte {
 		return append(b, body...)
 	})
 

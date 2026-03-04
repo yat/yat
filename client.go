@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
-	"github.com/go-jose/go-jose/v4"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 	"yat.io/yat/api"
@@ -42,10 +41,6 @@ type ClientConfig struct {
 	// Logger is where the client writes logs.
 	// If it is nil, client logs are discarded.
 	Logger *slog.Logger
-
-	// GetToken, if set, is called by the client after connecting.
-	// The returned JWT is sent to the server before any buffered ops.
-	GetToken TokenFunc
 }
 
 type DialFunc func(context.Context) (net.Conn, error)
@@ -268,30 +263,8 @@ func (c *Client) connect(dial DialFunc) {
 
 		dctx, cancel := context.WithTimeout(dctx, 3*time.Second)
 		conn, err := dial(dctx)
-		ndial++
-
-		// if the client is configured for token auth,
-		// write a jwtFrame before any existing buffer
-		if err == nil && c.config.GetToken != nil {
-			var jwtBytes []byte
-			if jwtBytes, err = c.config.GetToken(dctx); err == nil {
-				if _, err = jose.ParseSignedCompact(string(jwtBytes), ValidJOSEAlgs); err == nil {
-					jwtFrame := appendFrameBytes(nil, jwtFrameType, jwtBytes)
-					deadline, _ := dctx.Deadline()
-					if err = conn.SetWriteDeadline(deadline); err == nil {
-						if _, err = conn.Write(jwtFrame); err == nil {
-							conn.SetWriteDeadline(time.Time{})
-						}
-					}
-				}
-			}
-
-			if err != nil {
-				conn.Close()
-			}
-		}
-
 		cancel()
+		ndial++
 
 		if err != nil {
 			c.config.Logger.ErrorContext(ctx, "dial failed", "error", err)

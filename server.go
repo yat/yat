@@ -36,12 +36,8 @@ type serverConn struct {
 	mu sync.Mutex
 
 	// allow decides whether client actions are allowed.
-	// It is initially compiled when a connection is accepted
-	// and recompiled the first time the conn handles a JWT frame.
+	// It is initially compiled when a connection is accepted.
 	allow func(Path, Action) bool
-
-	// token is set the first time the conn handles a JWT frame.
-	token *Token
 
 	subs  map[uint64]*rent
 	wbufs net.Buffers
@@ -113,7 +109,7 @@ func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Co
 	}
 
 	if s.config.Rules != nil {
-		sc.allow = s.config.Rules.Compile(Identity{
+		sc.allow = s.config.Rules.Compile(Principal{
 			Conn: conn,
 		})
 	}
@@ -149,9 +145,6 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 		var handle func(context.Context, *slog.Logger, *serverConn, []byte) error
 
 		switch hdr.Type() {
-		case jwtFrameType:
-			handle = s.handleJWT
-
 		case pubFrameType:
 			handle = s.handlePub
 
@@ -181,34 +174,6 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 			return err
 		}
 	}
-}
-
-func (s *Server) handleJWT(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
-	if s.config.Rules == nil {
-		return nil
-	}
-
-	token, err := s.config.Rules.Verify(ctx, body)
-	if err != nil {
-		return err
-	}
-
-	allow := s.config.Rules.Compile(Identity{
-		Conn:  conn.Conn,
-		Token: token,
-	})
-
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
-
-	if conn.token != nil {
-		return errDupJWTFrame
-	}
-
-	conn.token = token
-	conn.allow = allow
-
-	return nil
 }
 
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
