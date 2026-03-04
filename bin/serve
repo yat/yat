@@ -1,4 +1,7 @@
 #!/bin/sh
 # run the local dev server
 
-exec go tool logfmt ./yat serve -log-level debug -tls-dir tmp/seed -allow-all
+exec go tool logfmt ./yat serve \
+  -log-level debug \
+  -tls-dir tmp/seed \
+  -config tmp/seed/rules.yaml

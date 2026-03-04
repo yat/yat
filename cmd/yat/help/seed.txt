@@ -1,4 +1,4 @@
-Seed generates local credentials for development and testing.
+Seed generates local config for development and testing.
 
 Usage:
 
@@ -14,3 +14,6 @@ Generated Files:
 
   ca.crt
       PEM-encoded signing certificate.
+
+  rules.yaml
+      Server rules allowing all client operations.

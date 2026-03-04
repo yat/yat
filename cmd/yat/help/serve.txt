@@ -9,8 +9,8 @@ Flags:
   -bind localhost:25120
       The address the server should bind.
 
-  -allow-all
-      If this flag is set, the server allows all operations.
-      Any configured rules are parsed, but not enforced.
+  -config FILE
+      Path to a JSON or YAML configuration file.
+      This flag can be set more than once.
 
 The -tls-dir flag or YAT_TLS_DIR environment variable must be set.

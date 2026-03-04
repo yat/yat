@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 
+	"github.com/goccy/go-yaml"
 	"golang.org/x/net/http2"
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
@@ -15,13 +18,27 @@ import (
 
 type ServeCmd struct {
 	*SharedConfig
-	BindAddr string
-	AllowAll bool
+	BindAddr    string
+	ConfigFiles []string
+}
+
+type serverConfig struct {
+	serverConfigHeader
+	serverConfigRuleSet
+}
+
+type serverConfigHeader struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+}
+
+type serverConfigRuleSet struct {
+	Rules []yat.Rule `json:"rules"`
 }
 
 func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
-	flags.Bool(&cmd.AllowAll, "allow-all")
+	flags.Strings(&cmd.ConfigFiles, "config")
 }
 
 func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
@@ -48,9 +65,21 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 	go td.Watch(ctx, logger)
 
-	var rules *yat.RuleSet
-	if cmd.AllowAll {
-		rules = yat.AllowAll()
+	var cfg serverConfig
+	for _, name := range cmd.ConfigFiles {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			return err
+		}
+
+		if err := loadServerConfig(&cfg, data); err != nil {
+			return fmt.Errorf("load %s: %v", name, err)
+		}
+	}
+
+	rs, err := yat.NewRuleSet(cfg.Rules)
+	if err != nil {
+		return err
 	}
 
 	l, err := tls.Listen("tcp", cmd.BindAddr, td.ServerConfig())
@@ -60,7 +89,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 	ys, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
 		Logger: logger,
-		Rules:  rules,
+		Rules:  rs,
 	})
 
 	if err != nil {
@@ -98,4 +127,34 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	return err
+}
+
+func loadServerConfig(cfg *serverConfig, data []byte) error {
+	// only the first doc for now
+	var hdr serverConfigHeader
+	if err := yaml.Unmarshal(data, &hdr); err != nil {
+		return err
+	}
+
+	if hdr.APIVersion != "yat.io/v1alpha1" {
+		return errors.New("invalid apiVersion")
+	}
+
+	if hdr.Kind == "" {
+		return errors.New("missing kind")
+	}
+
+	switch hdr.Kind {
+	case "RuleSet":
+		var ruleSet serverConfigRuleSet
+		if err := yaml.Unmarshal(data, &ruleSet); err != nil {
+			return err
+		}
+		cfg.Rules = append(cfg.Rules, ruleSet.Rules...)
+
+	default:
+		return fmt.Errorf("unknown type %s.%s", hdr.APIVersion, hdr.Kind)
+	}
+
+	return nil
 }

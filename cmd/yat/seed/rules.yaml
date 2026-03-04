@@ -1,0 +1,9 @@
+apiVersion: yat.io/v1alpha1
+kind: RuleSet
+
+rules:
+  - spiffe:
+      domain: local
+    grants:
+      - path: "**"
+        actions: [pub, sub]

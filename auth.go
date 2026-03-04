@@ -15,19 +15,19 @@ type RuleSet struct {
 
 // A Rule containing only Grants applies to all principals.
 type Rule struct {
-	SPIFFE *SPIFFESpec
-	Grants []Grant
+	SPIFFE *SPIFFESpec `json:"spiffe"`
+	Grants []Grant     `json:"grants"`
 }
 
 // SPIFFESpec requires a principal to have a matching SPIFFE ID.
 type SPIFFESpec struct {
-	Domain string
-	Path   Path
+	Domain string `json:"domain"`
+	Path   Path   `json:"path"`
 }
 
 type Grant struct {
-	Path    Path
-	Actions []Action
+	Path    Path     `json:"path"`
+	Actions []Action `json:"actions"`
 }
 
 // Action is the set of possible client actions.

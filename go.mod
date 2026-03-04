@@ -4,9 +4,10 @@ go 1.26.0
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3
+	github.com/goccy/go-yaml v1.19.2
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260213171211-a408498e5541
-	golang.org/x/net v0.43.0
+	golang.org/x/net v0.47.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/protobuf v1.36.11
 )
@@ -30,8 +31,8 @@ require (
 	github.com/spf13/afero v1.14.0 // indirect
 	github.com/spf13/cast v1.9.2 // indirect
 	github.com/tdewolff/parse/v2 v2.8.3 // indirect
-	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 )
 
 tool github.com/air-verse/air
