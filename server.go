@@ -28,7 +28,6 @@ type ServerConfig struct {
 
 	// Rules determine which client operations are allowed.
 	// If it is nil, all client operations are denied.
-	// Set it to [NoRules] to allow anonymous operations.
 	Rules *RuleSet
 }
 
@@ -101,6 +100,13 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
+	if tc, ok := conn.(interface{ HandshakeContext(context.Context) error }); ok {
+		if err := tc.HandshakeContext(ctx); err != nil {
+			conn.Close()
+			return err
+		}
+	}
+
 	sc := &serverConn{
 		allow: func(Path, Action) bool { return false },
 		subs:  map[uint64]*rent{},

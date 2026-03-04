@@ -42,11 +42,11 @@ type Principal struct {
 	Conn net.Conn
 }
 
-// spiffe://trust-domain/workload
+// SPIFFE ID is spiffe://trust-domain[/path]
 var validTrustDomain = regexp.MustCompile("^[-_.a-z0-9]+$")
 
 // NewRuleSet returns a new rule set based on the given rules.
-// It returns an error if the rules are invalid.
+// Changing the rules after calling NewRuleSet is not allowed.
 func NewRuleSet(rules []Rule) (*RuleSet, error) {
 	for i, r := range rules {
 		if r.SPIFFE != nil {
@@ -107,6 +107,8 @@ func AllowAll() *RuleSet {
 	return rs
 }
 
+// Compile compiles an allow function for the given principal.
+// The functions returns true if an action is allowed for a particular path.
 func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 	var gg []Grant
 
