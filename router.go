@@ -3,7 +3,9 @@ package yat
 import (
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"sync"
+	"sync/atomic"
 )
 
 // Router delivers messages to interested subscribers.
@@ -29,6 +31,11 @@ type rnode struct {
 type rent struct {
 	Sel Sel
 	Do  func(Msg, []byte)
+	n   atomic.Uint64
+
+	ltd   atomic.Bool
+	doneC chan struct{}
+	unsub func()
 }
 
 // rop is a router operation.
@@ -47,33 +54,18 @@ const (
 
 var errNilCallback = errors.New("nil callback func")
 
-// NewRouter returns a new router.
-func NewRouter() *Router {
-	return &Router{}
-}
-
 // Pub publishes a copy of the message.
 func (rr *Router) Publish(m Msg) error {
-	if m.Path.IsZero() {
-		return errEmptyPath
+	if err := validateMsg(m); err != nil {
+		return err
 	}
 
-	if isWild(m.Path) {
-		return errWildPath
-	}
-
-	if isWild(m.Inbox) {
-		return errWildInbox
-	}
-
-	ee := rr.route(m)
+	ee := rr.route(m.Path)
 	if len(ee) == 0 {
 		return nil
 	}
 
-	// make a deep copy
-	raw := appendMsgFields(nil, m)
-	m = aliasMsgFields(raw)
+	m, raw := cloneMsg(m)
 	rr.deliver(ee, m, raw)
 
 	return nil
@@ -82,12 +74,12 @@ func (rr *Router) Publish(m Msg) error {
 // Subscribe arranges for the callback func to be called in a new goroutine
 // when a selected message is published.
 //
-// Call the returned unsub func to unsubscribe.
+// Call [Sub.Cancel] to unsubscribe.
 //
 // The callback func must not retain or modify delivered messages.
-func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error) {
-	if sel.Path.IsZero() {
-		return nil, errEmptyPath
+func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
+	if err := validateSel(sel); err != nil {
+		return nil, err
 	}
 
 	if callback == nil {
@@ -99,12 +91,19 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err erro
 		Do: func(m Msg, _ []byte) {
 			go callback(m)
 		},
+
+		doneC: make(chan struct{}),
 	}
 
-	rr.update(rop{ropIns, e})
-	unsub = sync.OnceFunc(func() { rr.update(rop{ropDel, e}) })
+	e.unsub = sync.OnceFunc(func() {
+		close(e.doneC)
+		if !e.ltd.Load() {
+			rr.update(rop{ropDel, e})
+		}
+	})
 
-	return
+	rr.update(rop{ropIns, e})
+	return e, nil
 }
 
 func (rr *Router) update(batch ...rop) {
@@ -126,9 +125,9 @@ func (rr *Router) update(batch ...rop) {
 	}
 }
 
-func (rr *Router) route(m Msg) []*rent {
+func (rr *Router) route(path Path) []*rent {
 	rr.mu.RLock()
-	ee := rr.tree.Match(m.Path)
+	ee := rr.tree.Match(path)
 	rr.mu.RUnlock()
 
 	if len(ee) == 0 {
@@ -139,13 +138,46 @@ func (rr *Router) route(m Msg) []*rent {
 		ee[i], ee[j] = ee[j], ee[i]
 	})
 
-	return ee
+	var gg map[Group]struct{}
+	return slices.DeleteFunc(ee, func(e *rent) bool {
+		if g := e.Sel.Group; g.String() != "" { // FIX: IsZero
+			if _, filled := gg[g]; filled {
+				return true
+			}
+
+			if gg == nil {
+				gg = map[Group]struct{}{}
+			}
+
+			// fill the slot
+			gg[g] = struct{}{}
+		}
+
+		return false
+	})
 }
 
 func (rr *Router) deliver(ee []*rent, m Msg, raw []byte) {
+	var ops []rop
 	for _, e := range ee {
-		e.Do(m, raw)
+		n := e.n.Add(1)
+		lim := uint64(e.Sel.Limit)
+
+		if lim == 0 || n <= lim {
+			e.Do(m, raw)
+		}
+
+		if lim > 0 && n >= lim {
+			ops = append(ops, rop{ropDel, e})
+		}
 	}
+
+	for _, op := range ops {
+		op.Entry.ltd.Store(true)
+		op.Entry.unsub()
+	}
+
+	rr.update(ops...)
 }
 
 // Ins inserts e into the tree.
@@ -243,4 +275,12 @@ func (n *rnode) match(ee *[]*rent, p Path) {
 	if c, ok := n.children["*"]; ok {
 		c.match(ee, cdr)
 	}
+}
+
+func (e *rent) Cancel() {
+	e.unsub()
+}
+
+func (e *rent) Done() <-chan struct{} {
+	return e.doneC
 }

@@ -41,7 +41,7 @@ func TestRouterVsPathMatch(t *testing.T) {
 
 			var rmatch bool
 			synctest.Test(t, func(t *testing.T) {
-				rr := yat.NewRouter()
+				rr := new(yat.Router)
 
 				var n atomic.Uint64
 				_, err := rr.Subscribe(yat.Sel{Path: pat}, func(m yat.Msg) {
@@ -79,24 +79,24 @@ func TestRouterFanout(t *testing.T) {
 			nmsgPerPub  = 200
 		)
 
-		rr := yat.NewRouter()
+		rr := new(yat.Router)
 
 		pathAB := mustPath("a/b")
 		pathAC := mustPath("a/c")
 		pathXY := mustPath("x/y")
 
-		addSubs := func(sel yat.Sel, n int, handler func(yat.Msg)) []func() {
+		addSubs := func(sel yat.Sel, n int, handler func(yat.Msg)) []yat.Sub {
 			t.Helper()
 
-			unsubs := make([]func(), 0, n)
+			subs := make([]yat.Sub, 0, n)
 			for range n {
-				unsub, err := rr.Subscribe(sel, handler)
+				sub, err := rr.Subscribe(sel, handler)
 				if err != nil {
 					t.Fatalf("subscribe %q: %v", sel.Path.String(), err)
 				}
-				unsubs = append(unsubs, unsub)
+				subs = append(subs, sub)
 			}
-			return unsubs
+			return subs
 		}
 
 		countingHandler := func(counter *atomic.Uint64) func(yat.Msg) {
@@ -112,14 +112,14 @@ func TestRouterFanout(t *testing.T) {
 			negativeCount atomic.Uint64
 		)
 
-		var unsubs []func()
-		unsubs = append(unsubs, addSubs(yat.Sel{Path: pathAB}, nfanoutSubs, countingHandler(&fanoutCount))...)
-		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("a/*")}, nwildSubs, countingHandler(&wildcardCount))...)
-		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("**")}, nallSubs, countingHandler(&allCount))...)
-		unsubs = append(unsubs, addSubs(yat.Sel{Path: mustPath("no/match")}, nnegSubs, countingHandler(&negativeCount))...)
+		var subs []yat.Sub
+		subs = append(subs, addSubs(yat.Sel{Path: pathAB}, nfanoutSubs, countingHandler(&fanoutCount))...)
+		subs = append(subs, addSubs(yat.Sel{Path: mustPath("a/*")}, nwildSubs, countingHandler(&wildcardCount))...)
+		subs = append(subs, addSubs(yat.Sel{Path: mustPath("**")}, nallSubs, countingHandler(&allCount))...)
+		subs = append(subs, addSubs(yat.Sel{Path: mustPath("no/match")}, nnegSubs, countingHandler(&negativeCount))...)
 		t.Cleanup(func() {
-			for _, unsub := range unsubs {
-				unsub()
+			for _, sub := range subs {
+				sub.Cancel()
 			}
 		})
 
@@ -164,7 +164,7 @@ func TestRouter_Publish(t *testing.T) {
 
 	for name, msg := range bad {
 		t.Run(name, func(t *testing.T) {
-			rr := yat.NewRouter()
+			rr := new(yat.Router)
 			if err := rr.Publish(msg); err == nil {
 				t.Fatal("no error")
 			}
@@ -180,7 +180,7 @@ func TestRouter_Subscribe(t *testing.T) {
 
 	for name, sel := range bad {
 		t.Run(name, func(t *testing.T) {
-			rr := yat.NewRouter()
+			rr := new(yat.Router)
 			if _, err := rr.Subscribe(sel, func(m yat.Msg) {}); err == nil {
 				t.Fatal("no error")
 			}
@@ -188,7 +188,7 @@ func TestRouter_Subscribe(t *testing.T) {
 	}
 
 	t.Run("nil handler", func(t *testing.T) {
-		rr := yat.NewRouter()
+		rr := new(yat.Router)
 		if _, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 			t.Error("no error")
 		}

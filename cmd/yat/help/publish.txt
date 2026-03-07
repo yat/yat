@@ -7,7 +7,7 @@ Usage:
 Flags:
 
   -file, -f /dev/stdin
-      Read message data from this file.
+      Read message data from a file.
       This flag is ignored if -empty is set.
 
   -empty, -e

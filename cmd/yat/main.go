@@ -86,8 +86,10 @@ func run(ctx context.Context, args []string) error {
 			File:         "/dev/stdin",
 		}
 
-	case "seed":
-		cmd = &SeedCmd{}
+	case "subscribe", "sub":
+		cmd = &SubscribeCmd{
+			ClientConfig: clientConfig,
+		}
 
 	case "serve", "server":
 		cmd = &ServeCmd{
@@ -95,11 +97,8 @@ func run(ctx context.Context, args []string) error {
 			BindAddr:     "localhost:25120",
 		}
 
-	case "subscribe", "sub":
-		cmd = &SubscribeCmd{
-			ClientConfig: clientConfig,
-			Format:       "raw",
-		}
+	case "seed":
+		cmd = &SeedCmd{}
 
 	default:
 		return fmt.Errorf("yat %s: unknown command", name)

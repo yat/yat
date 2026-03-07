@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
-	"strings"
+	"time"
 
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
@@ -13,17 +13,23 @@ import (
 
 type SubscribeCmd struct {
 	*ClientConfig
-	Format string
+	Group    string
+	Limit    int
+	Duration time.Duration
+	Raw      bool
 }
 
 func (cmd *SubscribeCmd) AddFlags(flags *flagset.Set) {
-	flags.String(&cmd.Format, "format")
+	flags.String(&cmd.Group, "group", "g")
+	flags.Int(&cmd.Limit, "limit", "n")
+	flags.Duration(&cmd.Duration, "duration")
+	flags.Bool(&cmd.Raw, "raw")
 }
 
 func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
-	if len(args) == 0 {
+	if len(args) != 1 {
 		return usageError{
-			Usage: "yat subscribe PATH ...",
+			Usage: "yat subscribe PATH",
 			Topic: "subscribe",
 		}
 	}
@@ -37,12 +43,10 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 
 	callback := func(m yat.Msg) {
 		var err error
-		switch strings.ToLower(cmd.Format) {
-		case "json", "jsonl":
-			err = json.NewEncoder(os.Stdout).Encode(m)
-
-		default:
+		if cmd.Raw {
 			_, err = os.Stdout.Write(m.Data)
+		} else {
+			err = json.NewEncoder(os.Stdout).Encode(m)
 		}
 
 		if err != nil {
@@ -50,17 +54,39 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		}
 	}
 
-	for _, arg := range args {
-		path, _, err := yat.ParsePath(arg)
-		if err != nil {
-			return err
-		}
-
-		if _, err := yc.Subscribe(yat.Sel{Path: path}, callback); err != nil {
-			return err
-		}
+	path, _, err := yat.ParsePath(args[0])
+	if err != nil {
+		return err
 	}
 
-	<-ctx.Done()
-	return nil
+	sel := yat.Sel{
+		Path:  path,
+		Limit: cmd.Limit,
+	}
+
+	if cmd.Group != "" {
+		sel.Group = yat.NewGroup(cmd.Group)
+	}
+
+	if cmd.Duration > 0 {
+		var cancel func()
+		ctx, cancel = context.WithTimeout(ctx, cmd.Duration)
+		defer cancel()
+	}
+
+	sub, err := yc.Subscribe(sel, callback)
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil
+		}
+		return ctx.Err()
+
+	case <-sub.Done():
+		return nil
+	}
 }

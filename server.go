@@ -183,26 +183,26 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 }
 
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
-	_, msg, raw, err := parseMsg(body)
+	fields, raw, err := parseFields(body)
 	if err != nil {
 		return err
 	}
 
+	if err := validatePubFrame(fields); err != nil {
+		return err
+	}
+
 	var (
-		pathAllowed  = conn.allow(msg.Path, ActionPub)
-		inboxAllowed = msg.Inbox.IsZero() || conn.allow(msg.Inbox, ActionSub)
+		pathOK  = conn.allow(fields.Msg.Path, ActionPub)
+		inboxOK = fields.Msg.Inbox.IsZero() || conn.allow(fields.Msg.Inbox, ActionSub)
 	)
 
-	if !pathAllowed || !inboxAllowed {
-		if logger.Enabled(ctx, slog.LevelDebug-1) {
-			logger.Log(ctx, slog.LevelDebug-1, "publish denied", "path", msg.Path, "inbox", msg.Inbox)
-		}
-
+	if !pathOK || !inboxOK {
 		return nil
 	}
 
-	ee := s.router.route(msg)
-	s.router.deliver(ee, msg, raw)
+	ee := s.router.route(fields.Path)
+	s.router.deliver(ee, fields.Msg, raw)
 
 	return nil
 }
@@ -219,42 +219,58 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	if !conn.allow(p, ActionSub) {
-		if logger.Enabled(ctx, slog.LevelDebug-1) {
-			logger.Log(ctx, slog.LevelDebug-1, "subscribe denied", "path", p)
-		}
+	if len(f.Group) > MaxGroupLen {
+		return errLongGroup
+	}
 
+	if !conn.allow(p, ActionSub) {
 		return nil
 	}
 
-	e := &rent{
-		Sel: Sel{
-			Path: p,
-		},
+	sel := Sel{
+		Path: p,
+	}
 
-		Do: func(_ Msg, raw []byte) {
-			s.deliver(conn, num, raw)
-		},
+	if f.Group != nil {
+		sel.Group = NewGroup(string(f.Group))
+	}
+
+	if limit := max(0, min(f.Limit, MaxLimit)); limit > 0 {
+		sel.Limit = int(limit)
+	}
+
+	if err := validateSel(sel); err != nil {
+		return err
 	}
 
 	conn.mu.Lock()
-	old := conn.subs[num]
 
-	// selected path is immutable
-	if old != nil && !p.Equal(old.Sel.Path) {
+	if _, dupe := conn.subs[num]; dupe {
 		conn.mu.Unlock()
-		return errSelPath
+		return errDuplicateSub
 	}
+
+	e := &rent{
+		Sel: sel,
+		Do: func(_ Msg, raw []byte) {
+			s.msg(conn, num, raw)
+		},
+	}
+
+	// called by the router
+	// to clean up limited subs
+	e.unsub = sync.OnceFunc(func() {
+		conn.mu.Lock()
+		if conn.subs[num] == e {
+			delete(conn.subs, num)
+		}
+		conn.mu.Unlock()
+	})
 
 	conn.subs[num] = e
 	conn.mu.Unlock()
 
-	var ops []rop
-	if old != nil {
-		ops = append(ops, rop{ropDel, old})
-	}
-	ops = append(ops, rop{ropIns, e})
-	s.router.update(ops...)
+	s.router.update(rop{ropIns, e})
 
 	return nil
 }
@@ -308,25 +324,28 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 	}
 }
 
-func (s *Server) deliver(conn *serverConn, subNum uint64, msgFields []byte) {
+// msg appends a msg frame to the conn's write buffer list.
+func (s *Server) msg(conn *serverConn, subNum uint64, rawFields []byte) error {
 	prefix := []byte{0, 0, 0, msgFrameType}
 	prefix = protowire.AppendTag(prefix, numField, protowire.VarintType)
 	prefix = protowire.AppendVarint(prefix, subNum)
 
 	// frameHdr.Len
-	n := len(prefix) + len(msgFields)
+	n := len(prefix) + len(rawFields)
 	prefix[0] = byte(n)
 	prefix[1] = byte(n >> 8)
 	prefix[2] = byte(n >> 16)
 
 	conn.mu.Lock()
-	conn.wbufs = append(conn.wbufs, prefix, msgFields)
+	conn.wbufs = append(conn.wbufs, prefix, rawFields)
 	conn.mu.Unlock()
 
 	select {
 	case conn.wbufC <- struct{}{}:
 	default:
 	}
+
+	return nil
 }
 
 func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serverConn) error {

@@ -7,6 +7,8 @@ import (
 	"unsafe"
 
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
+	"yat.io/yat/api"
 )
 
 const (
@@ -21,14 +23,20 @@ const (
 
 type frameHdr uint32
 
+// sharedFields captures all the fields parsed by [parseFields].
+type sharedFields struct {
+	Num uint64
+	Msg
+}
+
 const frameHdrLen = 4
 
 const (
 	_              = 0
 	_              = 1
 	pubFrameType   = 2
-	subFrameType   = 3
-	unsubFrameType = 4
+	subFrameType   = 4
+	unsubFrameType = 5
 	msgFrameType   = 16
 )
 
@@ -40,12 +48,14 @@ const (
 )
 
 var (
-	errShortFrame = errors.New("short frame")
-	errLongFrame  = errors.New("long frame")
-	errEmptyPath  = errors.New("empty path")
-	errSelPath    = errors.New("selector path changed")
-	errWildPath   = errors.New("wildcard path")
-	errWildInbox  = errors.New("wildcard inbox")
+	errShortFrame   = errors.New("short frame")
+	errLongFrame    = errors.New("long frame")
+	errEmptyPath    = errors.New("empty path")
+	errWildPath     = errors.New("wildcard path")
+	errWildInbox    = errors.New("wildcard inbox")
+	errLongGroup    = errors.New("long group")
+	errLimitRange   = errors.New("limit out of range")
+	errDuplicateSub = errors.New("duplicate subscription number")
 )
 
 func (h frameHdr) Len() int {
@@ -63,6 +73,26 @@ func (h frameHdr) Type() byte {
 func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
 	_, err = io.ReadFull(r, (*(*[4]byte)(unsafe.Pointer(&hdr)))[:])
 	return
+}
+
+func appendSubFrame(buf []byte, num uint64, sel Sel) []byte {
+	sf := &api.SubFrame{
+		Num:  num,
+		Path: sel.Path.p,
+	}
+
+	if sel.Group != (Group{}) {
+		sf.Group = []byte(sel.Group.String())
+	}
+
+	if limit := max(0, min(sel.Limit, MaxLimit)); limit > 0 {
+		sf.Limit = int64(limit)
+	}
+
+	return appendFrame(buf, subFrameType, func(b []byte) []byte {
+		b, _ = proto.MarshalOptions{}.MarshalAppend(b, sf)
+		return b
+	})
 }
 
 // appendFrame appends a frame header and body to buf and returns the extended slice.
@@ -87,112 +117,105 @@ func appendFrameBytes(buf []byte, typ byte, body []byte) []byte {
 	})
 }
 
-// parseMsg parses a proto into a message.
-// It returns the parsed num field, parsed message, and its raw backing proto.
-// The returned message is valid.
-//
-// The given body is compacted, retaining only fields 2 (path), 3 (data), and 4 (inbox).
-// If field 1 (num) is encountered, its value is returned.
-// The returned message and its raw backing slice alias the body.
-//
-// This function does not allocate.
-func parseMsg(body []byte) (num uint64, msg Msg, raw []byte, err error) {
-	out := 0
-	raw = body[:0]
+// cloneMsg returns a deep copy of the message.
+func cloneMsg(m Msg) (Msg, []byte) {
+	raw := appendMsgFields(nil, m)
+	return aliasMsgFields(raw), raw
+}
 
-	for in := 0; in < len(body); {
-		fn, typ, nt := protowire.ConsumeTag(body[in:])
-		if nt < 0 {
-			err = protowire.ParseError(nt)
+// parseFields parses a raw proto and extracts shared fields:
+// num (1; varint), path (2; bytes), data (3; bytes), inbox (4; bytes), and status (5; varint).
+// It also destructively cleans the raw proto, preserving only fields 2, 3, and 4.
+// The returned fields.Msg and msg bytes alias the raw proto.
+func parseFields(raw []byte) (fields sharedFields, msg []byte, err error) {
+	in, out := 0, 0
+	msg = raw[:0]
+
+	// clean the proto
+	for in < len(raw) {
+		fnum, ftyp, nt := protowire.ConsumeTag(raw[in:])
+		if err = protowire.ParseError(nt); err != nil {
 			return
 		}
 
-		if fn == numField {
-			if typ != protowire.VarintType {
-				err = errors.New("invalid field type")
+		switch fnum {
+		case numField:
+			if ftyp != protowire.VarintType {
+				err = errors.New("not a varint")
 				return
 			}
 
-			v, nv := protowire.ConsumeVarint(body[in+nt:])
-			if nv < 0 {
-				err = protowire.ParseError(nv)
+			num, nv := protowire.ConsumeVarint(raw[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
 				return
 			}
-			num = v
+
+			fields.Num = num
+			in += nt + nv
+
+		case pathField, dataField, inboxField:
+			if ftyp != protowire.BytesType {
+				err = errors.New("not bytes")
+				return
+			}
+
+			_, nv := protowire.ConsumeBytes(raw[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
+				return
+			}
+
+			n := nt + nv
+			if out != in {
+				copy(raw[out:], raw[in:in+n])
+			}
+
+			out += n
+			in += n
+			msg = raw[:out]
+
+		default:
+			nv := protowire.ConsumeFieldValue(fnum, ftyp, raw[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
+				return
+			}
 
 			in += nt + nv
-			continue
 		}
-
-		if fn != pathField && fn != dataField && fn != inboxField {
-			nval := protowire.ConsumeFieldValue(fn, typ, body[in+nt:])
-			if nval < 0 {
-				err = protowire.ParseError(nval)
-				return
-			}
-
-			in += nt + nval
-			continue
-		}
-
-		if typ != protowire.BytesType {
-			err = errors.New("invalid field type")
-			return
-		}
-
-		_, nv := protowire.ConsumeBytes(body[in+nt:])
-		if nv < 0 {
-			err = protowire.ParseError(nv)
-			return
-		}
-
-		n := nt + nv
-		if out != in {
-			copy(body[out:], body[in:in+n])
-		}
-
-		out += n
-		in += n
-		raw = body[:out]
 	}
 
-	for clean := raw; len(clean) > 0; {
-		fn, _, nt := protowire.ConsumeTag(clean)
+	// parse the msg fields
+	for clean := msg; len(clean) > 0; {
+		fn, typ, nt := protowire.ConsumeTag(clean)
+		if err = protowire.ParseError(nt); err != nil {
+			return
+		}
+		if typ != protowire.BytesType {
+			err = errors.New("not bytes")
+			return
+		}
+
 		v, nv := protowire.ConsumeBytes(clean[nt:])
+		if err = protowire.ParseError(nv); err != nil {
+			return
+		}
 		clean = clean[nt+nv:]
 
 		switch fn {
 		case pathField:
-			var wild bool
-			msg.Path, wild, err = ParsePath(v)
+			fields.Msg.Path, _, err = ParsePath(v)
 			if err != nil {
-				return
-			}
-
-			if wild {
-				err = errWildPath
 				return
 			}
 
 		case dataField:
-			msg.Data = v
+			fields.Msg.Data = v
 
 		case inboxField:
-			var wild bool
-			msg.Inbox, wild, err = ParsePath(v)
+			fields.Msg.Inbox, _, err = ParsePath(v)
 			if err != nil {
 				return
 			}
-
-			if wild {
-				err = errWildInbox
-				return
-			}
 		}
-	}
-
-	if msg.Path.IsZero() {
-		err = errEmptyPath
 	}
 
 	return
@@ -259,4 +282,50 @@ func msgFieldsLen(m Msg) int {
 // isWild returns true if the path contains a * or ** wildcard.
 func isWild(p Path) bool {
 	return slices.Contains(p.p, '*')
+}
+
+// validatePubFrame validates PubFrame fields.
+func validatePubFrame(fields sharedFields) error {
+	return validateMsg(fields.Msg)
+}
+
+// validateMsgFrame validates MsgFrame fields.
+func validateMsgFrame(fields sharedFields) error {
+	if fields.Msg.Path.IsZero() {
+		return errEmptyPath
+	}
+
+	if isWild(fields.Msg.Path) {
+		return errWildPath
+	}
+
+	return nil
+}
+
+func validateMsg(m Msg) error {
+	if m.Path.IsZero() {
+		return errEmptyPath
+	}
+
+	if isWild(m.Path) {
+		return errWildPath
+	}
+
+	if isWild(m.Inbox) {
+		return errWildInbox
+	}
+
+	return nil
+}
+
+func validateSel(s Sel) error {
+	if s.Path.IsZero() {
+		return errEmptyPath
+	}
+
+	if s.Limit < 0 || s.Limit > MaxLimit {
+		return errLimitRange
+	}
+
+	return nil
 }

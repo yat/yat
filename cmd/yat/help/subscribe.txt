@@ -1,13 +1,21 @@
 Subscribe prints a stream of selected messages.
+Messages are printed as JSON objects, one per line.
 
 Usage:
 
-  yat subscribe PATH ...
+  yat subscribe PATH
 
 Flags:
 
-  -format raw
-      Formats the printed messages.
-      The default, raw, simply prints each message's data.
-      The other valid value is json, which prints JSON lines.
-      All other format values are treated like raw.
+  -group, -g NAME
+      Add the subscriber to a route group.
+      Messages are routed to a random group member.
+
+  -limit, -n N
+      Unsubscribe after N deliveries.
+
+  -duration 0s
+      Unsubscribe after some amount of time.
+
+  -raw
+      Print raw message data.

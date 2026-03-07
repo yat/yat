@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"yat.io/yat/cmd/yat/internal/pkigen"
+	"yat.io/yat/pkigen"
 
 	_ "embed"
 )

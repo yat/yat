@@ -8,6 +8,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -23,8 +24,9 @@ type Client struct {
 	num  uint64
 	subs map[uint64]*clientSub
 
-	// bsub holds the numbers of the SubFrames buffered in wbuf.
-	// It is cleared when the buffer is flushed.
+	// bsub holds the numbers of buffered SubFrames, cleared when the
+	// buffer is flushed. The connect loop uses bsub to decide if it
+	// should re-buffer a subscription.
 	bsub []uint64
 
 	wbuf  []byte
@@ -45,14 +47,13 @@ type ClientConfig struct {
 
 type DialFunc func(context.Context) (net.Conn, error)
 
-// TokenFunc produces a JWT for client auth.
-// It must return either an error or a well-formed JWT.
-// See [ClientConfig.GetToken].
-type TokenFunc func(context.Context) ([]byte, error)
-
 type clientSub struct {
 	Sel Sel
 	Do  func(Msg)
+	n   atomic.Uint64
+
+	doneC chan struct{}
+	unsub func()
 }
 
 func NewClient(dial DialFunc, config ClientConfig) (*Client, error) {
@@ -87,21 +88,20 @@ func (c *Client) Close() error {
 
 	close(c.doneC)
 	c.mu.Unlock()
+
+	// unblock [Sub.Done]
+	for _, cs := range c.subs {
+		cs.unsub()
+	}
+
 	<-c.connC
 	return nil
 }
 
+// Publish publishes a copy of the message.
 func (c *Client) Publish(m Msg) error {
-	if m.Path.IsZero() {
-		return errEmptyPath
-	}
-
-	if isWild(m.Path) {
-		return errWildPath
-	}
-
-	if isWild(m.Inbox) {
-		return errWildInbox
+	if err := validateMsg(m); err != nil {
+		return err
 	}
 
 	// TODO: return a less protocol-centric error here,
@@ -136,9 +136,15 @@ func (c *Client) Publish(m Msg) error {
 	return nil
 }
 
-func (c *Client) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error) {
-	if sel.Path.IsZero() {
-		return nil, errEmptyPath
+// Subscribe arranges for the callback func to be called in a new goroutine
+// when a selected message is published.
+//
+// Call [Sub.Cancel] to unsubscribe.
+//
+// The callback func must not retain or modify delivered messages.
+func (c *Client) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
+	if err := validateSel(sel); err != nil {
+		return nil, err
 	}
 
 	if callback == nil {
@@ -155,31 +161,20 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error
 
 	c.num++
 	num := c.num
-	c.bsub = append(c.bsub, num)
-	c.subs[num] = &clientSub{
+
+	doneC := make(chan struct{})
+
+	cs := &clientSub{
 		Sel: sel,
 		Do: func(m Msg) {
 			go callback(m)
 		},
+
+		doneC: doneC,
 	}
 
-	c.wbuf = appendFrame(c.wbuf, subFrameType, func(b []byte) []byte {
-		b, _ = proto.MarshalOptions{}.MarshalAppend(b, &api.SubFrame{
-			Num:  num,
-			Path: sel.Path.p,
-		})
-
-		return b
-	})
-
-	c.mu.Unlock()
-
-	select {
-	case c.wbufC <- struct{}{}:
-	default:
-	}
-
-	unsub = sync.OnceFunc(func() {
+	cs.unsub = sync.OnceFunc(func() {
+		close(doneC)
 		c.mu.Lock()
 
 		select {
@@ -208,7 +203,18 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (unsub func(), err error
 		}
 	})
 
-	return unsub, nil
+	c.bsub = append(c.bsub, num)
+	c.subs[num] = cs
+
+	c.wbuf = appendSubFrame(c.wbuf, num, sel)
+	c.mu.Unlock()
+
+	select {
+	case c.wbufC <- struct{}{}:
+	default:
+	}
+
+	return cs, nil
 }
 
 // connect redials in a loop until the client is closed.
@@ -246,7 +252,7 @@ func (c *Client) connect(dial DialFunc) {
 		// stop if the client is done
 		// unless this is the first dial
 		// and there's something in the write buffer,
-		// in which case make an effort to connect and flush
+		// in which case try to connect and flush
 
 		select {
 		case <-ctx.Done():
@@ -306,14 +312,7 @@ func (c *Client) connect(dial DialFunc) {
 
 			resubbed = true
 			c.bsub = append(c.bsub, num)
-			c.wbuf = appendFrame(c.wbuf, subFrameType, func(b []byte) []byte {
-				b, _ = proto.MarshalOptions{}.MarshalAppend(b, &api.SubFrame{
-					Num:  num,
-					Path: sub.Sel.Path.p,
-				})
-
-				return b
-			})
+			c.wbuf = appendSubFrame(c.wbuf, num, sub.Sel)
 		}
 
 		c.mu.Unlock()
@@ -390,17 +389,30 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 }
 
 func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte) error {
-	num, msg, _, err := parseMsg(body)
+	fields, _, err := parseFields(body)
 	if err != nil {
 		return err
 	}
 
+	if err := validateMsgFrame(fields); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
-	sub := c.subs[num]
+	sub := c.subs[fields.Num]
 	c.mu.Unlock()
 
 	if sub != nil {
-		sub.Do(msg)
+		n := sub.n.Add(1)
+		lim := uint64(sub.Sel.Limit)
+
+		if lim == 0 || n <= lim {
+			sub.Do(fields.Msg)
+		}
+
+		if lim > 0 && n >= lim {
+			sub.unsub()
+		}
 	}
 
 	return nil
@@ -470,4 +482,12 @@ func (c ClientConfig) withDefaults() ClientConfig {
 	}
 
 	return c
+}
+
+func (cs *clientSub) Cancel() {
+	cs.unsub()
+}
+
+func (cs *clientSub) Done() <-chan struct{} {
+	return cs.doneC
 }

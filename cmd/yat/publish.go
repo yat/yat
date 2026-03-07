@@ -11,14 +11,14 @@ import (
 
 type PublishCmd struct {
 	*ClientConfig
-	Empty bool
 	File  string
+	Empty bool
 	Inbox string
 }
 
 func (cmd *PublishCmd) AddFlags(flags *flagset.Set) {
-	flags.Bool(&cmd.Empty, "empty", "e")
 	flags.String(&cmd.File, "file", "f")
+	flags.Bool(&cmd.Empty, "empty", "e")
 	flags.String(&cmd.Inbox, "inbox", "i")
 }
 
