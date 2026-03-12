@@ -2087,7 +2087,7 @@ func Test_parsePubFrame(t *testing.T) {
 
 func TestRouter_internalNoopBranches(t *testing.T) {
 	t.Run("update with nil old and new is a no-op", func(t *testing.T) {
-		rr := new(Router)
+		rr := NewRouter()
 		rr.update()
 	})
 
@@ -2107,7 +2107,7 @@ func TestRouter_internalNoopBranches(t *testing.T) {
 }
 
 func TestRouter_Subscribe_limitRange(t *testing.T) {
-	rr := new(Router)
+	rr := NewRouter()
 
 	if _, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: -1}, func(Msg) {}); !errors.Is(err, errLimitRange) {
 		t.Fatalf("negative limit: %v", err)
@@ -2119,7 +2119,7 @@ func TestRouter_Subscribe_limitRange(t *testing.T) {
 
 func TestRouter_Subscribe_done(t *testing.T) {
 	t.Run("done closes on cancel", func(t *testing.T) {
-		rr := new(Router)
+		rr := NewRouter()
 		sub, err := rr.Subscribe(Sel{Path: NewPath("a")}, func(Msg) {})
 		if err != nil {
 			t.Fatal(err)
@@ -2141,7 +2141,7 @@ func TestRouter_Subscribe_done(t *testing.T) {
 	})
 
 	t.Run("done closes when limit is reached", func(t *testing.T) {
-		rr := new(Router)
+		rr := NewRouter()
 		sub, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: 1}, func(Msg) {})
 		if err != nil {
 			t.Fatal(err)
@@ -2161,7 +2161,7 @@ func TestRouter_Subscribe_done(t *testing.T) {
 
 func TestRouter_deliver_limit(t *testing.T) {
 	t.Run("limited entry is removed after limit deliveries", func(t *testing.T) {
-		rr := new(Router)
+		rr := NewRouter()
 		var delivered int
 		e := &rent{
 			Sel: Sel{Path: NewPath("a"), Limit: 2},
@@ -2188,7 +2188,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 	})
 
 	t.Run("unlimited entry keeps receiving deliveries", func(t *testing.T) {
-		rr := new(Router)
+		rr := NewRouter()
 		var delivered int
 		e := &rent{
 			Sel: Sel{Path: NewPath("a")},
@@ -2217,7 +2217,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 func mustNewServerForTest(t *testing.T) *Server {
 	t.Helper()
 
-	s, err := NewServer(new(Router), ServerConfig{})
+	s, err := NewServer(NewRouter(), ServerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,7 @@ func TestGroup_NewGroup(t *testing.T) {
 
 func TestRouter_GroupedRoutingCandidates(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		rr := new(yat.Router)
+		rr := yat.NewRouter()
 
 		var (
 			g1a atomic.Uint64
@@ -595,7 +595,7 @@ func TestClientServer_SPIFFEDomainOnly_realTLS(t *testing.T) {
 func startAuthTLSServer(t *testing.T, rules *yat.RuleSet, cert tls.Certificate, roots *x509.CertPool) string {
 	t.Helper()
 
-	srv, err := yat.NewServer(new(yat.Router), yat.ServerConfig{
+	srv, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
 		Rules: rules,
 	})
 	if err != nil {
@@ -934,7 +934,7 @@ func TestClientServer_GroupedRoutingCandidates(t *testing.T) {
 
 func TestClientServer_MultipleServersSharedRouter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		rr := new(yat.Router)
+		rr := yat.NewRouter()
 		l1 := startTestServerWithRouter(t, rr)
 		l2 := startTestServerWithRouter(t, rr)
 
@@ -1076,7 +1076,7 @@ func (pipeAddr) String() string {
 func startTestServer(t *testing.T) (*yat.Router, *pipeListener) {
 	t.Helper()
 
-	rr := new(yat.Router)
+	rr := yat.NewRouter()
 	l := startTestServerWithRouter(t, rr)
 	return rr, l
 }

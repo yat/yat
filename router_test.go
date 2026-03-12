@@ -41,7 +41,7 @@ func TestRouterVsPathMatch(t *testing.T) {
 
 			var rmatch bool
 			synctest.Test(t, func(t *testing.T) {
-				rr := new(yat.Router)
+				rr := yat.NewRouter()
 
 				var n atomic.Uint64
 				_, err := rr.Subscribe(yat.Sel{Path: pat}, func(m yat.Msg) {
@@ -79,7 +79,7 @@ func TestRouterFanout(t *testing.T) {
 			nmsgPerPub  = 200
 		)
 
-		rr := new(yat.Router)
+		rr := yat.NewRouter()
 
 		pathAB := mustPath("a/b")
 		pathAC := mustPath("a/c")
@@ -164,7 +164,7 @@ func TestRouter_Publish(t *testing.T) {
 
 	for name, msg := range bad {
 		t.Run(name, func(t *testing.T) {
-			rr := new(yat.Router)
+			rr := yat.NewRouter()
 			if err := rr.Publish(msg); err == nil {
 				t.Fatal("no error")
 			}
@@ -180,7 +180,7 @@ func TestRouter_Subscribe(t *testing.T) {
 
 	for name, sel := range bad {
 		t.Run(name, func(t *testing.T) {
-			rr := new(yat.Router)
+			rr := yat.NewRouter()
 			if _, err := rr.Subscribe(sel, func(m yat.Msg) {}); err == nil {
 				t.Fatal("no error")
 			}
@@ -188,7 +188,7 @@ func TestRouter_Subscribe(t *testing.T) {
 	}
 
 	t.Run("nil handler", func(t *testing.T) {
-		rr := new(yat.Router)
+		rr := yat.NewRouter()
 		if _, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 			t.Error("no error")
 		}

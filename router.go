@@ -54,6 +54,11 @@ const (
 
 var errNilCallback = errors.New("nil callback func")
 
+// NewRouter initializes and returns a new router.
+func NewRouter() *Router {
+	return &Router{}
+}
+
 // Pub publishes a copy of the message.
 func (rr *Router) Publish(m Msg) error {
 	if err := validateMsg(m); err != nil {
