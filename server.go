@@ -13,7 +13,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
-	"yat.io/yat/api"
+	"yat.io/yat/wire"
 )
 
 type Server struct {
@@ -208,7 +208,7 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 }
 
 func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
-	var f api.SubFrame
+	var f wire.SubFrame
 	if err := proto.Unmarshal(body, &f); err != nil {
 		return err
 	}
@@ -276,7 +276,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 }
 
 func (s *Server) handleUnsub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
-	var f api.UnsubFrame
+	var f wire.UnsubFrame
 	if err := proto.Unmarshal(body, &f); err != nil {
 		return err
 	}

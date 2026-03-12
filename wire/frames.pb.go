@@ -4,7 +4,7 @@
 // 	protoc        v3.21.12
 // source: frames.proto
 
-package api
+package wire
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -358,7 +358,7 @@ const file_frames_proto_rawDesc = "" +
 	"\x03num\x18\x01 \x01(\x04R\x03num\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x14\n" +
-	"\x05inbox\x18\x04 \x01(\fR\x05inboxB\x10Z\x0eyat.io/yat/apib\x06proto3"
+	"\x05inbox\x18\x04 \x01(\fR\x05inboxB\x11Z\x0fyat.io/yat/wireb\x06proto3"
 
 var (
 	file_frames_proto_rawDescOnce sync.Once

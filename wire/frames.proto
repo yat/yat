@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package yat;
 
-option go_package = "yat.io/yat/api";
+option go_package = "yat.io/yat/wire";
 
 // This proto is just for reference. PubFrame and MsgFrame share field
 // numbers to help the server avoid allocating memory on fanout.

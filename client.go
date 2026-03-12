@@ -14,7 +14,7 @@ import (
 	"github.com/cenkalti/backoff/v5"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
-	"yat.io/yat/api"
+	"yat.io/yat/wire"
 )
 
 type Client struct {
@@ -188,7 +188,7 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
 		if _, ok = c.subs[num]; ok {
 			delete(c.subs, num)
 			c.wbuf = appendFrame(c.wbuf, unsubFrameType, func(b []byte) []byte {
-				b, _ = proto.MarshalOptions{}.MarshalAppend(b, &api.UnsubFrame{Num: num})
+				b, _ = proto.MarshalOptions{}.MarshalAppend(b, &wire.UnsubFrame{Num: num})
 				return b
 			})
 		}

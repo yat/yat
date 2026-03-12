@@ -48,4 +48,4 @@ the read loop is the same on the client and server:
 - if the frame type is unknown, discard the frame body and continue
 - otherwise read the frame body, process the frame, and continue
 
-the frame body is often a protocol buffer: see [api/frames.proto](../api/frames.proto)
+the frame body is often a protocol buffer: see [wire/frames.proto](../wire/frames.proto)

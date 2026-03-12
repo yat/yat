@@ -8,7 +8,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
-	"yat.io/yat/api"
+	"yat.io/yat/wire"
 )
 
 const (
@@ -76,7 +76,7 @@ func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
 }
 
 func appendSubFrame(buf []byte, num uint64, sel Sel) []byte {
-	sf := &api.SubFrame{
+	sf := &wire.SubFrame{
 		Num:  num,
 		Path: sel.Path.p,
 	}
