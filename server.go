@@ -150,7 +150,7 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 			return err
 		}
 
-		if hdr.Len() < MinFrameLen {
+		if hdr.Len() < minFrameLen {
 			return errShortFrame
 		}
 
@@ -199,8 +199,8 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	var (
-		pathOK  = conn.allow(fields.Msg.Path, ActionPub)
-		inboxOK = fields.Msg.Inbox.IsZero() || conn.allow(fields.Msg.Inbox, ActionSub)
+		pathOK  = conn.allow(fields.Path, ActionPub)
+		inboxOK = fields.Inbox.IsZero() || conn.allow(fields.Inbox, ActionSub)
 	)
 
 	if !pathOK || !inboxOK {
@@ -254,9 +254,9 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 
 	conn.mu.Lock()
 
-	if _, dupe := conn.subs[num]; dupe {
+	if _, dup := conn.subs[num]; dup {
 		conn.mu.Unlock()
-		return errDuplicateSub
+		return errDupSub
 	}
 
 	e := &rent{

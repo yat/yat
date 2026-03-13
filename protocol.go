@@ -11,16 +11,14 @@ import (
 	"yat.io/yat/wire"
 )
 
-const (
-	MinFrameLen = frameHdrLen
-	MaxFrameLen = 1<<24 - 1
-)
-
 // type frameHdr struct {
 // 	Len  uint24
 // 	Type byte
 // }
 
+// frameHdr holds the first 4 bytes of a wire frame.
+// b0-b2 are the u24le frame length including the header.
+// b3 is the frame type.
 type frameHdr uint32
 
 // sharedFields captures all the fields parsed by [parseFields].
@@ -29,7 +27,11 @@ type sharedFields struct {
 	Msg
 }
 
-const frameHdrLen = 4
+const (
+	frameHdrLen = 4
+	minFrameLen = frameHdrLen
+	maxDataLen  = 8 << 20
+)
 
 const (
 	_              = 0
@@ -48,14 +50,14 @@ const (
 )
 
 var (
-	errShortFrame   = errors.New("short frame")
-	errLongFrame    = errors.New("long frame")
-	errEmptyPath    = errors.New("empty path")
-	errWildPath     = errors.New("wildcard path")
-	errWildInbox    = errors.New("wildcard inbox")
-	errLongGroup    = errors.New("long group")
-	errLimitRange   = errors.New("limit out of range")
-	errDuplicateSub = errors.New("duplicate subscription number")
+	errShortFrame = errors.New("short frame")
+	errEmptyPath  = errors.New("empty path")
+	errWildPath   = errors.New("wildcard path")
+	errWildInbox  = errors.New("wildcard inbox")
+	errLongData   = errors.New("long data")
+	errLongGroup  = errors.New("long group")
+	errLimitRange = errors.New("limit out of range")
+	errDupSub     = errors.New("duplicate subscription number")
 )
 
 func (h frameHdr) Len() int {
@@ -189,16 +191,16 @@ func parseFields(raw []byte) (fields sharedFields, msg []byte, err error) {
 
 		switch fn {
 		case pathField:
-			fields.Msg.Path, _, err = ParsePath(v)
+			fields.Path, _, err = ParsePath(v)
 			if err != nil {
 				return
 			}
 
 		case dataField:
-			fields.Msg.Data = v
+			fields.Data = v
 
 		case inboxField:
-			fields.Msg.Inbox, _, err = ParsePath(v)
+			fields.Inbox, _, err = ParsePath(v)
 			if err != nil {
 				return
 			}
@@ -248,24 +250,6 @@ func aliasMsgFields(raw []byte) (msg Msg) {
 	return
 }
 
-// msgFieldsLen returns the length of the proto-encoded version of the message.
-func msgFieldsLen(m Msg) int {
-	n := protowire.SizeTag(pathField) +
-		protowire.SizeBytes(len(m.Path.p))
-
-	if len(m.Data) > 0 {
-		n += protowire.SizeTag(dataField) +
-			protowire.SizeBytes(len(m.Data))
-	}
-
-	if !m.Inbox.IsZero() {
-		n += protowire.SizeTag(inboxField) +
-			protowire.SizeBytes(len(m.Inbox.p))
-	}
-
-	return n
-}
-
 // isWild returns true if the path contains a * or ** wildcard.
 func isWild(p Path) bool {
 	return slices.Contains(p.p, '*')
@@ -274,19 +258,6 @@ func isWild(p Path) bool {
 // validatePubFrame validates PubFrame fields.
 func validatePubFrame(fields sharedFields) error {
 	return validateMsg(fields.Msg)
-}
-
-// validateMsgFrame validates MsgFrame fields.
-func validateMsgFrame(fields sharedFields) error {
-	if fields.Msg.Path.IsZero() {
-		return errEmptyPath
-	}
-
-	if isWild(fields.Msg.Path) {
-		return errWildPath
-	}
-
-	return nil
 }
 
 func validateMsg(m Msg) error {
@@ -300,6 +271,10 @@ func validateMsg(m Msg) error {
 
 	if isWild(m.Inbox) {
 		return errWildInbox
+	}
+
+	if len(m.Data) > maxDataLen {
+		return errLongData
 	}
 
 	return nil

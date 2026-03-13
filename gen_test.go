@@ -43,8 +43,11 @@ const (
 	giDataField  = 3
 	giInboxField = 4
 
+	giMaxDataLen = 8 << 20
+
 	giMsgTimeout   = 2 * time.Second
 	giNoMsgTimeout = 75 * time.Millisecond
+	giErrLongData  = "long data"
 )
 
 func TestGenIntegrationSurfaceValidation(t *testing.T) {
@@ -218,9 +221,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		}
 	}
 
-	tooLong := make([]byte, yat.MaxFrameLen)
-	if err := c.Publish(context.Background(), yat.Msg{Path: yat.NewPath("path"), Data: tooLong}); err == nil {
-		t.Fatal("expected long frame error")
+	tooLong := make([]byte, giMaxDataLen+1)
+	if err := c.Publish(context.Background(), yat.Msg{Path: yat.NewPath("path"), Data: tooLong}); err == nil || err.Error() != giErrLongData {
+		t.Fatalf("publish long data: %v", err)
 	}
 
 	if _, err := c.Subscribe(yat.Sel{}, func(context.Context, yat.Msg) {}); err == nil {
@@ -411,13 +414,13 @@ func TestGenIntegrationClientProtocolInboundAndReconnect(t *testing.T) {
 		msgBody = protowire.AppendTag(msgBody, giDataField, protowire.BytesType)
 		msgBody = protowire.AppendBytes(msgBody, []byte("first"))
 		msgBody = protowire.AppendTag(msgBody, giInboxField, protowire.BytesType)
-		msgBody = protowire.AppendBytes(msgBody, []byte("*"))
+		msgBody = protowire.AppendBytes(msgBody, []byte("reply"))
 
 		giWriteFrames(t, peer1,
 			giFrame(99, []byte{1, 2, 3}),
 			giFrame(giMsgFrameType, msgBody),
 		)
-		giAssertMsg(t, giRecvMsg(t, msgC), "topic", []byte("first"), "*")
+		giAssertMsg(t, giRecvMsg(t, msgC), "topic", []byte("first"), "reply")
 
 		synctest.Wait()
 		time.Sleep(1 * time.Second)
@@ -457,6 +460,227 @@ func TestGenIntegrationClientProtocolInboundAndReconnect(t *testing.T) {
 		}))
 		giAssertMsg(t, giRecvMsg(t, msgC), "topic", []byte("second"), "")
 	})
+}
+
+func TestGenIntegrationMessageDataLimit(t *testing.T) {
+	t.Run("client publish boundary and recovery", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+
+			pub := giNewPipeClient(t, srv)
+			sub := giNewPipeClient(t, srv)
+			msgC, msgSub := giMustSubscribeClient(t, sub, yat.Sel{Path: yat.NewPath("data/client")})
+			t.Cleanup(msgSub.Cancel)
+
+			giWaitClientReadyPath(t, pub, "ready/client-limit-pub")
+			giWaitClientReadyPath(t, sub, "ready/client-limit-sub")
+
+			exact := make([]byte, giMaxDataLen)
+			exact[0] = 'a'
+			exact[len(exact)-1] = 'z'
+
+			if err := pub.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("data/client"),
+				Data: exact,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			got := giRecvMsg(t, msgC)
+			if got.Path.String() != "data/client" {
+				t.Fatalf("path: %q != %q", got.Path.String(), "data/client")
+			}
+			if !bytes.Equal(got.Data, exact) {
+				t.Fatalf("data length: %d != %d", len(got.Data), len(exact))
+			}
+			if !got.Inbox.IsZero() {
+				t.Fatalf("unexpected inbox: %q", got.Inbox)
+			}
+
+			if err := pub.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("data/client"),
+				Data: make([]byte, giMaxDataLen+1),
+			}); err == nil || err.Error() != giErrLongData {
+				t.Fatalf("publish long data: %v", err)
+			}
+
+			if err := pub.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("data/client"),
+				Data: []byte("after-long-data"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			giAssertMsg(t, giRecvMsg(t, msgC), "data/client", []byte("after-long-data"), "")
+		})
+	})
+
+	t.Run("router publish boundary", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+
+			sub := giNewPipeClient(t, srv)
+			msgC, msgSub := giMustSubscribeClient(t, sub, yat.Sel{Path: yat.NewPath("data/router")})
+			t.Cleanup(msgSub.Cancel)
+
+			giWaitClientReadyPath(t, sub, "ready/router-limit-sub")
+
+			exact := make([]byte, giMaxDataLen)
+			exact[0] = 'r'
+			exact[len(exact)-1] = 'R'
+
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("data/router"),
+				Data: exact,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			got := giRecvMsg(t, msgC)
+			if got.Path.String() != "data/router" {
+				t.Fatalf("path: %q != %q", got.Path.String(), "data/router")
+			}
+			if !bytes.Equal(got.Data, exact) {
+				t.Fatalf("data length: %d != %d", len(got.Data), len(exact))
+			}
+
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("data/router"),
+				Data: make([]byte, giMaxDataLen+1),
+			}); err == nil || err.Error() != giErrLongData {
+				t.Fatalf("publish long data: %v", err)
+			}
+			giExpectNoMsg(t, msgC)
+		})
+	})
+
+	t.Run("server pub frame oversize closes connection", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
+
+			msgC, sub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("data/server")})
+			t.Cleanup(sub.Cancel)
+
+			exact := make([]byte, giMaxDataLen)
+			exact[0] = 's'
+			exact[len(exact)-1] = 'S'
+
+			giWriteFrames(t, peer, giPubFrame(yat.Msg{
+				Path: yat.NewPath("data/server"),
+				Data: exact,
+			}))
+
+			got := giRecvMsg(t, msgC)
+			if got.Path.String() != "data/server" {
+				t.Fatalf("path: %q != %q", got.Path.String(), "data/server")
+			}
+			if !bytes.Equal(got.Data, exact) {
+				t.Fatalf("data length: %d != %d", len(got.Data), len(exact))
+			}
+
+			giWriteFrames(t, peer, giPubFrame(yat.Msg{
+				Path: yat.NewPath("data/server"),
+				Data: make([]byte, giMaxDataLen+1),
+			}))
+
+			giExpectNoMsg(t, msgC)
+			giExpectConnClose(t, peer)
+		})
+	})
+
+	t.Run("client msg frame oversize closes connection and reconnects", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dialer := giNewPeerDialer()
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				dialer.Close()
+				_ = c.Close()
+			})
+
+			msgC, sub := giMustSubscribeClient(t, c, yat.Sel{Path: yat.NewPath("data/client-inbound")})
+			t.Cleanup(sub.Cancel)
+
+			peer1 := dialer.Next(t)
+			t.Cleanup(func() {
+				_ = peer1.Close()
+			})
+
+			typ, body := giReadAppFrame(t, peer1, giMsgTimeout)
+			if typ != giSubFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giSubFrameType)
+			}
+
+			var sf wire.SubFrame
+			if err := proto.Unmarshal(body, &sf); err != nil {
+				t.Fatal(err)
+			}
+			if sf.GetNum() != 1 || string(sf.GetPath()) != "data/client-inbound" {
+				t.Fatalf("subscribe mismatch: num=%d path=%q", sf.GetNum(), sf.GetPath())
+			}
+
+			exact := make([]byte, giMaxDataLen)
+			exact[0] = 'c'
+			exact[len(exact)-1] = 'C'
+
+			giWriteFrames(t, peer1, giMsgFrame(1, yat.Msg{
+				Path: yat.NewPath("data/client-inbound"),
+				Data: exact,
+			}))
+
+			got := giRecvMsg(t, msgC)
+			if got.Path.String() != "data/client-inbound" {
+				t.Fatalf("path: %q != %q", got.Path.String(), "data/client-inbound")
+			}
+			if !bytes.Equal(got.Data, exact) {
+				t.Fatalf("data length: %d != %d", len(got.Data), len(exact))
+			}
+
+			giWriteFrames(t, peer1, giMsgFrame(1, yat.Msg{
+				Path: yat.NewPath("data/client-inbound"),
+				Data: make([]byte, giMaxDataLen+1),
+			}))
+
+			giExpectNoMsg(t, msgC)
+			giExpectConnClose(t, peer1)
+
+			synctest.Wait()
+			time.Sleep(500 * time.Millisecond)
+			synctest.Wait()
+
+			peer2 := dialer.Next(t)
+			t.Cleanup(func() {
+				_ = peer2.Close()
+			})
+
+			typ, body = giReadAppFrame(t, peer2, giMsgTimeout)
+			if typ != giSubFrameType {
+				t.Fatalf("reconnect frame type: %d != %d", typ, giSubFrameType)
+			}
+			if err := proto.Unmarshal(body, &sf); err != nil {
+				t.Fatal(err)
+			}
+			if sf.GetNum() != 1 || string(sf.GetPath()) != "data/client-inbound" {
+				t.Fatalf("resubscribe mismatch: num=%d path=%q", sf.GetNum(), sf.GetPath())
+			}
+
+			giWriteFrames(t, peer2, giMsgFrame(1, yat.Msg{
+				Path: yat.NewPath("data/client-inbound"),
+				Data: []byte("after-reconnect"),
+			}))
+			giAssertMsg(t, giRecvMsg(t, msgC), "data/client-inbound", []byte("after-reconnect"), "")
+		})
+	})
+
 }
 
 func TestGenIntegrationServerProtocolRawPeer(t *testing.T) {
@@ -1579,16 +1803,6 @@ func giReadAppFrame(t *testing.T, conn net.Conn, timeout time.Duration) (byte, [
 	}
 }
 
-func giExpectNoFrame(t *testing.T, conn net.Conn, timeout time.Duration) {
-	t.Helper()
-
-	if _, _, err := giReadFrameErr(conn, timeout); err == nil {
-		t.Fatal("unexpected frame")
-	} else if !giIsTimeout(err) {
-		t.Fatal(err)
-	}
-}
-
 func giExpectNoAppFrame(t *testing.T, conn net.Conn, timeout time.Duration) {
 	t.Helper()
 
@@ -1611,6 +1825,31 @@ func giExpectNoAppFrame(t *testing.T, conn net.Conn, timeout time.Duration) {
 		}
 
 		t.Fatalf("unexpected frame: type=%d body=%x", typ, body)
+	}
+}
+
+func giExpectConnClose(t *testing.T, conn net.Conn) {
+	t.Helper()
+
+	deadline := time.Now().Add(giMsgTimeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			t.Fatal("expected connection close")
+		}
+
+		typ, body, err := giReadFrameErr(conn, remaining)
+		if err != nil {
+			if giIsTimeout(err) {
+				t.Fatal("expected connection close")
+			}
+			return
+		}
+		if typ == 0 && len(body) == 0 {
+			continue
+		}
+
+		t.Fatalf("unexpected frame before close: type=%d body=%x", typ, body)
 	}
 }
 

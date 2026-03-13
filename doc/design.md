@@ -49,3 +49,10 @@ the read loop is the same on the client and server:
 - otherwise read the frame body, process the frame, and continue
 
 the frame body is often a protocol buffer: see [wire/frames.proto](../wire/frames.proto)
+
+limits
+
+- the maximum frame length (including header) is 16MiB
+- the maximum path length is 64KiB
+- the maximum group length is 1KiB
+- the maximum message data length is 8MiB

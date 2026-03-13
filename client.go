@@ -108,15 +108,6 @@ func (c *Client) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	// TODO: return a less protocol-centric error here,
-	// the data field is actually what's too long
-
-	bodyLen := msgFieldsLen(m)
-	frameLen := frameHdrLen + bodyLen
-	if frameLen > MaxFrameLen {
-		return errLongFrame
-	}
-
 	c.mu.Lock()
 
 	select {
@@ -364,7 +355,7 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 			return err
 		}
 
-		if hdr.Len() < MinFrameLen {
+		if hdr.Len() < minFrameLen {
 			return errShortFrame
 		}
 
@@ -402,7 +393,7 @@ func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte
 		return err
 	}
 
-	if err := validateMsgFrame(fields); err != nil {
+	if err := validateMsg(fields.Msg); err != nil {
 		return err
 	}
 

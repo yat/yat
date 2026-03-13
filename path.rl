@@ -31,7 +31,7 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 	}
 
 	data := []byte(raw)
-	if len(data) > math.MaxUint16 {
+	if len(data) > maxPathLen {
 		err = errors.New("long path")
 		return
 	}

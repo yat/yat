@@ -11,6 +11,8 @@ type Path struct {
 	p []byte
 }
 
+const maxPathLen = 1<<16 - 1
+
 // NewPath parses the given string into a new path.
 // If the string is not a valid path, NewPath panics.
 func NewPath(str string) Path {
