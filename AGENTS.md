@@ -1,1 +1,1 @@
-- Write tests in the gen_test.go and gen_internal_test.go files.
+- Write tests in the gen_test.go file.

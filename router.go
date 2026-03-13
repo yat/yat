@@ -180,7 +180,7 @@ func (rr *Router) route(path Path) (entries []*rent, external bool) {
 
 	var gg map[Group]struct{}
 	entries = slices.DeleteFunc(ee, func(e *rent) bool {
-		if g := e.Sel.Group; g.String() != "" { // FIX: IsZero
+		if g := e.Sel.Group; g != (Group{}) {
 			if _, filled := gg[g]; filled {
 				return true
 			}
