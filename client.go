@@ -32,6 +32,10 @@ type Client struct {
 	wbuf  []byte
 	wbufC chan struct{}
 
+	// wbufD tracks total buffered [Msg.Data] bytes in wbuf.
+	// Publish will fail if it exceeds [maxClientDataLen].
+	wbufD int
+
 	// doneC is closed by Close.
 	doneC chan struct{}
 
@@ -117,6 +121,12 @@ func (c *Client) Publish(ctx context.Context, m Msg) error {
 	default:
 	}
 
+	if c.wbufD+len(m.Data) > maxClientDataLen {
+		c.mu.Unlock()
+		return errBufferFull
+	}
+
+	c.wbufD += len(m.Data)
 	c.wbuf = appendFrame(c.wbuf, pubFrameType, func(b []byte) []byte {
 		return appendMsgFields(b, m)
 	})
@@ -432,6 +442,7 @@ func (c *Client) writeFrames(ctx context.Context, logger *slog.Logger, conn net.
 		buf := c.wbuf
 		c.bsub = nil
 		c.wbuf = nil
+		c.wbufD = 0
 		c.mu.Unlock()
 
 		if len(buf) > 0 {

@@ -43,11 +43,13 @@ const (
 	giDataField  = 3
 	giInboxField = 4
 
-	giMaxDataLen = 8 << 20
+	giMaxDataLen       = 8 << 20
+	giMaxClientDataLen = 32 << 20
 
-	giMsgTimeout   = 2 * time.Second
-	giNoMsgTimeout = 75 * time.Millisecond
-	giErrLongData  = "long data"
+	giMsgTimeout    = 2 * time.Second
+	giNoMsgTimeout  = 75 * time.Millisecond
+	giErrLongData   = "long data"
+	giErrBufferFull = "buffer full"
 )
 
 func TestGenIntegrationSurfaceValidation(t *testing.T) {
@@ -681,6 +683,126 @@ func TestGenIntegrationMessageDataLimit(t *testing.T) {
 		})
 	})
 
+}
+
+func TestGenIntegrationClientBufferedDataLimit(t *testing.T) {
+	t.Run("offline backlog scope reconnect and recovery", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			dialer := giNewSwitchPipeDialer(srv)
+
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = c.Close()
+				dialer.Wait()
+			})
+
+			routerC, routerSub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("buffer/recovery")})
+			t.Cleanup(routerSub.Cancel)
+
+			liveC, liveSub := giMustSubscribeClient(t, c, yat.Sel{Path: yat.NewPath("buffer/live")})
+			t.Cleanup(liveSub.Cancel)
+
+			payload := make([]byte, giMaxDataLen)
+			payload[0] = 'b'
+			payload[len(payload)-1] = 'B'
+
+			for range giMaxClientDataLen / giMaxDataLen {
+				if err := c.Publish(context.Background(), yat.Msg{
+					Path: yat.NewPath("buffer/recovery"),
+					Data: payload,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := c.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("buffer/full"),
+				Data: []byte("x"),
+			}); err == nil || err.Error() != giErrBufferFull {
+				t.Fatalf("publish buffer full: %v", err)
+			}
+
+			if err := c.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("buffer/empty"),
+			}); err != nil {
+				t.Fatalf("empty publish at cap: %v", err)
+			}
+
+			exhaustedSub, err := c.Subscribe(yat.Sel{Path: yat.NewPath("buffer/exhausted")}, func(context.Context, yat.Msg) {})
+			if err != nil {
+				t.Fatalf("subscribe at cap: %v", err)
+			}
+			t.Cleanup(exhaustedSub.Cancel)
+
+			dialer.Enable()
+			synctest.Wait()
+			time.Sleep(1 * time.Second)
+			synctest.Wait()
+
+			for range giMaxClientDataLen / giMaxDataLen {
+				giAssertMsg(t, giRecvMsg(t, routerC), "buffer/recovery", payload, "")
+			}
+
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("buffer/live"),
+				Data: []byte("connected"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			giAssertMsg(t, giRecvMsg(t, liveC), "buffer/live", []byte("connected"), "")
+
+			if err := c.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("buffer/recovery"),
+				Data: []byte("after-flush"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			giAssertMsg(t, giRecvMsg(t, routerC), "buffer/recovery", []byte("after-flush"), "")
+		})
+	})
+
+	t.Run("mixed sizes accumulate to cap", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			c, err := yat.NewClient(func(context.Context) (net.Conn, error) {
+				return nil, errors.New("dial failed")
+			}, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = c.Close()
+			})
+
+			path := yat.NewPath("buffer/mixed")
+			eightMiB := make([]byte, giMaxDataLen)
+			sevenMiB := make([]byte, 7<<20)
+			oneMiB := make([]byte, 1<<20)
+
+			for range 3 {
+				if err := c.Publish(context.Background(), yat.Msg{Path: path, Data: eightMiB}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Publish(context.Background(), yat.Msg{Path: path, Data: sevenMiB}); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Publish(context.Background(), yat.Msg{Path: path, Data: oneMiB}); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := c.Publish(context.Background(), yat.Msg{
+				Path: path,
+				Data: []byte("x"),
+			}); err == nil || err.Error() != giErrBufferFull {
+				t.Fatalf("publish buffer full: %v", err)
+			}
+		})
+	})
 }
 
 func TestGenIntegrationServerProtocolRawPeer(t *testing.T) {
@@ -1478,10 +1600,21 @@ type giPeerDialer struct {
 	peerC chan net.Conn
 }
 
+type giSwitchPipeDialer struct {
+	mu      sync.Mutex
+	enabled bool
+	srv     *yat.Server
+	wg      sync.WaitGroup
+}
+
 func giNewPeerDialer() *giPeerDialer {
 	return &giPeerDialer{
 		peerC: make(chan net.Conn, 8),
 	}
+}
+
+func giNewSwitchPipeDialer(srv *yat.Server) *giSwitchPipeDialer {
+	return &giSwitchPipeDialer{srv: srv}
 }
 
 func (d *giPeerDialer) Dial(context.Context) (net.Conn, error) {
@@ -1493,6 +1626,25 @@ func (d *giPeerDialer) Dial(context.Context) (net.Conn, error) {
 
 	d.peerC <- peer
 	return client, nil
+}
+
+func (d *giSwitchPipeDialer) Dial(context.Context) (net.Conn, error) {
+	d.mu.Lock()
+	enabled := d.enabled
+	srv := d.srv
+	d.mu.Unlock()
+
+	if !enabled {
+		return nil, errors.New("dial blocked")
+	}
+
+	serverConn, clientConn := net.Pipe()
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		srv.ServeConn(context.Background(), serverConn)
+	}()
+	return clientConn, nil
 }
 
 func (d *giPeerDialer) Next(t *testing.T) net.Conn {
@@ -1516,6 +1668,16 @@ func (d *giPeerDialer) Close() {
 	for _, peer := range peers {
 		_ = peer.Close()
 	}
+}
+
+func (d *giSwitchPipeDialer) Enable() {
+	d.mu.Lock()
+	d.enabled = true
+	d.mu.Unlock()
+}
+
+func (d *giSwitchPipeDialer) Wait() {
+	d.wg.Wait()
 }
 
 func giLeafCertificate(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, opts ...pkigen.CertOpt) tls.Certificate {

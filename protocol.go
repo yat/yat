@@ -28,9 +28,10 @@ type sharedFields struct {
 }
 
 const (
-	frameHdrLen = 4
-	minFrameLen = frameHdrLen
-	maxDataLen  = 8 << 20
+	frameHdrLen      = 4
+	minFrameLen      = frameHdrLen
+	maxMsgDataLen    = 8 << 20
+	maxClientDataLen = 32 << 20
 )
 
 const (
@@ -51,6 +52,7 @@ const (
 
 var (
 	errShortFrame = errors.New("short frame")
+	errBufferFull = errors.New("buffer full")
 	errEmptyPath  = errors.New("empty path")
 	errWildPath   = errors.New("wildcard path")
 	errWildInbox  = errors.New("wildcard inbox")
@@ -273,7 +275,7 @@ func validateMsg(m Msg) error {
 		return errWildInbox
 	}
 
-	if len(m.Data) > maxDataLen {
+	if len(m.Data) > maxMsgDataLen {
 		return errLongData
 	}
 

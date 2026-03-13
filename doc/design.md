@@ -56,3 +56,4 @@ limits
 - the maximum path length is 64KiB
 - the maximum group length is 1KiB
 - the maximum message data length is 8MiB
+- the maximum client data buffer length is 32MiB
