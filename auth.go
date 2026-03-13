@@ -14,12 +14,12 @@ type RuleSet struct {
 
 // A Rule containing only Grants applies to all principals.
 type Rule struct {
-	SPIFFE *SPIFFESpec `json:"spiffe"`
+	SPIFFE *SPIFFECond `json:"spiffe"`
 	Grants []Grant     `json:"grants"`
 }
 
-// SPIFFESpec requires a principal to have a matching SPIFFE ID.
-type SPIFFESpec struct {
+// SPIFFECond requires a principal to have a matching SPIFFE ID.
+type SPIFFECond struct {
 	Domain string `json:"domain"`
 	Path   Path   `json:"path"`
 }
@@ -131,7 +131,7 @@ func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 	}
 }
 
-func (ss SPIFFESpec) match(p Principal) bool {
+func (ss SPIFFECond) match(p Principal) bool {
 	if p.Cert == nil {
 		return false
 	}

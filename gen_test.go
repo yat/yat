@@ -71,7 +71,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 			}},
 		},
 		{
-			SPIFFE: &yat.SPIFFESpec{
+			SPIFFE: &yat.SPIFFECond{
 				Domain: "trust-domain",
 				Path:   yat.NewPath("work/*"),
 			},
@@ -92,7 +92,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		{
 			name: "empty spiffe domain",
 			rules: []yat.Rule{{
-				SPIFFE: &yat.SPIFFESpec{},
+				SPIFFE: &yat.SPIFFECond{},
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("path"),
 					Actions: []yat.Action{yat.ActionPub},
@@ -102,7 +102,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		{
 			name: "invalid spiffe domain",
 			rules: []yat.Rule{{
-				SPIFFE: &yat.SPIFFESpec{Domain: "Trust-Domain"},
+				SPIFFE: &yat.SPIFFECond{Domain: "Trust-Domain"},
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("path"),
 					Actions: []yat.Action{yat.ActionPub},
@@ -1023,7 +1023,7 @@ func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 			}},
 		},
 		{
-			SPIFFE: &yat.SPIFFESpec{
+			SPIFFE: &yat.SPIFFECond{
 				Domain: "trust-domain",
 				Path:   yat.NewPath("a/b"),
 			},
@@ -1160,7 +1160,7 @@ func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 				}},
 			},
 			{
-				SPIFFE: &yat.SPIFFESpec{Domain: "trust-domain"},
+				SPIFFE: &yat.SPIFFECond{Domain: "trust-domain"},
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("b/**"),
 					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
