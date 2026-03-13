@@ -2,6 +2,7 @@ package yat
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
@@ -114,10 +115,15 @@ func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Co
 		Conn:  conn,
 	}
 
+	var p Principal
+	if tc, ok := conn.(interface{ ConnectionState() tls.ConnectionState }); ok {
+		if vc := tc.ConnectionState().VerifiedChains; len(vc) > 0 && len(vc[0]) > 0 {
+			p.Cert = vc[0][0]
+		}
+	}
+
 	if s.config.Rules != nil {
-		sc.allow = s.config.Rules.Compile(Principal{
-			Conn: conn,
-		})
+		sc.allow = s.config.Rules.Compile(p)
 	}
 
 	defer func() {

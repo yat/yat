@@ -914,6 +914,89 @@ func TestGenIntegrationSharedRouterAcrossServers(t *testing.T) {
 	})
 }
 
+func TestGenIntegrationTLSWithoutClientCert(t *testing.T) {
+	ca, caKey, err := pkigen.NewRoot(pkigen.CN("tls-root"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+
+	serverCert := giLeafCertificate(t, ca, caKey,
+		pkigen.CN("server"),
+		pkigen.DNS("localhost"),
+	)
+
+	rr := yat.NewRouter()
+	srv := giMustNewServer(t, rr, yat.AllowAll())
+
+	// No client auth here: accepted TLS connections have an empty VerifiedChains.
+	l, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{serverCert},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serveC := make(chan error, 1)
+	go func() {
+		serveC <- srv.Serve(l)
+	}()
+
+	t.Cleanup(func() {
+		_ = l.Close()
+		err := <-serveC
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("serve: %v", err)
+		}
+	})
+
+	dialer := tls.Dialer{
+		Config: &tls.Config{
+			MinVersion: tls.VersionTLS13,
+			ServerName: "localhost",
+			RootCAs:    roots,
+		},
+	}
+
+	client, err := yat.NewClient(func(ctx context.Context) (net.Conn, error) {
+		return dialer.DialContext(ctx, "tcp", l.Addr().String())
+	}, yat.ClientConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
+
+	giWaitClientReadyPath(t, client, "ready/no-client-cert")
+
+	routerC, routerSub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("from/client")})
+	t.Cleanup(routerSub.Cancel)
+
+	if err := client.Publish(context.Background(), yat.Msg{
+		Path: yat.NewPath("from/client"),
+		Data: []byte("payload"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	giAssertMsg(t, giRecvMsg(t, routerC), "from/client", []byte("payload"), "")
+
+	clientC, clientSub := giMustSubscribeClient(t, client, yat.Sel{Path: yat.NewPath("from/router")})
+	t.Cleanup(clientSub.Cancel)
+	giWaitClientReadyPath(t, client, "ready/from-router-sub")
+
+	if err := rr.Publish(context.Background(), yat.Msg{
+		Path: yat.NewPath("from/router"),
+		Data: []byte("payload"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	giAssertMsg(t, giRecvMsg(t, clientC), "from/router", []byte("payload"), "")
+}
+
 func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 	ca, caKey, err := pkigen.NewRoot(pkigen.CN("auth-root"))
 	if err != nil {

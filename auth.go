@@ -1,9 +1,8 @@
 package yat
 
 import (
-	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"net"
 	"regexp"
 	"slices"
 	"strings"
@@ -39,7 +38,7 @@ const (
 )
 
 type Principal struct {
-	Conn net.Conn
+	Cert *x509.Certificate
 }
 
 // SPIFFE ID is spiffe://trust-domain[/path]
@@ -133,27 +132,15 @@ func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 }
 
 func (ss SPIFFESpec) match(p Principal) bool {
-	if p.Conn == nil {
+	if p.Cert == nil {
 		return false
 	}
 
-	tc, hasConnState := p.Conn.(interface{ ConnectionState() tls.ConnectionState })
-	if !hasConnState {
+	if len(p.Cert.URIs) == 0 || len(p.Cert.URIs) > 1 {
 		return false
 	}
 
-	// extract a SPIFFE ID from the client cert
-	chains := tc.ConnectionState().VerifiedChains
-	if len(chains) == 0 || len(chains[0]) == 0 {
-		return false
-	}
-
-	cert := chains[0][0]
-	if len(cert.URIs) == 0 || len(cert.URIs) > 1 {
-		return false
-	}
-
-	id := cert.URIs[0]
+	id := p.Cert.URIs[0]
 	if id.Scheme != "spiffe" || len(id.RawQuery) > 0 || id.ForceQuery || id.RawFragment != "" || id.User != nil {
 		return false
 	}
