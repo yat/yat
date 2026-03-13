@@ -39,7 +39,7 @@ type rnode struct {
 	parent   *rnode
 	name     string
 	children map[string]*rnode
-	entries  map[*rent]struct{}
+	entries  []*rent
 
 	// cached for fast lookup
 	wildElem, wildSuffix *rnode
@@ -302,15 +302,21 @@ func (n *rnode) leaf(p Path, createMissing bool) *rnode {
 }
 
 func (n *rnode) ins(e *rent) {
-	if n.entries == nil {
-		n.entries = make(map[*rent]struct{})
-	}
-
-	n.entries[e] = struct{}{}
+	n.entries = append(n.entries, e)
 }
 
 func (n *rnode) del(v *rent) {
-	delete(n.entries, v)
+	if i := slices.Index(n.entries, v); i >= 0 {
+		j := len(n.entries) - 1
+
+		// overwrite
+		n.entries[i] = n.entries[j]
+		n.entries[j] = nil
+
+		// trim
+		n.entries = n.entries[:j]
+	}
+
 	// prune empty branches
 	if len(n.children) == 0 && len(n.entries) == 0 {
 		ancestor := n.parent
@@ -334,9 +340,7 @@ func (n *rnode) del(v *rent) {
 
 func (n *rnode) match(ee *[]*rent, p Path) {
 	if p.IsZero() {
-		for v := range n.entries {
-			*ee = append(*ee, v)
-		}
+		*ee = append(*ee, n.entries...)
 		return
 	}
 
