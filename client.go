@@ -49,7 +49,7 @@ type DialFunc func(context.Context) (net.Conn, error)
 
 type clientSub struct {
 	Sel Sel
-	Do  func(Msg)
+	Do  func(delivery)
 	n   atomic.Uint64
 
 	doneC chan struct{}
@@ -99,7 +99,11 @@ func (c *Client) Close() error {
 }
 
 // Publish publishes a copy of the message.
-func (c *Client) Publish(m Msg) error {
+func (c *Client) Publish(ctx context.Context, m Msg) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	if err := validateMsg(m); err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func (c *Client) Publish(m Msg) error {
 // Call [Sub.Cancel] to unsubscribe.
 //
 // The callback func must not retain or modify delivered messages.
-func (c *Client) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
+func (c *Client) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, error) {
 	if err := validateSel(sel); err != nil {
 		return nil, err
 	}
@@ -166,8 +170,12 @@ func (c *Client) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
 
 	cs := &clientSub{
 		Sel: sel,
-		Do: func(m Msg) {
-			go callback(m)
+		Do: func(d delivery) {
+			ctx := d.Ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			go callback(ctx, d.Msg)
 		},
 
 		doneC: doneC,
@@ -407,7 +415,7 @@ func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte
 		lim := uint64(sub.Sel.Limit)
 
 		if lim == 0 || n <= lim {
-			sub.Do(fields.Msg)
+			sub.Do(delivery{Msg: fields.Msg})
 		}
 
 		if lim > 0 && n >= lim {

@@ -1,12 +1,15 @@
 package yat_test
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
 	"yat.io/yat"
 )
+
+var _ yat.PublishSubscriber = new(yat.Router)
 
 func TestRouterVsPathMatch(t *testing.T) {
 	var tcs = []struct {
@@ -44,7 +47,7 @@ func TestRouterVsPathMatch(t *testing.T) {
 				rr := yat.NewRouter()
 
 				var n atomic.Uint64
-				_, err := rr.Subscribe(yat.Sel{Path: pat}, func(m yat.Msg) {
+				_, err := rr.Subscribe(yat.Sel{Path: pat}, func(_ context.Context, m yat.Msg) {
 					n.Add(1)
 				})
 
@@ -52,7 +55,7 @@ func TestRouterVsPathMatch(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if err := rr.Publish(yat.Msg{Path: p}); err != nil {
+				if err := rr.Publish(context.Background(), yat.Msg{Path: p}); err != nil {
 					t.Fatal(err)
 				}
 
@@ -85,7 +88,7 @@ func TestRouterFanout(t *testing.T) {
 		pathAC := mustPath("a/c")
 		pathXY := mustPath("x/y")
 
-		addSubs := func(sel yat.Sel, n int, handler func(yat.Msg)) []yat.Sub {
+		addSubs := func(sel yat.Sel, n int, handler func(context.Context, yat.Msg)) []yat.Sub {
 			t.Helper()
 
 			subs := make([]yat.Sub, 0, n)
@@ -99,8 +102,8 @@ func TestRouterFanout(t *testing.T) {
 			return subs
 		}
 
-		countingHandler := func(counter *atomic.Uint64) func(yat.Msg) {
-			return func(yat.Msg) {
+		countingHandler := func(counter *atomic.Uint64) func(context.Context, yat.Msg) {
+			return func(context.Context, yat.Msg) {
 				counter.Add(1)
 			}
 		}
@@ -126,9 +129,9 @@ func TestRouterFanout(t *testing.T) {
 		for range npublishers {
 			go func() {
 				for j := 0; j < nmsgPerPub; j++ {
-					_ = rr.Publish(yat.Msg{Path: pathAB})
-					_ = rr.Publish(yat.Msg{Path: pathAC})
-					_ = rr.Publish(yat.Msg{Path: pathXY})
+					_ = rr.Publish(context.Background(), yat.Msg{Path: pathAB})
+					_ = rr.Publish(context.Background(), yat.Msg{Path: pathAC})
+					_ = rr.Publish(context.Background(), yat.Msg{Path: pathXY})
 				}
 			}()
 		}
@@ -165,7 +168,7 @@ func TestRouter_Publish(t *testing.T) {
 	for name, msg := range bad {
 		t.Run(name, func(t *testing.T) {
 			rr := yat.NewRouter()
-			if err := rr.Publish(msg); err == nil {
+			if err := rr.Publish(context.Background(), msg); err == nil {
 				t.Fatal("no error")
 			}
 		})
@@ -181,7 +184,7 @@ func TestRouter_Subscribe(t *testing.T) {
 	for name, sel := range bad {
 		t.Run(name, func(t *testing.T) {
 			rr := yat.NewRouter()
-			if _, err := rr.Subscribe(sel, func(m yat.Msg) {}); err == nil {
+			if _, err := rr.Subscribe(sel, func(_ context.Context, m yat.Msg) {}); err == nil {
 				t.Fatal("no error")
 			}
 		})

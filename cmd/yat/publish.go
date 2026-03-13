@@ -63,7 +63,7 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 
 	defer yc.Close()
 
-	return yc.Publish(yat.Msg{
+	return yc.Publish(ctx, yat.Msg{
 		Path:  path,
 		Data:  data,
 		Inbox: inbox,

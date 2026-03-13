@@ -1,11 +1,13 @@
 package yat
 
+import "context"
+
 type Publisher interface {
-	Publish(Msg) error
+	Publish(context.Context, Msg) error
 }
 
 type Subscriber interface {
-	Subscribe(Sel, func(Msg)) (Sub, error)
+	Subscribe(Sel, func(context.Context, Msg)) (Sub, error)
 }
 
 type PublishSubscriber interface {

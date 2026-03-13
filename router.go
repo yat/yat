@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"context"
 	"errors"
 	"math/rand/v2"
 	"slices"
@@ -12,6 +13,20 @@ import (
 type Router struct {
 	mu   sync.RWMutex
 	tree rnode
+}
+
+// A delivery is received and distributed by the router.
+type delivery struct {
+	Msg Msg
+
+	// Raw, if set, holds the protowire-encoded fields backing Msg.
+	// On the server, this buffer is used for efficient fanout.
+	// Raw is not used by the client.
+	Raw []byte
+
+	// Ctx holds the delivery context.
+	// If it is not nil, it is passed to callbacks instead of [context.Background].
+	Ctx context.Context
 }
 
 // rnode implements a simple prefix tree.
@@ -30,7 +45,7 @@ type rnode struct {
 // rent is an entry in the route tree.
 type rent struct {
 	Sel Sel
-	Do  func(Msg, []byte)
+	Do  func(delivery)
 	n   atomic.Uint64
 
 	ltd   atomic.Bool
@@ -60,7 +75,11 @@ func NewRouter() *Router {
 }
 
 // Pub publishes a copy of the message.
-func (rr *Router) Publish(m Msg) error {
+func (rr *Router) Publish(ctx context.Context, m Msg) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	if err := validateMsg(m); err != nil {
 		return err
 	}
@@ -71,7 +90,7 @@ func (rr *Router) Publish(m Msg) error {
 	}
 
 	m, raw := cloneMsg(m)
-	rr.deliver(ee, m, raw)
+	rr.deliver(ee, delivery{m, raw, ctx})
 
 	return nil
 }
@@ -82,7 +101,7 @@ func (rr *Router) Publish(m Msg) error {
 // Call [Sub.Cancel] to unsubscribe.
 //
 // The callback func must not retain or modify delivered messages.
-func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
+func (rr *Router) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, error) {
 	if err := validateSel(sel); err != nil {
 		return nil, err
 	}
@@ -93,8 +112,12 @@ func (rr *Router) Subscribe(sel Sel, callback func(Msg)) (Sub, error) {
 
 	e := &rent{
 		Sel: sel,
-		Do: func(m Msg, _ []byte) {
-			go callback(m)
+		Do: func(d delivery) {
+			ctx := d.Ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			go callback(ctx, d.Msg)
 		},
 
 		doneC: make(chan struct{}),
@@ -162,14 +185,14 @@ func (rr *Router) route(path Path) []*rent {
 	})
 }
 
-func (rr *Router) deliver(ee []*rent, m Msg, raw []byte) {
+func (rr *Router) deliver(ee []*rent, d delivery) {
 	var ops []rop
 	for _, e := range ee {
 		n := e.n.Add(1)
 		lim := uint64(e.Sel.Limit)
 
 		if lim == 0 || n <= lim {
-			e.Do(m, raw)
+			e.Do(d)
 		}
 
 		if lim > 0 && n >= lim {

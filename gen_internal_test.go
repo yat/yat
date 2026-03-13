@@ -254,11 +254,11 @@ func TestClient_Close(t *testing.T) {
 	t.Run("closes all sub done channels", func(t *testing.T) {
 		c := newBareClient()
 
-		sub1, err := c.Subscribe(Sel{Path: NewPath("a")}, func(Msg) {})
+		sub1, err := c.Subscribe(Sel{Path: NewPath("a")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
-		sub2, err := c.Subscribe(Sel{Path: NewPath("b")}, func(Msg) {})
+		sub2, err := c.Subscribe(Sel{Path: NewPath("b")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,24 +295,35 @@ func TestClient_Close(t *testing.T) {
 func TestClient_Publish_validationAndClosed(t *testing.T) {
 	c := newBareClient()
 
-	if err := c.Publish(Msg{}); !errors.Is(err, errEmptyPath) {
+	if err := c.Publish(context.Background(), Msg{}); !errors.Is(err, errEmptyPath) {
 		t.Fatalf("empty path: %v", err)
 	}
-	if err := c.Publish(Msg{Path: NewPath("*")}); !errors.Is(err, errWildPath) {
+	if err := c.Publish(context.Background(), Msg{Path: NewPath("*")}); !errors.Is(err, errWildPath) {
 		t.Fatalf("wild path: %v", err)
 	}
-	if err := c.Publish(Msg{Path: NewPath("path"), Inbox: NewPath("*")}); !errors.Is(err, errWildInbox) {
+	if err := c.Publish(context.Background(), Msg{Path: NewPath("path"), Inbox: NewPath("*")}); !errors.Is(err, errWildInbox) {
 		t.Fatalf("wild inbox: %v", err)
 	}
 
 	tooLongData := make([]byte, MaxFrameLen)
-	if err := c.Publish(Msg{Path: NewPath("path"), Data: tooLongData}); !errors.Is(err, errLongFrame) {
+	if err := c.Publish(context.Background(), Msg{Path: NewPath("path"), Data: tooLongData}); !errors.Is(err, errLongFrame) {
 		t.Fatalf("long frame: %v", err)
 	}
 
 	close(c.doneC)
-	if err := c.Publish(Msg{Path: NewPath("path")}); !errors.Is(err, net.ErrClosed) {
+	if err := c.Publish(context.Background(), Msg{Path: NewPath("path")}); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("closed: %v", err)
+	}
+}
+
+func TestClient_Publish_contextError(t *testing.T) {
+	c := newBareClient()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.Publish(ctx, Msg{Path: NewPath("path")}); err != ctx.Err() {
+		t.Fatalf("publish: %v != %v", err, ctx.Err())
 	}
 }
 
@@ -320,13 +331,13 @@ func TestClient_Subscribe_validationAndUnsubPaths(t *testing.T) {
 	t.Run("validation", func(t *testing.T) {
 		c := newBareClient()
 
-		if _, err := c.Subscribe(Sel{}, func(Msg) {}); !errors.Is(err, errEmptyPath) {
+		if _, err := c.Subscribe(Sel{}, func(context.Context, Msg) {}); !errors.Is(err, errEmptyPath) {
 			t.Fatalf("empty path: %v", err)
 		}
-		if _, err := c.Subscribe(Sel{Path: NewPath("path"), Limit: -1}, func(Msg) {}); !errors.Is(err, errLimitRange) {
+		if _, err := c.Subscribe(Sel{Path: NewPath("path"), Limit: -1}, func(context.Context, Msg) {}); !errors.Is(err, errLimitRange) {
 			t.Fatalf("negative limit: %v", err)
 		}
-		if _, err := c.Subscribe(Sel{Path: NewPath("path"), Limit: MaxLimit + 1}, func(Msg) {}); !errors.Is(err, errLimitRange) {
+		if _, err := c.Subscribe(Sel{Path: NewPath("path"), Limit: MaxLimit + 1}, func(context.Context, Msg) {}); !errors.Is(err, errLimitRange) {
 			t.Fatalf("limit over max: %v", err)
 		}
 		if _, err := c.Subscribe(Sel{Path: NewPath("path")}, nil); !errors.Is(err, errNilCallback) {
@@ -334,7 +345,7 @@ func TestClient_Subscribe_validationAndUnsubPaths(t *testing.T) {
 		}
 
 		close(c.doneC)
-		if _, err := c.Subscribe(Sel{Path: NewPath("path")}, func(Msg) {}); !errors.Is(err, net.ErrClosed) {
+		if _, err := c.Subscribe(Sel{Path: NewPath("path")}, func(context.Context, Msg) {}); !errors.Is(err, net.ErrClosed) {
 			t.Fatalf("closed: %v", err)
 		}
 	})
@@ -343,7 +354,7 @@ func TestClient_Subscribe_validationAndUnsubPaths(t *testing.T) {
 		c := newBareClient()
 		fillClientSignal(c)
 
-		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(Msg) {})
+		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -359,7 +370,7 @@ func TestClient_Subscribe_validationAndUnsubPaths(t *testing.T) {
 
 	t.Run("unsub after close is a no-op", func(t *testing.T) {
 		c := newBareClient()
-		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(Msg) {})
+		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,7 +387,7 @@ func TestClient_Subscribe_validationAndUnsubPaths(t *testing.T) {
 
 	t.Run("done closes on cancel", func(t *testing.T) {
 		c := newBareClient()
-		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(Msg) {})
+		sub, err := c.Subscribe(Sel{Path: NewPath("path")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -422,7 +433,7 @@ func TestClient_readFrames(t *testing.T) {
 		c := newBareClient()
 		msgC := make(chan Msg, 1)
 		c.subs[7] = &clientSub{
-			Do: func(m Msg) { msgC <- m },
+			Do: func(d delivery) { msgC <- d.Msg },
 		}
 
 		msg := Msg{Path: NewPath("a"), Data: []byte("hi"), Inbox: NewPath("inbox")}
@@ -485,7 +496,7 @@ func TestClient_handleMsg(t *testing.T) {
 		var got Msg
 		c.subs[1] = &clientSub{
 			Sel: Sel{Path: NewPath("a")},
-			Do:  func(m Msg) { got = m },
+			Do:  func(d delivery) { got = d.Msg },
 		}
 
 		body := newMsgFrame(1, Msg{Path: NewPath("a"), Inbox: NewPath("*")})[frameHdrLen:]
@@ -506,7 +517,7 @@ func TestClient_handleMsg(t *testing.T) {
 		doneC := make(chan struct{})
 		c.subs[1] = &clientSub{
 			Sel:   Sel{Path: NewPath("a"), Limit: 1},
-			Do:    func(Msg) { delivered++ },
+			Do:    func(delivery) { delivered++ },
 			doneC: doneC,
 			unsub: func() {
 				delete(c.subs, 1)
@@ -536,7 +547,7 @@ func TestClient_handleMsg(t *testing.T) {
 
 	t.Run("limit closes done", func(t *testing.T) {
 		c := newBareClient()
-		sub, err := c.Subscribe(Sel{Path: NewPath("a"), Limit: 1}, func(Msg) {})
+		sub, err := c.Subscribe(Sel{Path: NewPath("a"), Limit: 1}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -763,7 +774,7 @@ func TestClient_connect(t *testing.T) {
 			})
 
 			subPath := NewPath("path")
-			if _, err := c.Subscribe(Sel{Path: subPath}, func(Msg) {}); err != nil {
+			if _, err := c.Subscribe(Sel{Path: subPath}, func(context.Context, Msg) {}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -805,7 +816,7 @@ func TestClient_connect(t *testing.T) {
 				Path:  NewPath("path"),
 				Group: NewGroup("workers"),
 			}
-			if _, err := c.Subscribe(subSel, func(Msg) {}); err != nil {
+			if _, err := c.Subscribe(subSel, func(context.Context, Msg) {}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -2109,10 +2120,10 @@ func TestRouter_internalNoopBranches(t *testing.T) {
 func TestRouter_Subscribe_limitRange(t *testing.T) {
 	rr := NewRouter()
 
-	if _, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: -1}, func(Msg) {}); !errors.Is(err, errLimitRange) {
+	if _, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: -1}, func(context.Context, Msg) {}); !errors.Is(err, errLimitRange) {
 		t.Fatalf("negative limit: %v", err)
 	}
-	if _, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: MaxLimit + 1}, func(Msg) {}); !errors.Is(err, errLimitRange) {
+	if _, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: MaxLimit + 1}, func(context.Context, Msg) {}); !errors.Is(err, errLimitRange) {
 		t.Fatalf("limit over max: %v", err)
 	}
 }
@@ -2120,7 +2131,7 @@ func TestRouter_Subscribe_limitRange(t *testing.T) {
 func TestRouter_Subscribe_done(t *testing.T) {
 	t.Run("done closes on cancel", func(t *testing.T) {
 		rr := NewRouter()
-		sub, err := rr.Subscribe(Sel{Path: NewPath("a")}, func(Msg) {})
+		sub, err := rr.Subscribe(Sel{Path: NewPath("a")}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2142,12 +2153,12 @@ func TestRouter_Subscribe_done(t *testing.T) {
 
 	t.Run("done closes when limit is reached", func(t *testing.T) {
 		rr := NewRouter()
-		sub, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: 1}, func(Msg) {})
+		sub, err := rr.Subscribe(Sel{Path: NewPath("a"), Limit: 1}, func(context.Context, Msg) {})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if err := rr.Publish(Msg{Path: NewPath("a"), Data: []byte("x")}); err != nil {
+		if err := rr.Publish(context.Background(), Msg{Path: NewPath("a"), Data: []byte("x")}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -2165,7 +2176,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 		var delivered int
 		e := &rent{
 			Sel: Sel{Path: NewPath("a"), Limit: 2},
-			Do: func(Msg, []byte) {
+			Do: func(delivery) {
 				delivered++
 			},
 			doneC: make(chan struct{}),
@@ -2176,7 +2187,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 		msg := Msg{Path: NewPath("a"), Data: []byte("x")}
 		for range 3 {
 			ee := rr.route(msg.Path)
-			rr.deliver(ee, msg, nil)
+			rr.deliver(ee, delivery{Msg: msg})
 		}
 
 		if delivered != 2 {
@@ -2192,7 +2203,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 		var delivered int
 		e := &rent{
 			Sel: Sel{Path: NewPath("a")},
-			Do: func(Msg, []byte) {
+			Do: func(delivery) {
 				delivered++
 			},
 			doneC: make(chan struct{}),
@@ -2202,7 +2213,7 @@ func TestRouter_deliver_limit(t *testing.T) {
 		msg := Msg{Path: NewPath("a"), Data: []byte("x")}
 		for range 3 {
 			ee := rr.route(msg.Path)
-			rr.deliver(ee, msg, nil)
+			rr.deliver(ee, delivery{Msg: msg})
 		}
 
 		if delivered != 3 {
@@ -2257,7 +2268,7 @@ func TestServer_readFrames(t *testing.T) {
 	t.Run("unknown frame is discarded, pub frame is handled", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
-		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(m Msg) {
+		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(_ context.Context, m Msg) {
 			msgC <- m
 		})
 		if err != nil {
@@ -2344,7 +2355,7 @@ func TestServer_handlePub(t *testing.T) {
 	t.Run("delivers to routed subscribers", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
-		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(m Msg) {
+		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(_ context.Context, m Msg) {
 			msgC <- m
 		})
 		if err != nil {
@@ -2376,7 +2387,7 @@ func TestServer_handlePub(t *testing.T) {
 	t.Run("denied inbox drops publish", func(t *testing.T) {
 		s := mustNewServerForTest(t)
 		msgC := make(chan Msg, 1)
-		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(m Msg) {
+		sub, err := s.router.Subscribe(Sel{Path: NewPath("a")}, func(_ context.Context, m Msg) {
 			msgC <- m
 		})
 		if err != nil {
@@ -2548,7 +2559,7 @@ func TestServer_handleSub(t *testing.T) {
 			t.Fatalf("len(subs): %d != 1", got)
 		}
 
-		if err := s.router.Publish(Msg{Path: NewPath("path"), Data: []byte("one")}); err != nil {
+		if err := s.router.Publish(context.Background(), Msg{Path: NewPath("path"), Data: []byte("one")}); err != nil {
 			t.Fatal(err)
 		}
 		if got := len(sc.subs); got != 0 {
@@ -2562,7 +2573,7 @@ func TestServer_handleSub(t *testing.T) {
 			t.Fatalf("buffers after first publish: %d != 2", n)
 		}
 
-		if err := s.router.Publish(Msg{Path: NewPath("path"), Data: []byte("two")}); err != nil {
+		if err := s.router.Publish(context.Background(), Msg{Path: NewPath("path"), Data: []byte("two")}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -2634,7 +2645,7 @@ func TestServer_handleUnsub(t *testing.T) {
 		sc.mu.Lock()
 		sc.wbufs = nil
 		sc.mu.Unlock()
-		if err := s.router.Publish(Msg{Path: NewPath("path"), Data: []byte("gone")}); err != nil {
+		if err := s.router.Publish(context.Background(), Msg{Path: NewPath("path"), Data: []byte("gone")}); err != nil {
 			t.Fatal(err)
 		}
 		sc.mu.Lock()

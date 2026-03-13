@@ -41,7 +41,7 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 
 	defer yc.Close()
 
-	callback := func(m yat.Msg) {
+	callback := func(_ context.Context, m yat.Msg) {
 		var err error
 		if cmd.Raw {
 			_, err = os.Stdout.Write(m.Data)

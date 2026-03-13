@@ -91,7 +91,7 @@ func TestRouter_GroupedRoutingCandidates(t *testing.T) {
 		var subs []yat.Sub
 		for _, tc := range selectorCases {
 			tc := tc
-			sub, err := rr.Subscribe(tc.sel, func(yat.Msg) {
+			sub, err := rr.Subscribe(tc.sel, func(context.Context, yat.Msg) {
 				tc.counter.Add(1)
 			})
 			if err != nil {
@@ -107,7 +107,7 @@ func TestRouter_GroupedRoutingCandidates(t *testing.T) {
 
 		const npub = 200
 		for range npub {
-			if err := rr.Publish(yat.Msg{Path: yat.NewPath("a/b")}); err != nil {
+			if err := rr.Publish(context.Background(), yat.Msg{Path: yat.NewPath("a/b")}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -131,6 +131,15 @@ func TestRouter_GroupedRoutingCandidates(t *testing.T) {
 			t.Fatalf("match-all deliveries: %d != %d", got, npub)
 		}
 	})
+}
+
+func TestPublish_ContextError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := yat.NewRouter().Publish(ctx, yat.Msg{Path: yat.NewPath("path")}); err != ctx.Err() {
+		t.Fatalf("publish: %v != %v", err, ctx.Err())
+	}
 }
 
 func TestNewRuleSet(t *testing.T) {
@@ -490,7 +499,7 @@ func TestClientServer_SPIFFERules_realTLS(t *testing.T) {
 			waitClientReady(t, watcher, "tls-watch-sub-"+tc.name)
 			waitClientReady(t, client, "tls-case-sub-"+tc.name)
 
-			if err := publisher.Publish(yat.Msg{
+			if err := publisher.Publish(context.Background(), yat.Msg{
 				Path: yat.NewPath("b/a"),
 				Data: []byte("from-allowed"),
 			}); err != nil {
@@ -504,7 +513,7 @@ func TestClientServer_SPIFFERules_realTLS(t *testing.T) {
 				mustNoClientMsg(t, caseC)
 			}
 
-			if err := client.Publish(yat.Msg{
+			if err := client.Publish(context.Background(), yat.Msg{
 				Path: yat.NewPath("b/a"),
 				Data: []byte("from-case"),
 			}); err != nil {
@@ -581,7 +590,7 @@ func TestClientServer_SPIFFEDomainOnly_realTLS(t *testing.T) {
 	waitClientReady(t, watcher, "tls-domain-watch-sub")
 	waitClientReady(t, client, "tls-domain-case-sub")
 
-	if err := client.Publish(yat.Msg{
+	if err := client.Publish(context.Background(), yat.Msg{
 		Path: yat.NewPath("b/a"),
 		Data: []byte("pathless"),
 	}); err != nil {
@@ -668,7 +677,7 @@ func TestClientServer_SameClient(t *testing.T) {
 		t.Cleanup(unsub)
 		waitClientReady(t, c, "same")
 
-		if err := c.Publish(yat.Msg{
+		if err := c.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("path"),
 			Data:  []byte("first"),
 			Inbox: yat.NewPath("inbox"),
@@ -679,7 +688,7 @@ func TestClientServer_SameClient(t *testing.T) {
 		got := mustRecvClientMsg(t, msgC)
 		assertClientMsg(t, got, "path", []byte("first"), "inbox")
 
-		if err := c.Publish(yat.Msg{
+		if err := c.Publish(context.Background(), yat.Msg{
 			Path: yat.NewPath("b"),
 			Data: []byte("stale"),
 		}); err != nil {
@@ -688,7 +697,7 @@ func TestClientServer_SameClient(t *testing.T) {
 		mustNoClientMsg(t, msgC)
 
 		unsub()
-		if err := c.Publish(yat.Msg{
+		if err := c.Publish(context.Background(), yat.Msg{
 			Path: yat.NewPath("path"),
 			Data: []byte("gone"),
 		}); err != nil {
@@ -724,14 +733,14 @@ func TestClientServer_MultipleClientsSameServer(t *testing.T) {
 		waitClientReady(t, sub2, "same-s2-sub")
 		waitClientReady(t, nomatch, "same-neg-sub")
 
-		if err := pub1.Publish(yat.Msg{
+		if err := pub1.Publish(context.Background(), yat.Msg{
 			Path: yat.NewPath("a"),
 			Data: []byte("fanout-1"),
 		}); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := pub2.Publish(yat.Msg{
+		if err := pub2.Publish(context.Background(), yat.Msg{
 			Path: yat.NewPath("a"),
 			Data: []byte("fanout-2"),
 		}); err != nil {
@@ -788,7 +797,7 @@ func TestClientServer_RouterAndClients(t *testing.T) {
 		waitClientReady(t, sub1, "router-s1-sub")
 		waitClientReady(t, sub2, "router-s2-sub")
 
-		if err := rr.Publish(yat.Msg{
+		if err := rr.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("a"),
 			Data:  []byte("from-router"),
 			Inbox: yat.NewPath("inbox"),
@@ -803,13 +812,13 @@ func TestClientServer_RouterAndClients(t *testing.T) {
 
 		routerSub1 := make(chan yat.Msg, 8)
 		routerSub2 := make(chan yat.Msg, 8)
-		subR1, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("b")}, func(m yat.Msg) {
+		subR1, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("b")}, func(_ context.Context, m yat.Msg) {
 			routerSub1 <- cloneMsg(m)
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		subR2, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("b")}, func(m yat.Msg) {
+		subR2, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("b")}, func(_ context.Context, m yat.Msg) {
 			routerSub2 <- cloneMsg(m)
 		})
 		if err != nil {
@@ -818,7 +827,7 @@ func TestClientServer_RouterAndClients(t *testing.T) {
 		t.Cleanup(subR1.Cancel)
 		t.Cleanup(subR2.Cancel)
 
-		if err := pub.Publish(yat.Msg{
+		if err := pub.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("b"),
 			Data:  []byte("from-client"),
 			Inbox: yat.NewPath("inbox"),
@@ -890,7 +899,7 @@ func TestClientServer_GroupedRoutingCandidates(t *testing.T) {
 
 		const npub = 200
 		for i := range npub {
-			if err := pub.Publish(yat.Msg{
+			if err := pub.Publish(context.Background(), yat.Msg{
 				Path: yat.NewPath("topic/a/b"),
 				Data: []byte{byte(i)},
 			}); err != nil {
@@ -955,7 +964,7 @@ func TestClientServer_MultipleServersSharedRouter(t *testing.T) {
 		waitClientReady(t, sub1, "shared-s1-sub")
 		waitClientReady(t, sub2, "shared-s2-sub")
 
-		if err := pub1.Publish(yat.Msg{
+		if err := pub1.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("path"),
 			Data:  []byte("from-srv-1"),
 			Inbox: yat.NewPath("inbox/a"),
@@ -966,7 +975,7 @@ func TestClientServer_MultipleServersSharedRouter(t *testing.T) {
 		assertClientMsg(t, mustRecvClientMsg(t, sub1C), "path", []byte("from-srv-1"), "inbox/a")
 		assertClientMsg(t, mustRecvClientMsg(t, sub2C), "path", []byte("from-srv-1"), "inbox/a")
 
-		if err := pub2.Publish(yat.Msg{
+		if err := pub2.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("path"),
 			Data:  []byte("from-srv-2"),
 			Inbox: yat.NewPath("inbox/b"),
@@ -977,7 +986,7 @@ func TestClientServer_MultipleServersSharedRouter(t *testing.T) {
 		assertClientMsg(t, mustRecvClientMsg(t, sub1C), "path", []byte("from-srv-2"), "inbox/b")
 		assertClientMsg(t, mustRecvClientMsg(t, sub2C), "path", []byte("from-srv-2"), "inbox/b")
 
-		if err := rr.Publish(yat.Msg{
+		if err := rr.Publish(context.Background(), yat.Msg{
 			Path:  yat.NewPath("path"),
 			Data:  []byte("from-router"),
 			Inbox: yat.NewPath("inbox"),
@@ -1121,7 +1130,7 @@ func waitClientReady(t *testing.T, c *yat.Client, id string) {
 	path := "a/" + id
 	readyC, unsub := mustSubscribeClient(t, c, path)
 	defer unsub()
-	if err := c.Publish(yat.Msg{
+	if err := c.Publish(context.Background(), yat.Msg{
 		Path: yat.NewPath(path),
 		Data: []byte("ready"),
 	}); err != nil {
@@ -1141,7 +1150,7 @@ func mustSubscribeClientSel(t *testing.T, c *yat.Client, sel yat.Sel) (<-chan ya
 	t.Helper()
 
 	msgC := make(chan yat.Msg, 64)
-	sub, err := c.Subscribe(sel, func(m yat.Msg) {
+	sub, err := c.Subscribe(sel, func(_ context.Context, m yat.Msg) {
 		msgC <- cloneMsg(m)
 	})
 	if err != nil {
