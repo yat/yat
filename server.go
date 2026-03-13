@@ -43,6 +43,9 @@ type serverConn struct {
 	wbufs net.Buffers
 	wbufC chan struct{}
 
+	// wbufN tracks queued outbound bytes still in conn.wbufs.
+	wbufN int
+
 	net.Conn
 }
 
@@ -320,6 +323,7 @@ func (s *Server) writeFrames(ctx context.Context, logger *slog.Logger, conn *ser
 		conn.mu.Lock()
 		bufs := conn.wbufs
 		conn.wbufs = nil
+		conn.wbufN = 0
 		conn.mu.Unlock()
 
 		if len(bufs) > 0 {
@@ -347,7 +351,13 @@ func (s *Server) msg(conn *serverConn, subNum uint64, rawFields []byte) error {
 	prefix[2] = byte(n >> 16)
 
 	conn.mu.Lock()
+	if conn.wbufN+n > maxSvrConnBufLen {
+		conn.mu.Unlock()
+		return errBufferFull
+	}
+
 	conn.wbufs = append(conn.wbufs, prefix, rawFields)
+	conn.wbufN += n
 	conn.mu.Unlock()
 
 	select {
@@ -370,9 +380,10 @@ func (s *Server) keepalive(ctx context.Context, logger *slog.Logger, conn *serve
 		case <-tick.C:
 			conn.mu.Lock()
 
-			flush := len(conn.wbufs) == 0
+			flush := conn.wbufN == 0
 			if flush {
 				conn.wbufs = append(conn.wbufs, keepalive)
+				conn.wbufN += len(keepalive)
 			}
 
 			conn.mu.Unlock()

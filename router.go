@@ -40,6 +40,9 @@ type rnode struct {
 	name     string
 	children map[string]*rnode
 	entries  map[*rent]struct{}
+
+	// cached for fast lookup
+	wildElem, wildSuffix *rnode
 }
 
 // rent is an entry in the route tree.
@@ -255,7 +258,21 @@ func (n *rnode) leaf(p Path, createMissing bool) *rnode {
 		return n
 	}
 
-	if c, ok := n.children[car.String()]; ok {
+	name := car.String()
+
+	var c *rnode
+	switch name {
+	case "*":
+		c = n.wildElem
+
+	case "**":
+		c = n.wildSuffix
+
+	default:
+		c = n.children[name]
+	}
+
+	if c != nil {
 		return c.leaf(cdr, createMissing)
 	}
 
@@ -267,12 +284,20 @@ func (n *rnode) leaf(p Path, createMissing bool) *rnode {
 		n.children = make(map[string]*rnode)
 	}
 
-	c := &rnode{
+	c = &rnode{
 		parent: n,
-		name:   car.String(),
+		name:   name,
 	}
 
-	n.children[c.name] = c
+	n.children[name] = c
+	switch name {
+	case "*":
+		n.wildElem = c
+
+	case "**":
+		n.wildSuffix = c
+	}
+
 	return c.leaf(cdr, true)
 }
 
@@ -286,7 +311,6 @@ func (n *rnode) ins(e *rent) {
 
 func (n *rnode) del(v *rent) {
 	delete(n.entries, v)
-
 	// prune empty branches
 	if len(n.children) == 0 && len(n.entries) == 0 {
 		ancestor := n.parent
@@ -298,6 +322,13 @@ func (n *rnode) del(v *rent) {
 		}
 
 		delete(ancestor.children, name)
+		switch name {
+		case "*":
+			ancestor.wildElem = nil
+
+		case "**":
+			ancestor.wildSuffix = nil
+		}
 	}
 }
 
@@ -314,12 +345,12 @@ func (n *rnode) match(ee *[]*rent, p Path) {
 		c.match(ee, cdr)
 	}
 
-	if c, ok := n.children["**"]; ok {
-		c.match(ee, Path{})
+	if n.wildSuffix != nil {
+		n.wildSuffix.match(ee, Path{})
 	}
 
-	if c, ok := n.children["*"]; ok {
-		c.match(ee, cdr)
+	if n.wildElem != nil {
+		n.wildElem.match(ee, cdr)
 	}
 }
 

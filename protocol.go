@@ -32,6 +32,7 @@ const (
 	minFrameLen      = frameHdrLen
 	maxMsgDataLen    = 8 << 20
 	maxClientDataLen = 32 << 20
+	maxSvrConnBufLen = 32 << 20
 )
 
 const (

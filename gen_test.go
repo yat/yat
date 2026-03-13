@@ -43,8 +43,9 @@ const (
 	giDataField  = 3
 	giInboxField = 4
 
-	giMaxDataLen       = 8 << 20
-	giMaxClientDataLen = 32 << 20
+	giMaxDataLen               = 8 << 20
+	giMaxClientDataLen         = 32 << 20
+	giMaxServerConnWriteBufLen = 32 << 20
 
 	giMsgTimeout    = 2 * time.Second
 	giNoMsgTimeout  = 75 * time.Millisecond
@@ -903,6 +904,132 @@ func TestGenIntegrationServerProtocolRawPeer(t *testing.T) {
 		if typ != 0 || len(body) != 0 {
 			t.Fatalf("keepalive: type=%d body=%x", typ, body)
 		}
+	})
+}
+
+func TestGenIntegrationServerConnWriteBufferLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rr := yat.NewRouter()
+		srv := giMustNewServer(t, rr, yat.AllowAll())
+		slowPeer, done := giServeRawPeer(t, srv)
+		t.Cleanup(func() {
+			_ = slowPeer.Close()
+			<-done
+		})
+
+		fast := giNewPipeClient(t, srv)
+		slowC, slowSub := giMustSubscribeClient(t, fast, yat.Sel{Path: yat.NewPath("slow/path")})
+		otherC, otherSub := giMustSubscribeClient(t, fast, yat.Sel{Path: yat.NewPath("other/path")})
+		t.Cleanup(slowSub.Cancel)
+		t.Cleanup(otherSub.Cancel)
+
+		giWaitClientReadyPath(t, fast, "ready/server-writebuf-fast")
+
+		giWriteFrames(t, slowPeer, giSubFrame(t, 1, yat.Sel{Path: yat.NewPath("slow/path")}))
+		synctest.Wait()
+
+		if err := rr.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("slow/path"),
+			Data: []byte("prime"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		giAssertMsg(t, giRecvMsg(t, slowC), "slow/path", []byte("prime"), "")
+
+		typ, body := giReadAppFrame(t, slowPeer, giMsgTimeout)
+		if typ != giMsgFrameType {
+			t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
+		}
+		num, msg := giDecodeSharedFields(t, body)
+		if num != 1 {
+			t.Fatalf("msg num: %d != %d", num, 1)
+		}
+		giAssertMsg(t, msg, "slow/path", []byte("prime"), "")
+
+		if 4*len(giMsgFrame(1, yat.Msg{Path: yat.NewPath("slow/path"), Data: make([]byte, giMaxDataLen)})) <= giMaxServerConnWriteBufLen {
+			t.Fatalf("expected four max-size deliveries to exceed server conn buffer limit")
+		}
+
+		payloads := make([][]byte, 5)
+		for i := range payloads {
+			p := make([]byte, giMaxDataLen)
+			p[0] = byte('a' + i)
+			p[len(p)-1] = byte('A' + i)
+			payloads[i] = p
+		}
+
+		if err := rr.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("slow/path"),
+			Data: payloads[0],
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		synctest.Wait()
+
+		for _, payload := range payloads[1:] {
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("slow/path"),
+				Data: payload,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		for i, payload := range payloads {
+			got := giRecvMsg(t, slowC)
+			if got.Path.String() != "slow/path" {
+				t.Fatalf("slow path %d: %q != %q", i, got.Path.String(), "slow/path")
+			}
+			if !bytes.Equal(got.Data, payload) {
+				t.Fatalf("slow data %d mismatch: %d != %d", i, len(got.Data), len(payload))
+			}
+		}
+
+		if err := rr.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("other/path"),
+			Data: []byte("other-ok"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		giAssertMsg(t, giRecvMsg(t, otherC), "other/path", []byte("other-ok"), "")
+
+		for i, payload := range payloads[:4] {
+			typ, body = giReadAppFrame(t, slowPeer, giMsgTimeout)
+			if typ != giMsgFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
+			}
+			num, msg = giDecodeSharedFields(t, body)
+			if num != 1 {
+				t.Fatalf("msg num: %d != %d", num, 1)
+			}
+			if msg.Path.String() != "slow/path" {
+				t.Fatalf("slow peer path %d: %q != %q", i, msg.Path.String(), "slow/path")
+			}
+			if !bytes.Equal(msg.Data, payload) {
+				t.Fatalf("slow peer data %d mismatch: %d != %d", i, len(msg.Data), len(payload))
+			}
+		}
+
+		giExpectNoAppFrame(t, slowPeer, giNoMsgTimeout)
+
+		if err := rr.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("slow/path"),
+			Data: []byte("after-drain"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		giAssertMsg(t, giRecvMsg(t, slowC), "slow/path", []byte("after-drain"), "")
+
+		typ, body = giReadAppFrame(t, slowPeer, giMsgTimeout)
+		if typ != giMsgFrameType {
+			t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
+		}
+		num, msg = giDecodeSharedFields(t, body)
+		if num != 1 {
+			t.Fatalf("msg num: %d != %d", num, 1)
+		}
+		giAssertMsg(t, msg, "slow/path", []byte("after-drain"), "")
 	})
 }
 

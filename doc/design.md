@@ -57,3 +57,4 @@ limits
 - the maximum group length is 1KiB
 - the maximum message data length is 8MiB
 - the maximum client data buffer length is 32MiB
+- the maximum per-client server buffer length is 32MiB
