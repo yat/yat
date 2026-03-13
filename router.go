@@ -44,6 +44,7 @@ type rnode struct {
 
 // rent is an entry in the route tree.
 type rent struct {
+	Ext bool
 	Sel Sel
 	Do  func(delivery)
 	n   atomic.Uint64
@@ -74,7 +75,8 @@ func NewRouter() *Router {
 	return &Router{}
 }
 
-// Pub publishes a copy of the message.
+// Pub publishes the message.
+// It is an error to change a message after pubishing it.
 func (rr *Router) Publish(ctx context.Context, m Msg) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,13 +86,23 @@ func (rr *Router) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	ee := rr.route(m.Path)
+	ee, ext := rr.route(m.Path)
 	if len(ee) == 0 {
 		return nil
 	}
 
-	m, raw := cloneMsg(m)
-	rr.deliver(ee, delivery{m, raw, ctx})
+	d := delivery{
+		Ctx: ctx,
+		Msg: m,
+	}
+
+	if ext {
+		// make a deep copy to fanout
+		d.Raw = appendMsgFields(nil, d.Msg)
+		d.Msg = aliasMsgFields(d.Raw)
+	}
+
+	rr.deliver(ee, d)
 
 	return nil
 }
@@ -153,13 +165,13 @@ func (rr *Router) update(batch ...rop) {
 	}
 }
 
-func (rr *Router) route(path Path) []*rent {
+func (rr *Router) route(path Path) (entries []*rent, external bool) {
 	rr.mu.RLock()
 	ee := rr.tree.Match(path)
 	rr.mu.RUnlock()
 
 	if len(ee) == 0 {
-		return nil
+		return
 	}
 
 	rand.Shuffle(len(ee), func(i, j int) {
@@ -167,7 +179,7 @@ func (rr *Router) route(path Path) []*rent {
 	})
 
 	var gg map[Group]struct{}
-	return slices.DeleteFunc(ee, func(e *rent) bool {
+	entries = slices.DeleteFunc(ee, func(e *rent) bool {
 		if g := e.Sel.Group; g.String() != "" { // FIX: IsZero
 			if _, filled := gg[g]; filled {
 				return true
@@ -181,8 +193,14 @@ func (rr *Router) route(path Path) []*rent {
 			gg[g] = struct{}{}
 		}
 
+		if e.Ext {
+			external = true
+		}
+
 		return false
 	})
+
+	return
 }
 
 func (rr *Router) deliver(ee []*rent, d delivery) {

@@ -201,7 +201,7 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return nil
 	}
 
-	ee := s.router.route(fields.Path)
+	ee, _ := s.router.route(fields.Path)
 	s.router.deliver(ee, delivery{
 		Msg: fields.Msg,
 		Raw: raw,
@@ -254,6 +254,7 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	e := &rent{
+		Ext: true,
 		Sel: sel,
 		Do: func(d delivery) {
 			s.msg(conn, num, d.Raw)

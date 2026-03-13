@@ -117,12 +117,6 @@ func appendFrameBytes(buf []byte, typ byte, body []byte) []byte {
 	})
 }
 
-// cloneMsg returns a deep copy of the message.
-func cloneMsg(m Msg) (Msg, []byte) {
-	raw := appendMsgFields(nil, m)
-	return aliasMsgFields(raw), raw
-}
-
 // parseFields parses a raw proto and extracts shared fields:
 // num (1; varint), path (2; bytes), data (3; bytes), inbox (4; bytes), and status (5; varint).
 // It also destructively cleans the raw proto, preserving only fields 2, 3, and 4.

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"unsafe"
 
 	"google.golang.org/protobuf/encoding/protowire"
 )
@@ -2186,15 +2187,15 @@ func TestRouter_deliver_limit(t *testing.T) {
 
 		msg := Msg{Path: NewPath("a"), Data: []byte("x")}
 		for range 3 {
-			ee := rr.route(msg.Path)
+			ee, _ := rr.route(msg.Path)
 			rr.deliver(ee, delivery{Msg: msg})
 		}
 
 		if delivered != 2 {
 			t.Fatalf("delivered: %d != %d", delivered, 2)
 		}
-		if got := len(rr.route(msg.Path)); got != 0 {
-			t.Fatalf("len(route): %d != 0", got)
+		if ee, _ := rr.route(msg.Path); len(ee) != 0 {
+			t.Fatalf("len(route): %d != 0", len(ee))
 		}
 	})
 
@@ -2212,15 +2213,90 @@ func TestRouter_deliver_limit(t *testing.T) {
 
 		msg := Msg{Path: NewPath("a"), Data: []byte("x")}
 		for range 3 {
-			ee := rr.route(msg.Path)
+			ee, _ := rr.route(msg.Path)
 			rr.deliver(ee, delivery{Msg: msg})
 		}
 
 		if delivered != 3 {
 			t.Fatalf("delivered: %d != %d", delivered, 3)
 		}
-		if got := len(rr.route(msg.Path)); got != 1 {
-			t.Fatalf("len(route): %d != 1", got)
+
+		if ee, _ := rr.route(msg.Path); len(ee) != 1 {
+			t.Fatalf("len(route): %d != 1", len(ee))
+		}
+	})
+}
+
+func TestRouter_Publish_localDeliveryOptimization(t *testing.T) {
+	t.Run("local only skips raw fanout buffer", func(t *testing.T) {
+		rr := NewRouter()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		msg := Msg{Path: NewPath("a"), Data: []byte("payload")}
+
+		var got delivery
+		rr.update(rop{ropIns, &rent{
+			Sel: Sel{Path: msg.Path},
+			Do: func(d delivery) {
+				got = d
+			},
+			doneC: make(chan struct{}),
+			unsub: func() {},
+		}})
+
+		if err := rr.Publish(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+		if got.Ctx != ctx {
+			t.Fatalf("ctx: %v != %v", got.Ctx, ctx)
+		}
+		if got.Raw != nil {
+			t.Fatalf("raw: %x != nil", got.Raw)
+		}
+		if unsafe.SliceData(got.Msg.Data) != unsafe.SliceData(msg.Data) {
+			t.Fatal("data was copied")
+		}
+	})
+
+	t.Run("external subscriber forces encoded copy", func(t *testing.T) {
+		rr := NewRouter()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		msg := Msg{Path: NewPath("a"), Data: []byte("payload")}
+
+		var got delivery
+		rr.update(
+			rop{ropIns, &rent{
+				Sel: Sel{Path: msg.Path},
+				Do: func(d delivery) {
+					got = d
+				},
+				doneC: make(chan struct{}),
+				unsub: func() {},
+			}},
+			rop{ropIns, &rent{
+				Ext: true,
+				Sel: Sel{Path: msg.Path},
+				Do: func(delivery) {},
+			}},
+		)
+
+		if err := rr.Publish(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+		if got.Ctx != ctx {
+			t.Fatalf("ctx: %v != %v", got.Ctx, ctx)
+		}
+		if len(got.Raw) == 0 {
+			t.Fatal("raw not set")
+		}
+		if !bytes.Equal(got.Msg.Data, msg.Data) {
+			t.Fatalf("data: %q != %q", got.Msg.Data, msg.Data)
+		}
+		if unsafe.SliceData(got.Msg.Data) == unsafe.SliceData(msg.Data) {
+			t.Fatal("data was not copied")
 		}
 	})
 }
