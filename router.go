@@ -177,6 +177,22 @@ func (rr *Router) route(path Path) (entries []*rent, external bool) {
 		return
 	}
 
+	// fast path,
+	// no route groups
+	for _, e := range ee {
+		if e.Sel.Group != (Group{}) {
+			goto group
+		}
+
+		if e.Ext {
+			external = true
+		}
+	}
+
+	return ee, external
+
+group:
+
 	rand.Shuffle(len(ee), func(i, j int) {
 		ee[i], ee[j] = ee[j], ee[i]
 	})
