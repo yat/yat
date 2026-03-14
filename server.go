@@ -197,7 +197,7 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	if err := validatePubFrame(fields); err != nil {
+	if err := validateMsg(fields.Msg, false); err != nil {
 		return err
 	}
 

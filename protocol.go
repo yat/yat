@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"slices"
@@ -52,16 +53,17 @@ const (
 )
 
 var (
-	errShortFrame = errors.New("short frame")
-	errBufferFull = errors.New("buffer full")
-	errEmptyPath  = errors.New("empty path")
-	errWildPath   = errors.New("wildcard path")
-	errWildInbox  = errors.New("wildcard inbox")
-	errLongData   = errors.New("long data")
-	errLongGroup  = errors.New("long group")
-	errLimitRange = errors.New("limit out of range")
-	errDupSub     = errors.New("duplicate subscription number")
-	errSubNum     = errors.New("invalid subscription number")
+	errShortFrame    = errors.New("short frame")
+	errBufferFull    = errors.New("buffer full")
+	errEmptyPath     = errors.New("empty path")
+	errWildPath      = errors.New("wildcard path")
+	errReservedInbox = errors.New("reserved inbox path")
+	errWildInbox     = errors.New("wildcard inbox path")
+	errLongData      = errors.New("long data")
+	errLongGroup     = errors.New("long group")
+	errLimitRange    = errors.New("limit out of range")
+	errDupSub        = errors.New("duplicate subscription number")
+	errSubNum        = errors.New("invalid subscription number")
 )
 
 func (h frameHdr) Len() int {
@@ -259,12 +261,7 @@ func isWild(p Path) bool {
 	return slices.Contains(p.p, '*')
 }
 
-// validatePubFrame validates PubFrame fields.
-func validatePubFrame(fields sharedFields) error {
-	return validateMsg(fields.Msg)
-}
-
-func validateMsg(m Msg) error {
+func validateMsg(m Msg, allowReservedInbox bool) error {
 	if m.Path.IsZero() {
 		return errEmptyPath
 	}
@@ -275,6 +272,10 @@ func validateMsg(m Msg) error {
 
 	if isWild(m.Inbox) {
 		return errWildInbox
+	}
+
+	if !allowReservedInbox && isReservedInbox(m.Inbox) {
+		return errReservedInbox
 	}
 
 	if len(m.Data) > maxMsgDataLen {
@@ -289,9 +290,17 @@ func validateSel(s Sel) error {
 		return errEmptyPath
 	}
 
+	if isReservedInbox(s.Path) {
+		return errReservedInbox
+	}
+
 	if s.Limit < 0 || s.Limit > MaxLimit {
 		return errLimitRange
 	}
 
 	return nil
+}
+
+func isReservedInbox(p Path) bool {
+	return bytes.HasPrefix(p.p, []byte("@/"))
 }

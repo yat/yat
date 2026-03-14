@@ -107,7 +107,7 @@ func (c *Client) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	if err := validateMsg(m); err != nil {
+	if err := validateMsg(m, false); err != nil {
 		return err
 	}
 
@@ -405,7 +405,7 @@ func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte
 		return err
 	}
 
-	if err := validateMsg(fields.Msg); err != nil {
+	if err := validateMsg(fields.Msg, true); err != nil {
 		return err
 	}
 

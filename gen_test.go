@@ -217,6 +217,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		{},
 		{Path: yat.NewPath("*")},
 		{Path: yat.NewPath("path"), Inbox: yat.NewPath("*")},
+		{Path: yat.NewPath("path"), Inbox: yat.NewPath("@/reply")},
 	}
 	for _, msg := range msgErrors {
 		if err := c.Publish(context.Background(), msg); err == nil {
@@ -237,6 +238,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	}
 	if _, err := c.Subscribe(yat.Sel{Path: yat.NewPath("path"), Limit: yat.MaxLimit + 1}, func(context.Context, yat.Msg) {}); err == nil {
 		t.Fatal("oversize limit was accepted")
+	}
+	if _, err := c.Subscribe(yat.Sel{Path: yat.NewPath("@/reply")}, func(context.Context, yat.Msg) {}); err == nil {
+		t.Fatal("reserved inbox selector was accepted")
 	}
 	if _, err := c.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 		t.Fatal("nil callback was accepted")
@@ -417,13 +421,13 @@ func TestGenIntegrationClientProtocolInboundAndReconnect(t *testing.T) {
 		msgBody = protowire.AppendTag(msgBody, giDataField, protowire.BytesType)
 		msgBody = protowire.AppendBytes(msgBody, []byte("first"))
 		msgBody = protowire.AppendTag(msgBody, giInboxField, protowire.BytesType)
-		msgBody = protowire.AppendBytes(msgBody, []byte("reply"))
+		msgBody = protowire.AppendBytes(msgBody, []byte("@/reply"))
 
 		giWriteFrames(t, peer1,
 			giFrame(99, []byte{1, 2, 3}),
 			giFrame(giMsgFrameType, msgBody),
 		)
-		giAssertMsg(t, giRecvMsg(t, msgC), "topic", []byte("first"), "reply")
+		giAssertMsg(t, giRecvMsg(t, msgC), "topic", []byte("first"), "@/reply")
 
 		synctest.Wait()
 		time.Sleep(1 * time.Second)
@@ -919,6 +923,25 @@ func TestGenIntegrationServerProtocolRawPeer(t *testing.T) {
 			})
 
 			giWriteFrames(t, peer, giSubFrame(t, 0, yat.Sel{Path: yat.NewPath("topic")}))
+			giExpectConnClose(t, peer)
+		})
+	})
+
+	t.Run("reserved inbox pub closes connection", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
+
+			giWriteFrames(t, peer, giPubFrame(yat.Msg{
+				Path:  yat.NewPath("topic"),
+				Data:  []byte("blocked"),
+				Inbox: yat.NewPath("@/reply"),
+			}))
 			giExpectConnClose(t, peer)
 		})
 	})

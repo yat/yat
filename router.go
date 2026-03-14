@@ -85,7 +85,7 @@ func (rr *Router) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	if err := validateMsg(m); err != nil {
+	if err := validateMsg(m, false); err != nil {
 		return err
 	}
 
