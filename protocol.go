@@ -119,7 +119,7 @@ func appendFrame(buf []byte, typ byte, f func([]byte) []byte) []byte {
 }
 
 // parseFields parses a raw proto and extracts shared fields:
-// num (1; varint), path (2; bytes), data (3; bytes), inbox (4; bytes), and status (5; varint).
+// num (1; varint), path (2; bytes), data (3; bytes), and inbox (4; bytes).
 // It also destructively cleans the raw proto, preserving only fields 2, 3, and 4.
 // The returned fields.Msg and msg bytes alias the raw proto.
 func parseFields(raw []byte) (fields sharedFields, msg []byte, err error) {

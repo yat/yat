@@ -43,10 +43,10 @@ struct {
 
 frame types
 
-- PubFrame; sent by the client to publish a message
-- SubFrame; sent by the client to subscribe to a stream of messages
-- UnsubFrame; sent by the client to cancel a subscription
-- MsgFrame; sent by the server to deliver a message
+- pub - sent by the client to publish a message
+- sub - sent by the client to subscribe to a stream of messages
+- unsub - sent by the client to cancel a subscription
+- msg - by the server to deliver a message
 
 the read loop is the same on the client and server:
 

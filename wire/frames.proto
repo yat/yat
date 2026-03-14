@@ -4,20 +4,9 @@ package yat;
 
 option go_package = "yat.io/yat/wire";
 
-// This proto is just for reference. PubFrame and MsgFrame share field
-// numbers to help the server avoid allocating memory on fanout.
-// The field numbers match the *Field consts in protocol.go.
-message SharedFields {
-  uint64 num    = 1;
-  bytes path    = 2;
-  bytes data    = 3;
-  bytes inbox   = 4;
-}
-
-// client -> server
-
-message PubFrame {
-  reserved 1; // num
+// pub and msg
+message Msg {
+  uint64 num  = 1;
   bytes path  = 2;
   bytes data  = 3;
   bytes inbox = 4;
@@ -32,13 +21,4 @@ message SubFrame {
 
 message UnsubFrame {
   uint64 num = 1;
-}
-
-// server -> client
-
-message MsgFrame {
-  uint64 num  = 1;
-  bytes path  = 2;
-  bytes data  = 3;
-  bytes inbox = 4;
 }

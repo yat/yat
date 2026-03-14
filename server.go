@@ -197,6 +197,10 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
+	if fields.Num > 0 {
+		return errors.New("pub: num > 0")
+	}
+
 	if err := validateMsg(fields.Msg, false); err != nil {
 		return err
 	}
