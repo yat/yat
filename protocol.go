@@ -86,7 +86,7 @@ func appendSubFrame(buf []byte, num uint64, sel Sel) []byte {
 		Path: sel.Path.p,
 	}
 
-	if sel.Group != (Group{}) {
+	if !sel.Group.IsZero() {
 		sf.Group = []byte(sel.Group.String())
 	}
 

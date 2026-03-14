@@ -180,7 +180,7 @@ func (rr *Router) route(path Path) (entries []*rent, external bool) {
 	// fast path,
 	// no route groups
 	for _, e := range ee {
-		if e.Sel.Group != (Group{}) {
+		if !e.Sel.Group.IsZero() {
 			goto group
 		}
 
@@ -199,7 +199,7 @@ group:
 
 	var gg map[Group]struct{}
 	entries = slices.DeleteFunc(ee, func(e *rent) bool {
-		if g := e.Sel.Group; g != (Group{}) {
+		if g := e.Sel.Group; !g.IsZero() {
 			if _, filled := gg[g]; filled {
 				return true
 			}

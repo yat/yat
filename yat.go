@@ -34,3 +34,8 @@ type Sub interface {
 
 // MaxLimit is the maximum subscription delivery limit.
 const MaxLimit = 1<<16 - 1
+
+// IsZero returns true if the selector is empty.
+func (s Sel) IsZero() bool {
+	return s.Path.IsZero() && s.Group.IsZero() && s.Limit == 0
+}

@@ -2013,7 +2013,7 @@ func giSubFrame(t *testing.T, num uint64, sel yat.Sel) []byte {
 		Num:  num,
 		Path: []byte(sel.Path.String()),
 	}
-	if sel.Group != (yat.Group{}) {
+	if !sel.Group.IsZero() {
 		sf.Group = []byte(sel.Group.String())
 	}
 	if sel.Limit > 0 {

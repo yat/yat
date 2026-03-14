@@ -36,3 +36,8 @@ func (g Group) String() string {
 		return g.g.Value()
 	}
 }
+
+// IsZero returns true for the zero group.
+func (g Group) IsZero() bool {
+	return g == Group{}
+}

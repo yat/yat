@@ -52,10 +52,9 @@ type ClientConfig struct {
 type DialFunc func(context.Context) (net.Conn, error)
 
 type clientSub struct {
-	Sel Sel
-	Do  func(delivery)
-	n   atomic.Uint64
-
+	Sel   Sel
+	Do    func(delivery)
+	n     atomic.Uint64
 	doneC chan struct{}
 	unsub func()
 }
@@ -310,9 +309,14 @@ func (c *Client) connect(dial DialFunc) {
 
 		c.mu.Lock()
 
-		var resubbed bool
+		resubbed := false
 		for num, sub := range c.subs {
 			if slices.Contains(c.bsub, num) {
+				continue
+			}
+
+			if sub.Sel.IsZero() {
+				delete(c.subs, num)
 				continue
 			}
 
