@@ -226,6 +226,10 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	num := f.GetNum()
+	if num == 0 {
+		return errSubNum
+	}
+
 	p, _, err := ParsePath(f.GetPath())
 	if err != nil {
 		return err

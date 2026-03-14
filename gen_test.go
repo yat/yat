@@ -807,103 +807,120 @@ func TestGenIntegrationClientBufferedDataLimit(t *testing.T) {
 }
 
 func TestGenIntegrationServerProtocolRawPeer(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		rr := yat.NewRouter()
-		srv := giMustNewServer(t, rr, yat.AllowAll())
-		peer, done := giServeRawPeer(t, srv)
-		t.Cleanup(func() {
-			_ = peer.Close()
-			<-done
+	t.Run("valid frames", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
+
+			localC, localSub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("inbound")})
+			t.Cleanup(localSub.Cancel)
+
+			giWriteFrames(t, peer,
+				giFrame(99, []byte{1, 2, 3}),
+				giSubFrame(t, 7, yat.Sel{Path: yat.NewPath("topic"), Limit: 1}),
+			)
+			synctest.Wait()
+
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("topic"),
+				Data: []byte("first"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			typ, body := giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giMsgFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
+			}
+			num, msg := giDecodeSharedFields(t, body)
+			if num != 7 {
+				t.Fatalf("msg num: %d != %d", num, 7)
+			}
+			giAssertMsg(t, msg, "topic", []byte("first"), "")
+
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("topic"),
+				Data: []byte("second"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			giExpectNoAppFrame(t, peer, giNoMsgTimeout)
+
+			giWriteFrames(t, peer, giSubFrame(t, 8, yat.Sel{Path: yat.NewPath("updates")}))
+			synctest.Wait()
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("updates"),
+				Data: []byte("u1"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			typ, body = giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giMsgFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
+			}
+			num, msg = giDecodeSharedFields(t, body)
+			if num != 8 {
+				t.Fatalf("msg num: %d != %d", num, 8)
+			}
+			giAssertMsg(t, msg, "updates", []byte("u1"), "")
+
+			giWriteFrames(t, peer, giUnsubFrame(t, 8))
+			synctest.Wait()
+			if err := rr.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("updates"),
+				Data: []byte("u2"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			giExpectNoAppFrame(t, peer, giNoMsgTimeout)
+
+			pubBody := protowire.AppendTag(nil, 99, protowire.VarintType)
+			pubBody = protowire.AppendVarint(pubBody, 1)
+			pubBody = protowire.AppendTag(pubBody, giPathField, protowire.BytesType)
+			pubBody = protowire.AppendBytes(pubBody, []byte("stale"))
+			pubBody = protowire.AppendTag(pubBody, giDataField, protowire.BytesType)
+			pubBody = protowire.AppendBytes(pubBody, []byte("old"))
+			pubBody = protowire.AppendTag(pubBody, giPathField, protowire.BytesType)
+			pubBody = protowire.AppendBytes(pubBody, []byte("inbound"))
+			pubBody = protowire.AppendTag(pubBody, giDataField, protowire.BytesType)
+			pubBody = protowire.AppendBytes(pubBody, []byte("from-peer"))
+			pubBody = protowire.AppendTag(pubBody, giInboxField, protowire.BytesType)
+			pubBody = protowire.AppendBytes(pubBody, []byte("reply"))
+
+			giWriteFrames(t, peer, giFrame(giPubFrameType, pubBody))
+			synctest.Wait()
+			giAssertMsg(t, giRecvMsg(t, localC), "inbound", []byte("from-peer"), "reply")
+
+			synctest.Wait()
+			time.Sleep(1 * time.Second)
+			synctest.Wait()
+
+			typ, body = giReadFrame(t, peer, giMsgTimeout)
+			if typ != 0 || len(body) != 0 {
+				t.Fatalf("keepalive: type=%d body=%x", typ, body)
+			}
 		})
+	})
 
-		localC, localSub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("inbound")})
-		t.Cleanup(localSub.Cancel)
+	t.Run("zero sub number closes connection", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
 
-		giWriteFrames(t, peer,
-			giFrame(99, []byte{1, 2, 3}),
-			giSubFrame(t, 7, yat.Sel{Path: yat.NewPath("topic"), Limit: 1}),
-		)
-		synctest.Wait()
-
-		if err := rr.Publish(context.Background(), yat.Msg{
-			Path: yat.NewPath("topic"),
-			Data: []byte("first"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		typ, body := giReadAppFrame(t, peer, giMsgTimeout)
-		if typ != giMsgFrameType {
-			t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
-		}
-		num, msg := giDecodeSharedFields(t, body)
-		if num != 7 {
-			t.Fatalf("msg num: %d != %d", num, 7)
-		}
-		giAssertMsg(t, msg, "topic", []byte("first"), "")
-
-		if err := rr.Publish(context.Background(), yat.Msg{
-			Path: yat.NewPath("topic"),
-			Data: []byte("second"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		giExpectNoAppFrame(t, peer, giNoMsgTimeout)
-
-		giWriteFrames(t, peer, giSubFrame(t, 8, yat.Sel{Path: yat.NewPath("updates")}))
-		synctest.Wait()
-		if err := rr.Publish(context.Background(), yat.Msg{
-			Path: yat.NewPath("updates"),
-			Data: []byte("u1"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		typ, body = giReadAppFrame(t, peer, giMsgTimeout)
-		if typ != giMsgFrameType {
-			t.Fatalf("frame type: %d != %d", typ, giMsgFrameType)
-		}
-		num, msg = giDecodeSharedFields(t, body)
-		if num != 8 {
-			t.Fatalf("msg num: %d != %d", num, 8)
-		}
-		giAssertMsg(t, msg, "updates", []byte("u1"), "")
-
-		giWriteFrames(t, peer, giUnsubFrame(t, 8))
-		synctest.Wait()
-		if err := rr.Publish(context.Background(), yat.Msg{
-			Path: yat.NewPath("updates"),
-			Data: []byte("u2"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		giExpectNoAppFrame(t, peer, giNoMsgTimeout)
-
-		pubBody := protowire.AppendTag(nil, 99, protowire.VarintType)
-		pubBody = protowire.AppendVarint(pubBody, 1)
-		pubBody = protowire.AppendTag(pubBody, giPathField, protowire.BytesType)
-		pubBody = protowire.AppendBytes(pubBody, []byte("stale"))
-		pubBody = protowire.AppendTag(pubBody, giDataField, protowire.BytesType)
-		pubBody = protowire.AppendBytes(pubBody, []byte("old"))
-		pubBody = protowire.AppendTag(pubBody, giPathField, protowire.BytesType)
-		pubBody = protowire.AppendBytes(pubBody, []byte("inbound"))
-		pubBody = protowire.AppendTag(pubBody, giDataField, protowire.BytesType)
-		pubBody = protowire.AppendBytes(pubBody, []byte("from-peer"))
-		pubBody = protowire.AppendTag(pubBody, giInboxField, protowire.BytesType)
-		pubBody = protowire.AppendBytes(pubBody, []byte("reply"))
-
-		giWriteFrames(t, peer, giFrame(giPubFrameType, pubBody))
-		synctest.Wait()
-		giAssertMsg(t, giRecvMsg(t, localC), "inbound", []byte("from-peer"), "reply")
-
-		synctest.Wait()
-		time.Sleep(1 * time.Second)
-		synctest.Wait()
-
-		typ, body = giReadFrame(t, peer, giMsgTimeout)
-		if typ != 0 || len(body) != 0 {
-			t.Fatalf("keepalive: type=%d body=%x", typ, body)
-		}
+			giWriteFrames(t, peer, giSubFrame(t, 0, yat.Sel{Path: yat.NewPath("topic")}))
+			giExpectConnClose(t, peer)
+		})
 	})
 }
 

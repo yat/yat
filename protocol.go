@@ -61,6 +61,7 @@ var (
 	errLongGroup  = errors.New("long group")
 	errLimitRange = errors.New("limit out of range")
 	errDupSub     = errors.New("duplicate subscription number")
+	errSubNum     = errors.New("invalid subscription number")
 )
 
 func (h frameHdr) Len() int {

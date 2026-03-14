@@ -163,9 +163,7 @@ func (c *Client) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, e
 	default:
 	}
 
-	c.num++
-	num := c.num
-
+	num := c.nextNum()
 	doneC := make(chan struct{})
 
 	cs := &clientSub{
@@ -488,6 +486,17 @@ func (c *Client) keepalive(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// nextNum returns the next subscription number.
+// The caller must hold mu.
+func (c *Client) nextNum() uint64 {
+	c.num++
+	// unlikely, but
+	if c.num == 0 {
+		c.num++
+	}
+	return c.num
 }
 
 func (c ClientConfig) withDefaults() ClientConfig {

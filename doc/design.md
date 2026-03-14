@@ -14,6 +14,7 @@ the ** wildcard matches one or more trailing elements at the end of a path
 subscribing
 
 a subscription selects a set of messages matching a particular path
+a client subscription is identified by its number, a uint64 > 0
 subscriptions are immutable
 a subscription may belong to a route group
 (which is just an arbitrary name or byte seq)
