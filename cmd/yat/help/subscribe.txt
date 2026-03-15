@@ -14,7 +14,7 @@ Flags:
   -limit, -n N
       Unsubscribe after N deliveries.
 
-  -duration 0s
+  -duration, -d 0s
       Unsubscribe after some amount of time.
 
   -raw

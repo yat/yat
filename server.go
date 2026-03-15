@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -197,24 +198,58 @@ func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
-	if fields.Num > 0 {
-		return errors.New("pub: num > 0")
+	isReq := fields.Num > 0
+	status := func(e Errno) {
+		if !isReq {
+			return
+		}
+
+		conn.mu.Lock()
+
+		conn.wbufs = append(conn.wbufs, appendFrame(nil, statusFrameType, func(b []byte) []byte {
+			return appendStatusFrame(b, fields.Num, e)
+		}))
+
+		conn.mu.Unlock()
+
+		select {
+		case conn.wbufC <- struct{}{}:
+		default:
+		}
 	}
 
 	if err := validateMsg(fields.Msg, false); err != nil {
+		status(EINVAL)
 		return err
 	}
 
-	var (
-		pathOK  = conn.allow(fields.Path, ActionPub)
-		inboxOK = fields.Inbox.IsZero() || conn.allow(fields.Inbox, ActionSub)
-	)
+	pathOK := s.router.validInbox(fields.Path) || conn.allow(fields.Path, ActionPub)
+	inboxOK := fields.Inbox.IsZero() || conn.allow(fields.Inbox, ActionSub)
 
 	if !pathOK || !inboxOK {
+		status(EPERM)
 		return nil
 	}
 
 	ee, _ := s.router.route(fields.Path)
+	ent := slices.ContainsFunc(ee, (*rent).IsResponder)
+	if len(ee) == 0 || isReq && !ent {
+		status(ENOENT)
+		return nil
+	}
+
+	if isReq {
+		if fields.Inbox.IsZero() {
+			raw = appendInboxField(raw, s.router.newInbox())
+			fields.Msg = aliasMsgFields(raw)
+		}
+
+		sel := Sel{Path: fields.Inbox, Limit: 1}
+		if err := s.addSub(conn, fields.Num, sel); err != nil {
+			return err
+		}
+	}
+
 	s.router.deliver(ee, delivery{
 		Msg: fields.Msg,
 		Raw: raw,
@@ -248,7 +283,8 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	}
 
 	sel := Sel{
-		Path: p,
+		Path:  p,
+		Flags: SelFlags(f.GetFlags()),
 	}
 
 	if f.Group != nil {
@@ -263,6 +299,11 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 		return err
 	}
 
+	return s.addSub(conn, num, sel)
+}
+
+// addSub adds a new sub to the conn's sub map and inserts it in the router.
+func (s *Server) addSub(conn *serverConn, num uint64, sel Sel) error {
 	conn.mu.Lock()
 
 	if _, dup := conn.subs[num]; dup {
@@ -292,7 +333,6 @@ func (s *Server) handleSub(ctx context.Context, logger *slog.Logger, conn *serve
 	conn.mu.Unlock()
 
 	s.router.update(rop{ropIns, e})
-
 	return nil
 }
 

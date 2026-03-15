@@ -10,6 +10,8 @@ import (
 )
 
 var _ yat.PublishSubscriber = new(yat.Router)
+var _ yat.Requester = new(yat.Router)
+var _ yat.Responder = new(yat.Router)
 
 func TestRouterVsPathMatch(t *testing.T) {
 	var tcs = []struct {
@@ -194,6 +196,95 @@ func TestRouter_Subscribe(t *testing.T) {
 		rr := yat.NewRouter()
 		if _, err := rr.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 			t.Error("no error")
+		}
+	})
+}
+
+func TestRouterRouteGroupDedupWithResponder(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rr := yat.NewRouter()
+		path := yat.NewPath("group/path")
+		group := yat.NewGroup("g")
+
+		res, err := rr.Respond(yat.Sel{Path: path}, func(context.Context, yat.Msg) []byte { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(res.Cancel)
+
+		var n1, n2 atomic.Uint64
+		sub1, err := rr.Subscribe(yat.Sel{Path: path, Group: group}, func(context.Context, yat.Msg) {
+			n1.Add(1)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sub1.Cancel)
+
+		sub2, err := rr.Subscribe(yat.Sel{Path: path, Group: group}, func(context.Context, yat.Msg) {
+			n2.Add(1)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(sub2.Cancel)
+
+		if err := rr.Publish(context.Background(), yat.Msg{Path: path}); err != nil {
+			t.Fatal(err)
+		}
+
+		synctest.Wait()
+
+		if got := n1.Load() + n2.Load(); got != 1 {
+			t.Fatalf("grouped deliveries: %d != 1", got)
+		}
+	})
+}
+
+func BenchmarkRouterPublish(b *testing.B) {
+	path := yat.NewPath("bench/path")
+	msg := yat.Msg{Path: path}
+
+	b.Run("subscribers-only", func(b *testing.B) {
+		rr := yat.NewRouter()
+		for range 8 {
+			sub, err := rr.Subscribe(yat.Sel{Path: path}, func(context.Context, yat.Msg) {})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(sub.Cancel)
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if err := rr.Publish(context.Background(), msg); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("mixed-with-responders", func(b *testing.B) {
+		rr := yat.NewRouter()
+		for range 8 {
+			sub, err := rr.Subscribe(yat.Sel{Path: path}, func(context.Context, yat.Msg) {})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(sub.Cancel)
+		}
+		for range 8 {
+			sub, err := rr.Respond(yat.Sel{Path: path}, func(context.Context, yat.Msg) []byte { return nil })
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(sub.Cancel)
+		}
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if err := rr.Publish(context.Background(), msg); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }

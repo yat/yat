@@ -34,6 +34,12 @@ func (HelpCmd) Run(_ context.Context, _ *slog.Logger, args []string) error {
 	case "sub":
 		topic = "subscribe"
 
+	case "req":
+		topic = "request"
+
+	case "res":
+		topic = "respond"
+
 	case "server":
 		topic = "serve"
 	}

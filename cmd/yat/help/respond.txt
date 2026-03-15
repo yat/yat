@@ -1,0 +1,24 @@
+Respond subscribes as a responder and returns a static response body.
+
+Usage:
+
+  yat respond PATH
+
+Flags:
+
+  -file, -f /dev/stdin
+      Read response data from a file.
+      This flag is ignored if -empty is set.
+
+  -empty, -e
+      Respond with no data.
+
+  -group, -g NAME
+      Add the responder to a route group.
+      Requests are routed to a random group member.
+
+  -limit, -n N
+      Unsubscribe after N requests.
+
+  -duration 0s
+      Unsubscribe after some amount of time.

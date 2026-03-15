@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -33,10 +34,11 @@ import (
 const (
 	giFrameHdrLen = 4
 
-	giPubFrameType   = 2
-	giSubFrameType   = 4
-	giUnsubFrameType = 5
-	giMsgFrameType   = 16
+	giPubFrameType    = 2
+	giSubFrameType    = 4
+	giUnsubFrameType  = 5
+	giMsgFrameType    = 16
+	giStatusFrameType = 17
 
 	giNumField   = 1
 	giPathField  = 2
@@ -196,6 +198,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	default:
 		t.Fatal("router sub done did not close")
 	}
+	if _, err := rr.Respond(yat.Sel{Path: yat.NewPath("router/respond")}, nil); err == nil {
+		t.Fatal("nil router responder callback was accepted")
+	}
 
 	c, err := yat.NewClient(func(context.Context) (net.Conn, error) {
 		return nil, errors.New("dial failed")
@@ -212,6 +217,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	if err := c.Publish(ctx, yat.Msg{Path: yat.NewPath("path")}); err != ctx.Err() {
 		t.Fatalf("publish: %v != %v", err, ctx.Err())
 	}
+	if err := c.Request(ctx, yat.Msg{Path: yat.NewPath("path")}, func(context.Context, yat.Msg) error { return nil }); err != ctx.Err() {
+		t.Fatalf("request: %v != %v", err, ctx.Err())
+	}
 
 	msgErrors := []yat.Msg{
 		{},
@@ -222,6 +230,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	for _, msg := range msgErrors {
 		if err := c.Publish(context.Background(), msg); err == nil {
 			t.Fatalf("expected publish error for %#v", msg)
+		}
+		if err := c.Request(context.Background(), msg, func(context.Context, yat.Msg) error { return nil }); err == nil {
+			t.Fatalf("expected request error for %#v", msg)
 		}
 	}
 
@@ -244,6 +255,12 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	}
 	if _, err := c.Subscribe(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
 		t.Fatal("nil callback was accepted")
+	}
+	if err := c.Request(context.Background(), yat.Msg{Path: yat.NewPath("path")}, nil); err == nil {
+		t.Fatal("nil request callback was accepted")
+	}
+	if _, err := c.Respond(yat.Sel{Path: yat.NewPath("path")}, nil); err == nil {
+		t.Fatal("nil responder callback was accepted")
 	}
 
 	sub, err := c.Subscribe(yat.Sel{Path: yat.NewPath("close/me")}, func(context.Context, yat.Msg) {})
@@ -269,6 +286,9 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	}
 	if _, err := c.Subscribe(yat.Sel{Path: yat.NewPath("path")}, func(context.Context, yat.Msg) {}); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("subscribe after close: %v", err)
+	}
+	if err := c.Request(context.Background(), yat.Msg{Path: yat.NewPath("path")}, func(context.Context, yat.Msg) error { return nil }); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("request after close: %v", err)
 	}
 }
 
@@ -1374,6 +1394,429 @@ func TestGenIntegrationRouterAndClients(t *testing.T) {
 	})
 }
 
+func TestGenIntegrationRequestAndRespondMatrix(t *testing.T) {
+	kinds := []string{"client", "router"}
+
+	t.Run("success", func(t *testing.T) {
+		for _, requesterKind := range kinds {
+			for _, responderKind := range kinds {
+				requesterKind := requesterKind
+				responderKind := responderKind
+				combo := requesterKind + "-requester_" + responderKind + "-responder"
+
+				t.Run(combo, func(t *testing.T) {
+					t.Run("explicit inbox", func(t *testing.T) {
+						synctest.Test(t, func(t *testing.T) {
+							rig := giNewReqResRig(t, yat.AllowAll())
+							requester := rig.endpoint(t, requesterKind)
+							responder := rig.endpoint(t, responderKind)
+
+							path := "req/matrix/explicit/" + combo
+							giAssertRequestSuccess(t, requester, responder, yat.Msg{
+								Path:  yat.NewPath(path),
+								Data:  []byte("ping"),
+								Inbox: yat.NewPath("reply/" + combo),
+							})
+						})
+					})
+
+					t.Run("generated inbox", func(t *testing.T) {
+						synctest.Test(t, func(t *testing.T) {
+							rig := giNewReqResRig(t, yat.AllowAll())
+							requester := rig.endpoint(t, requesterKind)
+							responder := rig.endpoint(t, responderKind)
+
+							path := "req/matrix/generated/" + combo
+							giAssertRequestSuccess(t, requester, responder, yat.Msg{
+								Path: yat.NewPath(path),
+								Data: []byte("ping"),
+							})
+						})
+					})
+				})
+			}
+		}
+
+		t.Run("client-requester_same-client-responder", func(t *testing.T) {
+			t.Run("explicit inbox", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					rig := giNewReqResRig(t, yat.AllowAll())
+					client := rig.endpoint(t, "client")
+
+					giAssertRequestSuccess(t, client, client, yat.Msg{
+						Path:  yat.NewPath("req/matrix/explicit/client-requester_same-client-responder"),
+						Data:  []byte("ping"),
+						Inbox: yat.NewPath("reply/client-requester_same-client-responder"),
+					})
+				})
+			})
+
+			t.Run("generated inbox", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					rig := giNewReqResRig(t, yat.AllowAll())
+					client := rig.endpoint(t, "client")
+
+					giAssertRequestSuccess(t, client, client, yat.Msg{
+						Path: yat.NewPath("req/matrix/generated/client-requester_same-client-responder"),
+						Data: []byte("ping"),
+					})
+				})
+			})
+		})
+	})
+
+	t.Run("matching non-responder yields enoent", func(t *testing.T) {
+		for _, requesterKind := range kinds {
+			for _, watcherKind := range kinds {
+				requesterKind := requesterKind
+				watcherKind := watcherKind
+				combo := requesterKind + "-requester_" + watcherKind + "-watcher"
+
+				t.Run(combo, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						rig := giNewReqResRig(t, yat.AllowAll())
+						requester := rig.endpoint(t, requesterKind)
+						watcher := rig.endpoint(t, watcherKind)
+
+						path := "req/matrix/nores/" + combo
+						giAssertRequestNoResponder(t, requester, watcher, path)
+					})
+				})
+			}
+		}
+	})
+
+	t.Run("responder ignores ordinary publish", func(t *testing.T) {
+		for _, publisherKind := range kinds {
+			for _, responderKind := range kinds {
+				publisherKind := publisherKind
+				responderKind := responderKind
+				combo := publisherKind + "-publisher_" + responderKind + "-responder"
+
+				t.Run(combo, func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						rig := giNewReqResRig(t, yat.AllowAll())
+						publisher := rig.endpoint(t, publisherKind)
+						responder := rig.endpoint(t, responderKind)
+
+						path := "req/matrix/ignore/" + combo
+						giAssertResponderIgnoresPublish(t, publisher, responder, path)
+					})
+				})
+			}
+		}
+	})
+
+	t.Run("permission denied yields eperm", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rules, err := yat.NewRuleSet([]yat.Rule{{
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("ready/**"),
+					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+				}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rig := giNewReqResRig(t, rules)
+			requester := rig.endpoint(t, "client")
+			requester.waitReady(t, "ready/req/eperm/requester")
+
+			res := giRecvRequestResult(t, giRequestAsync(t, requester.requester, yat.Msg{
+				Path: yat.NewPath("req/denied"),
+				Data: []byte("ping"),
+			}))
+			if res.err != yat.EPERM {
+				t.Fatalf("request error: %v != %v", res.err, yat.EPERM)
+			}
+		})
+	})
+
+	t.Run("invalid raw request yields einval status", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
+
+			body := protowire.AppendTag(nil, giNumField, protowire.VarintType)
+			body = protowire.AppendVarint(body, 7)
+			giWriteFrames(t, peer, giFrame(giPubFrameType, body))
+
+			typ, statusBody := giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giStatusFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giStatusFrameType)
+			}
+
+			var status wire.StatusFrame
+			if err := proto.Unmarshal(statusBody, &status); err != nil {
+				t.Fatal(err)
+			}
+			if status.GetNum() != 7 {
+				t.Fatalf("status num: %d != %d", status.GetNum(), 7)
+			}
+			if got := yat.Errno(status.GetStatus()); got != yat.EINVAL {
+				t.Fatalf("status errno: %v != %v", got, yat.EINVAL)
+			}
+		})
+	})
+
+	t.Run("flushed disconnect yields eio", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dialer := giNewPeerDialer()
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				dialer.Close()
+				_ = c.Close()
+			})
+
+			resC := giRequestAsync(t, c, yat.Msg{
+				Path: yat.NewPath("req/eio"),
+				Data: []byte("ping"),
+			})
+
+			peer := dialer.Next(t)
+			typ, body := giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giPubFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giPubFrameType)
+			}
+			num, msg := giDecodeSharedFields(t, body)
+			if num == 0 {
+				t.Fatal("request number was zero")
+			}
+			giAssertMsg(t, msg, "req/eio", []byte("ping"), "")
+
+			_ = peer.Close()
+
+			res := giRecvRequestResult(t, resC)
+			if res.err != yat.EIO {
+				t.Fatalf("request error: %v != %v", res.err, yat.EIO)
+			}
+		})
+	})
+
+	t.Run("client responder close drops reply publish", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			rr := yat.NewRouter()
+			srv := giMustNewServer(t, rr, yat.AllowAll())
+			requester := giNewPipeClient(t, srv)
+			responder := giNewPipeClient(t, srv)
+
+			hitC := make(chan struct{}, 1)
+			sub := giMustRespond(t, responder, yat.Sel{Path: yat.NewPath("req/respond/close")},
+				func(_ context.Context, in yat.Msg) []byte {
+					_ = responder.Close()
+					hitC <- struct{}{}
+					return []byte("reply")
+				})
+			t.Cleanup(sub.Cancel)
+
+			giWaitClientReadyPath(t, requester, "ready/req/respond/close/requester")
+			giWaitClientReadyPath(t, responder, "ready/req/respond/close/responder")
+
+			ctx, cancel := context.WithCancel(context.Background())
+			resC := giRequestAsyncContext(t, requester, ctx, yat.Msg{
+				Path: yat.NewPath("req/respond/close"),
+				Data: []byte("ping"),
+			}, nil)
+
+			select {
+			case <-hitC:
+				cancel()
+			case <-time.After(giMsgTimeout):
+				t.Fatal("responder callback timeout")
+			}
+
+			res := giRecvRequestResult(t, resC)
+			if !errors.Is(res.err, context.Canceled) {
+				t.Fatalf("request error: %v != %v", res.err, context.Canceled)
+			}
+		})
+	})
+}
+
+func TestGenIntegrationClientRequestTeardown(t *testing.T) {
+	t.Run("buffer full while disconnected", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			srv := giMustNewServer(t, yat.NewRouter(), yat.AllowAll())
+			dialer := giNewSwitchPipeDialer(srv)
+
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = c.Close()
+				dialer.Wait()
+			})
+
+			payload := make([]byte, giMaxDataLen)
+			var (
+				cancels []context.CancelFunc
+				resCs   []<-chan giRequestResult
+			)
+
+			for range giMaxClientDataLen / giMaxDataLen {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancels = append(cancels, cancel)
+				resCs = append(resCs, giRequestAsyncContext(t, c, ctx, yat.Msg{
+					Path: yat.NewPath("req/buffer-full"),
+					Data: payload,
+				}, nil))
+			}
+
+			synctest.Wait()
+
+			if err := c.Request(context.Background(), yat.Msg{
+				Path: yat.NewPath("req/buffer-full"),
+				Data: []byte("x"),
+			}, func(context.Context, yat.Msg) error { return nil }); err == nil || err.Error() != giErrBufferFull {
+				t.Fatalf("request buffer full: %v", err)
+			}
+
+			for _, cancel := range cancels {
+				cancel()
+			}
+			for _, resC := range resCs {
+				res := giRecvRequestResult(t, resC)
+				if !errors.Is(res.err, context.Canceled) {
+					t.Fatalf("request error: %v != %v", res.err, context.Canceled)
+				}
+			}
+		})
+	})
+
+	t.Run("cancel sends unsub and returns context canceled", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dialer := giNewPeerDialer()
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				dialer.Close()
+				_ = c.Close()
+			})
+
+			ctx, cancel := context.WithCancel(context.Background())
+			resC := giRequestAsyncContext(t, c, ctx, yat.Msg{
+				Path: yat.NewPath("req/cancel"),
+				Data: []byte("ping"),
+			}, nil)
+
+			peer := dialer.Next(t)
+
+			typ, body := giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giPubFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giPubFrameType)
+			}
+
+			num, msg := giDecodeSharedFields(t, body)
+			if num == 0 {
+				t.Fatal("request number was zero")
+			}
+			giAssertMsg(t, msg, "req/cancel", []byte("ping"), "")
+
+			cancel()
+
+			res := giRecvRequestResult(t, resC)
+			if !errors.Is(res.err, context.Canceled) {
+				t.Fatalf("request error: %v != %v", res.err, context.Canceled)
+			}
+
+			typ, body = giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giUnsubFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giUnsubFrameType)
+			}
+
+			var uf wire.UnsubFrame
+			if err := proto.Unmarshal(body, &uf); err != nil {
+				t.Fatal(err)
+			}
+			if uf.GetNum() != num {
+				t.Fatalf("unsub num: %d != %d", uf.GetNum(), num)
+			}
+		})
+	})
+
+	t.Run("client close aborts pending request", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			dialer := giNewPeerDialer()
+			c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				dialer.Close()
+				_ = c.Close()
+			})
+
+			resC := giRequestAsyncContext(t, c, context.Background(), yat.Msg{
+				Path: yat.NewPath("req/close"),
+				Data: []byte("ping"),
+			}, nil)
+
+			peer := dialer.Next(t)
+
+			typ, body := giReadAppFrame(t, peer, giMsgTimeout)
+			if typ != giPubFrameType {
+				t.Fatalf("frame type: %d != %d", typ, giPubFrameType)
+			}
+
+			num, msg := giDecodeSharedFields(t, body)
+			if num == 0 {
+				t.Fatal("request number was zero")
+			}
+			giAssertMsg(t, msg, "req/close", []byte("ping"), "")
+
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			res := giRecvRequestResult(t, resC)
+			if !errors.Is(res.err, net.ErrClosed) {
+				t.Fatalf("request error: %v != %v", res.err, net.ErrClosed)
+			}
+		})
+	})
+
+	t.Run("write failure returns the raw write error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			errWrite := errors.New("write failed")
+
+			c, err := yat.NewClient(func(context.Context) (net.Conn, error) {
+				peer, client := net.Pipe()
+				return &giWriteFailConn{
+					Conn: client,
+					peer: peer,
+					err:  errWrite,
+				}, nil
+			}, yat.ClientConfig{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_ = c.Close()
+			})
+
+			res := giRecvRequestResult(t, giRequestAsync(t, c, yat.Msg{
+				Path: yat.NewPath("req/write-fail"),
+				Data: []byte("ping"),
+			}))
+			if !errors.Is(res.err, errWrite) {
+				t.Fatalf("request error: %v != %v", res.err, errWrite)
+			}
+		})
+	})
+}
+
 func TestGenIntegrationSharedRouterAcrossServers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rr := yat.NewRouter()
@@ -1767,6 +2210,13 @@ type giPeerDialer struct {
 	peerC chan net.Conn
 }
 
+type giWriteFailConn struct {
+	net.Conn
+	peer net.Conn
+	err  error
+	once sync.Once
+}
+
 type giSwitchPipeDialer struct {
 	mu      sync.Mutex
 	enabled bool
@@ -1793,6 +2243,20 @@ func (d *giPeerDialer) Dial(context.Context) (net.Conn, error) {
 
 	d.peerC <- peer
 	return client, nil
+}
+
+func (c *giWriteFailConn) Write([]byte) (int, error) {
+	c.once.Do(func() {
+		_ = c.peer.Close()
+	})
+	return 0, c.err
+}
+
+func (c *giWriteFailConn) Close() error {
+	c.once.Do(func() {
+		_ = c.peer.Close()
+	})
+	return c.Conn.Close()
 }
 
 func (d *giSwitchPipeDialer) Dial(context.Context) (net.Conn, error) {
@@ -1946,6 +2410,206 @@ func giMustSubscribeRouter(t *testing.T, rr *yat.Router, sel yat.Sel) (<-chan ya
 	return msgC, sub
 }
 
+type giRequestResult struct {
+	msg yat.Msg
+	err error
+}
+
+type giReqResEndpoint struct {
+	publisher  yat.Publisher
+	subscriber yat.Subscriber
+	requester  yat.Requester
+	responder  yat.Responder
+	wait       func(*testing.T, string)
+}
+
+func (e giReqResEndpoint) waitReady(t *testing.T, path string) {
+	t.Helper()
+
+	if e.wait != nil {
+		e.wait(t, path)
+	}
+}
+
+type giReqResRig struct {
+	rr  *yat.Router
+	srv *yat.Server
+}
+
+func giNewReqResRig(t *testing.T, rules *yat.RuleSet) *giReqResRig {
+	t.Helper()
+
+	if rules == nil {
+		rules = yat.AllowAll()
+	}
+
+	rr := yat.NewRouter()
+	return &giReqResRig{
+		rr:  rr,
+		srv: giMustNewServer(t, rr, rules),
+	}
+}
+
+func (r *giReqResRig) endpoint(t *testing.T, kind string) giReqResEndpoint {
+	t.Helper()
+
+	switch kind {
+	case "client":
+		c := giNewPipeClient(t, r.srv)
+		return giReqResEndpoint{
+			publisher:  c,
+			subscriber: c,
+			requester:  c,
+			responder:  c,
+			wait: func(t *testing.T, path string) {
+				giWaitClientReadyPath(t, c, path)
+			},
+		}
+
+	case "router":
+		return giReqResEndpoint{
+			publisher:  r.rr,
+			subscriber: r.rr,
+			requester:  r.rr,
+			responder:  r.rr,
+		}
+
+	default:
+		t.Fatalf("unknown req/res endpoint kind: %q", kind)
+		return giReqResEndpoint{}
+	}
+}
+
+func giMustRespond(t *testing.T, responder yat.Responder, sel yat.Sel, cb func(context.Context, yat.Msg) []byte) yat.Sub {
+	t.Helper()
+
+	sub, err := responder.Respond(sel, cb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return sub
+}
+
+func giRequestAsync(t *testing.T, requester yat.Requester, msg yat.Msg) <-chan giRequestResult {
+	t.Helper()
+
+	return giRequestAsyncContext(t, requester, context.Background(), msg, nil)
+}
+
+func giRequestAsyncContext(t *testing.T, requester yat.Requester, ctx context.Context, msg yat.Msg, cb func(context.Context, yat.Msg) error) <-chan giRequestResult {
+	t.Helper()
+
+	resC := make(chan giRequestResult, 1)
+	go func() {
+		var got yat.Msg
+		err := requester.Request(ctx, msg, func(cbctx context.Context, in yat.Msg) error {
+			got = giCloneMsg(in)
+			if cb != nil {
+				return cb(cbctx, in)
+			}
+			return nil
+		})
+		resC <- giRequestResult{msg: got, err: err}
+	}()
+
+	return resC
+}
+
+func giMustSubscribeAny(t *testing.T, subber yat.Subscriber, sel yat.Sel) (<-chan yat.Msg, yat.Sub) {
+	t.Helper()
+
+	msgC := make(chan yat.Msg, 256)
+	sub, err := subber.Subscribe(sel, func(_ context.Context, m yat.Msg) {
+		msgC <- giCloneMsg(m)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return msgC, sub
+}
+
+func giAssertRequestSuccess(t *testing.T, requester, responder giReqResEndpoint, msg yat.Msg) {
+	t.Helper()
+
+	reqC := make(chan yat.Msg, 1)
+	sub := giMustRespond(t, responder.responder, yat.Sel{Path: msg.Path},
+		func(_ context.Context, in yat.Msg) []byte {
+			reqC <- giCloneMsg(in)
+			return append([]byte("reply:"), in.Data...)
+		})
+	t.Cleanup(sub.Cancel)
+
+	requester.waitReady(t, "ready/"+msg.Path.String()+"/requester")
+	responder.waitReady(t, "ready/"+msg.Path.String()+"/responder")
+
+	res := giRecvRequestResult(t, giRequestAsync(t, requester.requester, msg))
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+
+	gotReq := giRecvMsg(t, reqC)
+	wantInbox := msg.Inbox
+	if wantInbox.IsZero() {
+		if !strings.HasPrefix(gotReq.Inbox.String(), "@/") {
+			t.Fatalf("generated inbox prefix: %q", gotReq.Inbox)
+		}
+		wantInbox = gotReq.Inbox
+	}
+
+	giAssertMsg(t, gotReq, msg.Path.String(), msg.Data, wantInbox.String())
+	giAssertMsg(t, res.msg, wantInbox.String(), append([]byte("reply:"), msg.Data...), "")
+}
+
+func giAssertRequestNoResponder(t *testing.T, requester, watcher giReqResEndpoint, path string) {
+	t.Helper()
+
+	msgC, sub := giMustSubscribeAny(t, watcher.subscriber, yat.Sel{Path: yat.NewPath(path)})
+	t.Cleanup(sub.Cancel)
+
+	requester.waitReady(t, "ready/"+path+"/requester")
+	watcher.waitReady(t, "ready/"+path+"/watcher")
+
+	res := giRecvRequestResult(t, giRequestAsync(t, requester.requester, yat.Msg{
+		Path: yat.NewPath(path),
+		Data: []byte("ping"),
+	}))
+	if res.err != yat.ENOENT {
+		t.Fatalf("request error: %v != %v", res.err, yat.ENOENT)
+	}
+	if !res.msg.Path.IsZero() || len(res.msg.Data) > 0 || !res.msg.Inbox.IsZero() {
+		t.Fatalf("unexpected request result message: path=%q data=%q inbox=%q", res.msg.Path, res.msg.Data, res.msg.Inbox)
+	}
+
+	giExpectNoMsg(t, msgC)
+}
+
+func giAssertResponderIgnoresPublish(t *testing.T, publisher, responder giReqResEndpoint, path string) {
+	t.Helper()
+
+	reqC := make(chan yat.Msg, 1)
+	sub := giMustRespond(t, responder.responder, yat.Sel{Path: yat.NewPath(path)},
+		func(_ context.Context, in yat.Msg) []byte {
+			reqC <- giCloneMsg(in)
+			return []byte("unexpected")
+		})
+	t.Cleanup(sub.Cancel)
+
+	publisher.waitReady(t, "ready/"+path+"/publisher")
+	responder.waitReady(t, "ready/"+path+"/responder")
+
+	if err := publisher.publisher.Publish(context.Background(), yat.Msg{
+		Path: yat.NewPath(path),
+		Data: []byte("plain-pub"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	synctest.Wait()
+	giExpectNoMsg(t, reqC)
+}
+
 func giWaitClientReadyPath(t *testing.T, c *yat.Client, path string) {
 	t.Helper()
 
@@ -1971,6 +2635,18 @@ func giRecvMsg(t *testing.T, msgC <-chan yat.Msg) yat.Msg {
 	case <-time.After(giMsgTimeout):
 		t.Fatal("message timeout")
 		return yat.Msg{}
+	}
+}
+
+func giRecvRequestResult(t *testing.T, resC <-chan giRequestResult) giRequestResult {
+	t.Helper()
+
+	select {
+	case res := <-resC:
+		return res
+	case <-time.After(giMsgTimeout):
+		t.Fatal("request timeout")
+		return giRequestResult{}
 	}
 }
 

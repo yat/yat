@@ -37,19 +37,24 @@ const (
 )
 
 const (
-	_              = 0
-	_              = 1
-	pubFrameType   = 2
-	subFrameType   = 4
-	unsubFrameType = 5
-	msgFrameType   = 16
+	_               = 0
+	_               = 1
+	pubFrameType    = 2
+	subFrameType    = 4
+	unsubFrameType  = 5
+	msgFrameType    = 16
+	statusFrameType = 17
 )
 
 const (
+	// Msg
 	numField   = 1
 	pathField  = 2
 	dataField  = 3
 	inboxField = 4
+
+	// StatusFrame
+	statusField = 2
 )
 
 var (
@@ -64,6 +69,7 @@ var (
 	errLimitRange    = errors.New("limit out of range")
 	errDupSub        = errors.New("duplicate subscription number")
 	errSubNum        = errors.New("invalid subscription number")
+	errNilCallback   = errors.New("nil callback func")
 )
 
 func (h frameHdr) Len() int {
@@ -97,10 +103,28 @@ func appendSubFrame(buf []byte, num uint64, sel Sel) []byte {
 		sf.Limit = int64(limit)
 	}
 
+	if sel.Flags > 0 {
+		sf.Flags = uint64(sel.Flags)
+	}
+
 	return appendFrame(buf, subFrameType, func(b []byte) []byte {
 		b, _ = proto.MarshalOptions{}.MarshalAppend(b, sf)
 		return b
 	})
+}
+
+func appendStatusFrame(b []byte, num uint64, status Errno) []byte {
+	if num == 0 || status == 0 {
+		return b
+	}
+
+	b = protowire.AppendTag(b, numField, protowire.VarintType)
+	b = protowire.AppendVarint(b, num)
+
+	b = protowire.AppendTag(b, statusField, protowire.VarintType)
+	b = protowire.AppendVarint(b, uint64(status))
+
+	return b
 }
 
 // appendFrame appends a frame header and body to buf and returns the extended slice.
@@ -226,16 +250,26 @@ func appendMsgFields(b []byte, m Msg) []byte {
 	}
 
 	if !m.Inbox.IsZero() {
-		b = protowire.AppendTag(b, inboxField, protowire.BytesType)
-		b = protowire.AppendBytes(b, m.Inbox.p)
+		b = appendInboxField(b, m.Inbox)
 	}
 
 	return b
 }
 
+func appendReqFields(b []byte, num uint64, m Msg) []byte {
+	b = protowire.AppendTag(b, numField, protowire.VarintType)
+	b = protowire.AppendVarint(b, num)
+	return appendMsgFields(b, m)
+}
+
+func appendInboxField(b []byte, inbox Path) []byte {
+	b = protowire.AppendTag(b, inboxField, protowire.BytesType)
+	return protowire.AppendBytes(b, inbox.p)
+}
+
 // aliasMsgFields returns a Msg with fields backed by the raw proto.
 // The encoded message must already be valid.
-func aliasMsgFields(raw []byte) (msg Msg) {
+func aliasMsgFields(raw []byte) (m Msg) {
 	for len(raw) > 0 {
 		num, _, nt := protowire.ConsumeTag(raw)
 		v, nv := protowire.ConsumeBytes(raw[nt:])
@@ -243,13 +277,13 @@ func aliasMsgFields(raw []byte) (msg Msg) {
 
 		switch num {
 		case pathField:
-			msg.Path.p = v
+			m.Path.p = v
 
 		case dataField:
-			msg.Data = v
+			m.Data = v
 
 		case inboxField:
-			msg.Inbox.p = v
+			m.Inbox.p = v
 		}
 	}
 

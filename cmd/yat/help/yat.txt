@@ -8,6 +8,8 @@ Commands:
 
   publish     publish a message
   subscribe   print selected messages
+  request     publish a request
+  respond     respond to requests
   serve       run a server instance
   seed        generate local creds
 

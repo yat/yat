@@ -91,6 +91,18 @@ func run(ctx context.Context, args []string) error {
 			ClientConfig: clientConfig,
 		}
 
+	case "request", "req":
+		cmd = &RequestCmd{
+			ClientConfig: clientConfig,
+			File:         "/dev/stdin",
+		}
+
+	case "respond", "res":
+		cmd = &RespondCmd{
+			ClientConfig: clientConfig,
+			File:         "/dev/stdin",
+		}
+
 	case "serve", "server":
 		cmd = &ServeCmd{
 			SharedConfig: sharedConfig,

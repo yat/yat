@@ -1,0 +1,25 @@
+Request sends a request and prints the first response.
+Responses are printed as JSON objects by default.
+
+Usage:
+
+  yat request PATH
+
+Flags:
+
+  -file, -f /dev/stdin
+      Read request data from a file.
+      This flag is ignored if -empty is set.
+
+  -empty, -e
+      Send a request with no data.
+
+  -inbox, -i PATH
+      Set the request inbox,
+      or the server will generate it.
+
+  -raw
+      Print raw response data.
+
+  -timeout, -t 0s
+      Fail after some amount of time.

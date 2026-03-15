@@ -21,6 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// pub and msg
 type Msg struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Num           uint64                 `protobuf:"varint,1,opt,name=num,proto3" json:"num,omitempty"`
@@ -95,6 +96,7 @@ type SubFrame struct {
 	Path          []byte                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	Group         []byte                 `protobuf:"bytes,3,opt,name=group,proto3" json:"group,omitempty"`
 	Limit         int64                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	Flags         uint64                 `protobuf:"varint,5,opt,name=flags,proto3" json:"flags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -157,6 +159,13 @@ func (x *SubFrame) GetLimit() int64 {
 	return 0
 }
 
+func (x *SubFrame) GetFlags() uint64 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
 type UnsubFrame struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Num           uint64                 `protobuf:"varint,1,opt,name=num,proto3" json:"num,omitempty"`
@@ -201,6 +210,58 @@ func (x *UnsubFrame) GetNum() uint64 {
 	return 0
 }
 
+type StatusFrame struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Num           uint64                 `protobuf:"varint,1,opt,name=num,proto3" json:"num,omitempty"`
+	Status        uint64                 `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusFrame) Reset() {
+	*x = StatusFrame{}
+	mi := &file_frames_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusFrame) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusFrame) ProtoMessage() {}
+
+func (x *StatusFrame) ProtoReflect() protoreflect.Message {
+	mi := &file_frames_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusFrame.ProtoReflect.Descriptor instead.
+func (*StatusFrame) Descriptor() ([]byte, []int) {
+	return file_frames_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *StatusFrame) GetNum() uint64 {
+	if x != nil {
+		return x.Num
+	}
+	return 0
+}
+
+func (x *StatusFrame) GetStatus() uint64 {
+	if x != nil {
+		return x.Status
+	}
+	return 0
+}
+
 var File_frames_proto protoreflect.FileDescriptor
 
 const file_frames_proto_rawDesc = "" +
@@ -210,15 +271,19 @@ const file_frames_proto_rawDesc = "" +
 	"\x03num\x18\x01 \x01(\x04R\x03num\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x12\n" +
 	"\x04data\x18\x03 \x01(\fR\x04data\x12\x14\n" +
-	"\x05inbox\x18\x04 \x01(\fR\x05inbox\"\\\n" +
+	"\x05inbox\x18\x04 \x01(\fR\x05inbox\"r\n" +
 	"\bSubFrame\x12\x10\n" +
 	"\x03num\x18\x01 \x01(\x04R\x03num\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
 	"\x05group\x18\x03 \x01(\fR\x05group\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x03R\x05limit\"\x1e\n" +
+	"\x05limit\x18\x04 \x01(\x03R\x05limit\x12\x14\n" +
+	"\x05flags\x18\x05 \x01(\x04R\x05flags\"\x1e\n" +
 	"\n" +
 	"UnsubFrame\x12\x10\n" +
-	"\x03num\x18\x01 \x01(\x04R\x03numB\x11Z\x0fyat.io/yat/wireb\x06proto3"
+	"\x03num\x18\x01 \x01(\x04R\x03num\"7\n" +
+	"\vStatusFrame\x12\x10\n" +
+	"\x03num\x18\x01 \x01(\x04R\x03num\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\x04R\x06statusB\x11Z\x0fyat.io/yat/wireb\x06proto3"
 
 var (
 	file_frames_proto_rawDescOnce sync.Once
@@ -232,11 +297,12 @@ func file_frames_proto_rawDescGZIP() []byte {
 	return file_frames_proto_rawDescData
 }
 
-var file_frames_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_frames_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_frames_proto_goTypes = []any{
-	(*Msg)(nil),        // 0: yat.Msg
-	(*SubFrame)(nil),   // 1: yat.SubFrame
-	(*UnsubFrame)(nil), // 2: yat.UnsubFrame
+	(*Msg)(nil),         // 0: yat.Msg
+	(*SubFrame)(nil),    // 1: yat.SubFrame
+	(*UnsubFrame)(nil),  // 2: yat.UnsubFrame
+	(*StatusFrame)(nil), // 3: yat.StatusFrame
 }
 var file_frames_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -257,7 +323,7 @@ func file_frames_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_frames_proto_rawDesc), len(file_frames_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

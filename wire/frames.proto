@@ -4,7 +4,7 @@ package yat;
 
 option go_package = "yat.io/yat/wire";
 
-// pub and msg
+// pub+msg
 message Msg {
   uint64 num  = 1;
   bytes path  = 2;
@@ -17,8 +17,14 @@ message SubFrame {
   bytes path   = 2;
   bytes group  = 3;
   int64 limit  = 4;
+  uint64 flags = 5;
 }
 
 message UnsubFrame {
   uint64 num = 1;
+}
+
+message StatusFrame {
+  uint64 num = 1;
+  uint64 status = 2;
 }

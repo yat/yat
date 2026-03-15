@@ -30,6 +30,21 @@ a subscription may limit the number of deliveries it receives
 when a delivery limit is reached, the subscription is stopped automatically
 by the client and server without the client unsubscribing
 
+a subscriber that selects the SRES flag is a responder
+responders are considered when the server responds to a request
+
+request/response
+
+a pub frame body that includes a number is a request
+the server automatically establishes a single-delivery sub for the request's inbox
+if the request doesn't include an inbox, the server generates a reserved inbox
+if an error (EPERM, EINVAL, ENOENT) occurs, the server writes a status to the client
+requests are delivered to multiple subscribers just like normal messages,
+but there must be at least one interested responder for delivery to occur
+
+if a client's network connection to the server fails,
+all pending requests that are already flushed fail
+
 protocol
 
 frame header
@@ -43,10 +58,11 @@ struct {
 
 frame types
 
-- pub - sent by the client to publish a message
-- sub - sent by the client to subscribe to a stream of messages
-- unsub - sent by the client to cancel a subscription
-- msg - by the server to deliver a message
+- pub: sent by the client to publish a message
+- sub: sent by the client to subscribe to a stream of messages
+- unsub: sent by the client to cancel a subscription
+- msg: sent by the server to deliver a message
+- status: sent by the server in response to a failed request
 
 the read loop is the same on the client and server:
 

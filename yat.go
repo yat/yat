@@ -1,6 +1,8 @@
 package yat
 
-import "context"
+import (
+	"context"
+)
 
 type Publisher interface {
 	Publish(context.Context, Msg) error
@@ -15,6 +17,14 @@ type PublishSubscriber interface {
 	Subscriber
 }
 
+type Requester interface {
+	Request(context.Context, Msg, func(context.Context, Msg) error) error
+}
+
+type Responder interface {
+	Respond(Sel, func(context.Context, Msg) []byte) (Sub, error)
+}
+
 type Msg struct {
 	Path  Path   `json:"path"`
 	Data  []byte `json:"data,omitempty"`
@@ -25,7 +35,14 @@ type Sel struct {
 	Path  Path
 	Group Group
 	Limit int
+	Flags SelFlags
 }
+
+type SelFlags uint64
+
+const (
+	SRES SelFlags = 1 << iota
+)
 
 type Sub interface {
 	Cancel()
@@ -37,5 +54,5 @@ const MaxLimit = 1<<16 - 1
 
 // IsZero returns true if the selector is empty.
 func (s Sel) IsZero() bool {
-	return s.Path.IsZero() && s.Group.IsZero() && s.Limit == 0
+	return s.Path.IsZero() && s.Group.IsZero() && s.Limit == 0 && s.Flags == 0
 }

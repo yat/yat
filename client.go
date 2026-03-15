@@ -24,9 +24,10 @@ type Client struct {
 	num  uint64
 	subs map[uint64]*clientSub
 
-	// bsub holds the numbers of buffered SubFrames, cleared when the
+	// bsub holds the numbers of buffered subs and reqs, cleared when the
 	// buffer is flushed. The connect loop uses bsub to decide if it
-	// should re-buffer a subscription.
+	// should re-buffer a subscription. The flusher uses bsub to fail
+	// pending requests if the flush write fails.
 	bsub []uint64
 
 	wbuf  []byte
@@ -94,7 +95,9 @@ func (c *Client) Close() error {
 
 	// unblock [Sub.Done]
 	for _, cs := range c.subs {
-		cs.unsub()
+		if cs.unsub != nil {
+			cs.unsub()
+		}
 	}
 
 	<-c.connC
@@ -146,12 +149,12 @@ func (c *Client) Publish(ctx context.Context, m Msg) error {
 // Call [Sub.Cancel] to unsubscribe.
 //
 // The callback func must not retain or modify delivered messages.
-func (c *Client) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, error) {
+func (c *Client) Subscribe(sel Sel, cb func(context.Context, Msg)) (Sub, error) {
 	if err := validateSel(sel); err != nil {
 		return nil, err
 	}
 
-	if callback == nil {
+	if cb == nil {
 		return nil, errNilCallback
 	}
 
@@ -167,46 +170,14 @@ func (c *Client) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, e
 	doneC := make(chan struct{})
 
 	cs := &clientSub{
-		Sel: sel,
-		Do: func(d delivery) {
-			ctx := d.Ctx
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			go callback(ctx, d.Msg)
-		},
-
+		Sel:   sel,
+		Do:    goDeliver(cb),
 		doneC: doneC,
 	}
 
 	cs.unsub = sync.OnceFunc(func() {
 		close(doneC)
-		c.mu.Lock()
-
-		select {
-		case <-c.doneC:
-			c.mu.Unlock()
-			return
-		default:
-		}
-
-		var ok bool
-		if _, ok = c.subs[num]; ok {
-			delete(c.subs, num)
-			c.wbuf = appendFrame(c.wbuf, unsubFrameType, func(b []byte) []byte {
-				b, _ = proto.MarshalOptions{}.MarshalAppend(b, &wire.UnsubFrame{Num: num})
-				return b
-			})
-		}
-
-		c.mu.Unlock()
-
-		if ok {
-			select {
-			case c.wbufC <- struct{}{}:
-			default:
-			}
-		}
+		c.unsub(num)
 	})
 
 	c.bsub = append(c.bsub, num)
@@ -221,6 +192,119 @@ func (c *Client) Subscribe(sel Sel, callback func(context.Context, Msg)) (Sub, e
 	}
 
 	return cs, nil
+}
+
+func (c *Client) Request(ctx context.Context, m Msg, cb func(context.Context, Msg) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := validateMsg(m, false); err != nil {
+		return err
+	}
+
+	if cb == nil {
+		return errNilCallback
+	}
+
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return net.ErrClosed
+	default:
+	}
+
+	if c.wbufD+len(m.Data) > maxClientDataLen {
+		c.mu.Unlock()
+		return errBufferFull
+	}
+
+	num := c.nextNum()
+	dC := make(chan delivery, 1)
+
+	req := &clientSub{
+		Do:    sendResponse(dC),
+		unsub: func() { c.unsub(num) },
+	}
+
+	c.bsub = append(c.bsub, num)
+	c.subs[num] = req
+
+	c.wbufD += len(m.Data)
+	c.wbuf = appendFrame(c.wbuf, pubFrameType, func(b []byte) []byte {
+		return appendReqFields(b, num, m)
+	})
+
+	delivered := false
+	defer func() {
+		if delivered {
+			return
+		}
+
+		req.unsub()
+	}()
+
+	c.mu.Unlock()
+
+	select {
+	case c.wbufC <- struct{}{}:
+	default:
+	}
+
+	var d delivery
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+
+	case <-c.doneC:
+		return net.ErrClosed
+
+	case d = <-dC:
+		delivered = true
+		if d.Err != nil {
+			return d.Err
+		}
+	}
+
+	return cb(d.Ctx, d.Msg)
+}
+
+func (c *Client) Respond(s Sel, cb func(ctx context.Context, in Msg) (out []byte)) (Sub, error) {
+	return respond(c, s, cb)
+}
+
+func (c *Client) unsub(num uint64) bool {
+	c.mu.Lock()
+
+	select {
+	case <-c.doneC:
+		c.mu.Unlock()
+		return false
+	default:
+	}
+
+	var ok bool
+	if _, ok = c.subs[num]; ok {
+		delete(c.subs, num)
+		c.wbuf = appendFrame(c.wbuf, unsubFrameType, func(b []byte) []byte {
+			b, _ = proto.MarshalOptions{}.MarshalAppend(b, &wire.UnsubFrame{Num: num})
+			return b
+		})
+	}
+
+	c.mu.Unlock()
+
+	if ok {
+		select {
+		case c.wbufC <- struct{}{}:
+		default:
+		}
+	}
+
+	return ok
 }
 
 // connect redials in a loop until the client is closed.
@@ -252,7 +336,20 @@ func (c *Client) connect(dial DialFunc) {
 
 	for {
 		c.mu.Lock()
+
 		buffered := len(c.wbuf) > 0
+
+		// fail stale requests
+		failed := delivery{Err: EIO}
+		for num, sub := range c.subs {
+			if slices.Contains(c.bsub, num) || !sub.IsRequest() {
+				continue
+			}
+
+			delete(c.subs, num)
+			sub.Do(failed)
+		}
+
 		c.mu.Unlock()
 
 		// stop if the client is done
@@ -310,11 +407,6 @@ func (c *Client) connect(dial DialFunc) {
 		resubbed := false
 		for num, sub := range c.subs {
 			if slices.Contains(c.bsub, num) {
-				continue
-			}
-
-			if sub.Sel.IsZero() {
-				delete(c.subs, num)
 				continue
 			}
 
@@ -377,6 +469,9 @@ func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.C
 		case msgFrameType:
 			handle = c.handleMsg
 
+		case statusFrameType:
+			handle = c.handleStatus
+
 		default:
 			logger.DebugContext(ctx, "discard frame", "type", hdr.Type(), "len", hdr.Len())
 			if _, err := io.CopyN(io.Discard, conn, int64(hdr.BodyLen())); err != nil {
@@ -410,21 +505,73 @@ func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte
 	}
 
 	c.mu.Lock()
-	sub := c.subs[fields.Num]
+
+	sub, ok := c.subs[fields.Num]
+	req := ok && sub.IsRequest()
+
+	if ok && req {
+		delete(c.subs, fields.Num)
+	}
+
 	c.mu.Unlock()
 
-	if sub != nil {
-		n := sub.n.Add(1)
-		lim := uint64(sub.Sel.Limit)
-
-		if lim == 0 || n <= lim {
-			sub.Do(delivery{Msg: fields.Msg})
-		}
-
-		if lim > 0 && n >= lim {
-			sub.unsub()
-		}
+	if !ok {
+		return nil
 	}
+
+	d := delivery{
+		Msg: fields.Msg,
+	}
+
+	if req {
+		sub.Do(d)
+		return nil
+	}
+
+	n := sub.n.Add(1)
+	lim := uint64(sub.Sel.Limit)
+
+	if lim == 0 || n <= lim {
+		sub.Do(d)
+	}
+
+	if lim > 0 && n >= lim {
+		sub.unsub()
+	}
+
+	return nil
+}
+
+func (c *Client) handleStatus(ctx context.Context, logger *slog.Logger, body []byte) error {
+	var status wire.StatusFrame
+	if err := proto.Unmarshal(body, &status); err != nil {
+		return err
+	}
+
+	// malformed status
+	if status.Num == 0 || status.Status == 0 {
+		return nil
+	}
+
+	c.mu.Lock()
+
+	sub, ok := c.subs[status.Num]
+	req := ok && sub.Sel.IsZero()
+
+	if ok && req {
+		delete(c.subs, status.Num)
+	}
+
+	c.mu.Unlock()
+
+	// not a request
+	if !ok || !req {
+		return nil
+	}
+
+	sub.Do(delivery{
+		Err: Errno(status.Status),
+	})
 
 	return nil
 }
@@ -442,6 +589,7 @@ func (c *Client) writeFrames(ctx context.Context, logger *slog.Logger, conn net.
 
 		c.mu.Lock()
 		buf := c.wbuf
+		bsub := c.bsub
 		c.bsub = nil
 		c.wbuf = nil
 		c.wbufD = 0
@@ -449,6 +597,20 @@ func (c *Client) writeFrames(ctx context.Context, logger *slog.Logger, conn net.
 
 		if len(buf) > 0 {
 			if _, err := conn.Write(buf); err != nil {
+				if len(bsub) > 0 {
+					c.mu.Lock()
+
+					failure := delivery{Err: err}
+					for _, num := range bsub {
+						if sub, ok := c.subs[num]; ok && sub.IsRequest() {
+							delete(c.subs, num)
+							sub.Do(failure)
+						}
+					}
+
+					c.mu.Unlock()
+				}
+
 				return err
 			}
 		}
@@ -513,4 +675,8 @@ func (cs *clientSub) Cancel() {
 
 func (cs *clientSub) Done() <-chan struct{} {
 	return cs.doneC
+}
+
+func (cs *clientSub) IsRequest() bool {
+	return cs.Sel.IsZero()
 }
