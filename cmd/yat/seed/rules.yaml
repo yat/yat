@@ -2,8 +2,9 @@ apiVersion: yat.io/v1alpha1
 kind: RuleSet
 
 rules:
-  - spiffe:
-      domain: local
+  - tls:
+      san:
+        uri: "spiffe://local/*"
     grants:
       - path: "**"
         actions: [pub, sub]

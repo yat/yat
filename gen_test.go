@@ -1953,6 +1953,243 @@ func TestGenIntegrationTLSWithoutClientCert(t *testing.T) {
 	giAssertMsg(t, giRecvMsg(t, clientC), "from/router", []byte("payload"), "")
 }
 
+func TestGenIntegrationTLSCondRulesOverTLS(t *testing.T) {
+	ca, caKey, err := pkigen.NewRoot(pkigen.CN("auth-root"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+
+	serverCert := giLeafCertificate(t, ca, caKey,
+		pkigen.CN("server"),
+		pkigen.DNS("localhost"),
+	)
+
+	allowedURI := "https://tls-auth.example/workloads/a"
+	allowedCond := &yat.TLSCond{}
+	allowedCond.SAN.URI = allowedURI
+
+	allowedCert := giLeafCertificate(t, ca, caKey,
+		pkigen.CN("allowed"),
+		pkigen.URI(allowedURI),
+	)
+
+	rules, err := yat.NewRuleSet([]yat.Rule{
+		{
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("a/**"),
+				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+			}},
+		},
+		{
+			TLS: allowedCond,
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("b/**"),
+				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := giStartTLSServer(t, rules, serverCert, roots)
+	watcher := giNewTLSClient(t, addr, roots, allowedCert)
+	publisher := giNewTLSClient(t, addr, roots, allowedCert)
+
+	giWaitClientReadyPath(t, watcher, "a/ready/watch")
+	giWaitClientReadyPath(t, publisher, "a/ready/publisher")
+
+	watchC, watchSub := giMustSubscribeClient(t, watcher, yat.Sel{Path: yat.NewPath("b/a")})
+	t.Cleanup(watchSub.Cancel)
+	giWaitClientReadyPath(t, watcher, "a/ready/watch-sub")
+
+	cases := []struct {
+		name    string
+		opts    []pkigen.CertOpt
+		wantSub bool
+		wantPub bool
+	}{
+		{
+			name:    "matching uri san",
+			opts:    []pkigen.CertOpt{pkigen.URI(allowedURI)},
+			wantSub: true,
+			wantPub: true,
+		},
+		{
+			name: "uri mismatch",
+			opts: []pkigen.CertOpt{pkigen.URI("https://tls-auth.example/workloads/b")},
+		},
+		{
+			name: "no uri san",
+		},
+		{
+			name: "multiple uri sans",
+			opts: []pkigen.CertOpt{
+				pkigen.URI(allowedURI),
+				pkigen.URI("https://tls-auth.example/workloads/extra"),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			opts := append([]pkigen.CertOpt{pkigen.CN(tc.name)}, tc.opts...)
+			caseCert := giLeafCertificate(t, ca, caKey, opts...)
+			client := giNewTLSClient(t, addr, roots, caseCert)
+
+			giWaitClientReadyPath(t, client, "a/ready/"+tc.name)
+
+			caseC, caseSub := giMustSubscribeClient(t, client, yat.Sel{Path: yat.NewPath("b/a")})
+			t.Cleanup(caseSub.Cancel)
+			giWaitClientReadyPath(t, client, "a/subready/"+tc.name)
+
+			if err := publisher.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("b/a"),
+				Data: []byte("from-allowed"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-allowed"), "")
+			if tc.wantSub {
+				giAssertMsg(t, giRecvMsg(t, caseC), "b/a", []byte("from-allowed"), "")
+			} else {
+				giExpectNoMsg(t, caseC)
+			}
+
+			if err := client.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("b/a"),
+				Data: []byte("from-case"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.wantPub {
+				giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-case"), "")
+			} else {
+				giExpectNoMsg(t, watchC)
+			}
+		})
+	}
+
+	t.Run("wildcard uri suffix match", func(t *testing.T) {
+		wildcardPattern := "https://tls-auth.example/workloads/*"
+		wildcardCond := &yat.TLSCond{}
+		wildcardCond.SAN.URI = wildcardPattern
+
+		wildcardRules, err := yat.NewRuleSet([]yat.Rule{
+			{
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("a/**"),
+					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+				}},
+			},
+			{
+				TLS: wildcardCond,
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("b/**"),
+					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+				}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		wildcardAllowedCert := giLeafCertificate(t, ca, caKey,
+			pkigen.CN("wildcard-allowed"),
+			pkigen.URI("https://tls-auth.example/workloads/a"),
+		)
+
+		wildcardAddr := giStartTLSServer(t, wildcardRules, serverCert, roots)
+		watcher := giNewTLSClient(t, wildcardAddr, roots, wildcardAllowedCert)
+		publisher := giNewTLSClient(t, wildcardAddr, roots, wildcardAllowedCert)
+
+		giWaitClientReadyPath(t, watcher, "a/ready/wildcard-watch")
+		giWaitClientReadyPath(t, publisher, "a/ready/wildcard-publisher")
+
+		watchC, watchSub := giMustSubscribeClient(t, watcher, yat.Sel{Path: yat.NewPath("b/a")})
+		t.Cleanup(watchSub.Cancel)
+		giWaitClientReadyPath(t, watcher, "a/ready/wildcard-watch-sub")
+
+		cases := []struct {
+			name    string
+			uri     string
+			wantSub bool
+			wantPub bool
+		}{
+			{
+				name:    "matching non-empty suffix",
+				uri:     "https://tls-auth.example/workloads/a",
+				wantSub: true,
+				wantPub: true,
+			},
+			{
+				name:    "matching empty suffix",
+				uri:     "https://tls-auth.example/workloads/",
+				wantSub: true,
+				wantPub: true,
+			},
+			{
+				name: "shorter than wildcard prefix",
+				uri:  "https://tls-auth.example/workloads",
+			},
+			{
+				name: "prefix mismatch",
+				uri:  "https://tls-auth.example/other/a",
+			},
+		}
+
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				caseCert := giLeafCertificate(t, ca, caKey,
+					pkigen.CN(tc.name),
+					pkigen.URI(tc.uri),
+				)
+				client := giNewTLSClient(t, wildcardAddr, roots, caseCert)
+
+				giWaitClientReadyPath(t, client, "a/ready/wildcard/"+tc.name)
+
+				caseC, caseSub := giMustSubscribeClient(t, client, yat.Sel{Path: yat.NewPath("b/a")})
+				t.Cleanup(caseSub.Cancel)
+				giWaitClientReadyPath(t, client, "a/subready/wildcard/"+tc.name)
+
+				if err := publisher.Publish(context.Background(), yat.Msg{
+					Path: yat.NewPath("b/a"),
+					Data: []byte("from-wildcard-allowed"),
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-wildcard-allowed"), "")
+				if tc.wantSub {
+					giAssertMsg(t, giRecvMsg(t, caseC), "b/a", []byte("from-wildcard-allowed"), "")
+				} else {
+					giExpectNoMsg(t, caseC)
+				}
+
+				if err := client.Publish(context.Background(), yat.Msg{
+					Path: yat.NewPath("b/a"),
+					Data: []byte("from-wildcard-case"),
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				if tc.wantPub {
+					giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-wildcard-case"), "")
+				} else {
+					giExpectNoMsg(t, watchC)
+				}
+			})
+		}
+	})
+}
+
 func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 	ca, caKey, err := pkigen.NewRoot(pkigen.CN("auth-root"))
 	if err != nil {
