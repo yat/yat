@@ -36,6 +36,10 @@ type ServerConfig struct {
 type serverConn struct {
 	mu sync.Mutex
 
+	// principal identifies the client.
+	// It is used to compile the connection's allow func.
+	principal Principal
+
 	// allow decides whether client actions are allowed.
 	// It is initially compiled when a connection is accepted.
 	allow func(Path, Action) bool
@@ -119,15 +123,14 @@ func (s *Server) serveConn(ctx context.Context, logger *slog.Logger, conn net.Co
 		Conn:  conn,
 	}
 
-	var p Principal
-	if tc, ok := conn.(interface{ ConnectionState() tls.ConnectionState }); ok {
+	if tc, ok := sc.Conn.(interface{ ConnectionState() tls.ConnectionState }); ok {
 		if vc := tc.ConnectionState().VerifiedChains; len(vc) > 0 && len(vc[0]) > 0 {
-			p.Cert = vc[0][0]
+			sc.principal.Cert = vc[0][0]
 		}
 	}
 
 	if s.config.Rules != nil {
-		sc.allow = s.config.Rules.Compile(p)
+		sc.allow = s.config.Rules.Compile(sc.principal)
 	}
 
 	defer func() {
