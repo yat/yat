@@ -79,10 +79,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 			}},
 		},
 		{
-			SPIFFE: &yat.SPIFFECond{
-				Domain: "trust-domain",
-				Path:   yat.NewPath("work/*"),
-			},
+			TLS: giTLSCond("spiffe://trust-domain/work/*"),
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("b/**"),
 				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
@@ -97,26 +94,6 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		name  string
 		rules []yat.Rule
 	}{
-		{
-			name: "empty spiffe domain",
-			rules: []yat.Rule{{
-				SPIFFE: &yat.SPIFFECond{},
-				Grants: []yat.Grant{{
-					Path:    yat.NewPath("path"),
-					Actions: []yat.Action{yat.ActionPub},
-				}},
-			}},
-		},
-		{
-			name: "invalid spiffe domain",
-			rules: []yat.Rule{{
-				SPIFFE: &yat.SPIFFECond{Domain: "Trust-Domain"},
-				Grants: []yat.Grant{{
-					Path:    yat.NewPath("path"),
-					Actions: []yat.Action{yat.ActionPub},
-				}},
-			}},
-		},
 		{
 			name:  "empty grants",
 			rules: []yat.Rule{{}},
@@ -2190,7 +2167,7 @@ func TestGenIntegrationTLSCondRulesOverTLS(t *testing.T) {
 	})
 }
 
-func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
+func TestGenIntegrationTLSSPIFFEURIRulesOverTLS(t *testing.T) {
 	ca, caKey, err := pkigen.NewRoot(pkigen.CN("auth-root"))
 	if err != nil {
 		t.Fatal(err)
@@ -2216,10 +2193,7 @@ func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 			}},
 		},
 		{
-			SPIFFE: &yat.SPIFFECond{
-				Domain: "trust-domain",
-				Path:   yat.NewPath("a/b"),
-			},
+			TLS: giTLSCond("spiffe://trust-domain/a/b"),
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("b/**"),
 				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
@@ -2353,7 +2327,7 @@ func TestGenIntegrationSPIFFERulesOverTLS(t *testing.T) {
 				}},
 			},
 			{
-				SPIFFE: &yat.SPIFFECond{Domain: "trust-domain"},
+				TLS: giTLSCond("spiffe://trust-domain"),
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("b/**"),
 					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
@@ -2546,6 +2520,12 @@ func (d *giSwitchPipeDialer) Enable() {
 
 func (d *giSwitchPipeDialer) Wait() {
 	d.wg.Wait()
+}
+
+func giTLSCond(uri string) *yat.TLSCond {
+	cond := &yat.TLSCond{}
+	cond.SAN.URI = uri
+	return cond
 }
 
 func giLeafCertificate(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, opts ...pkigen.CertOpt) tls.Certificate {

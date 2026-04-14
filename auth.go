@@ -15,9 +15,8 @@ type RuleSet struct {
 
 // A Rule containing only Grants applies to all principals.
 type Rule struct {
-	TLS    *TLSCond    `json:"tls"`
-	SPIFFE *SPIFFECond `json:"spiffe"`
-	Grants []Grant     `json:"grants"`
+	TLS    *TLSCond `json:"tls"`
+	Grants []Grant  `json:"grants"`
 }
 
 // TLSCond requires a principal to present a certificate with a matching URI SAN.
@@ -25,12 +24,6 @@ type TLSCond struct {
 	SAN struct {
 		URI string `json:"uri"`
 	} `json:"san"`
-}
-
-// SPIFFECond requires a principal to have a matching SPIFFE ID.
-type SPIFFECond struct {
-	Domain string `json:"domain"`
-	Path   Path   `json:"path"`
 }
 
 type Grant struct {
@@ -111,21 +104,10 @@ func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 }
 
 func (r Rule) match(p Principal) bool {
-	return (r.TLS == nil || r.TLS.match(p)) &&
-		(r.SPIFFE == nil || r.SPIFFE.match(p))
+	return r.TLS == nil || r.TLS.match(p)
 }
 
 func (r Rule) validate() error {
-	if r.SPIFFE != nil {
-		if r.SPIFFE.Domain == "" {
-			return errors.New("spiffe: empty domain")
-		}
-
-		if !validTrustDomain.MatchString(r.SPIFFE.Domain) {
-			return errors.New("spiffe: invalid domain")
-		}
-	}
-
 	if len(r.Grants) == 0 {
 		// FIX: is this actually an error?
 		return errors.New("empty grants")
@@ -160,48 +142,6 @@ func (tc TLSCond) match(p Principal) bool {
 	}
 
 	return smatch(tc.SAN.URI, p.Cert.URIs[0].String())
-}
-
-func (ss SPIFFECond) match(p Principal) bool {
-	if p.Cert == nil {
-		return false
-	}
-
-	if len(p.Cert.URIs) == 0 || len(p.Cert.URIs) > 1 {
-		return false
-	}
-
-	id := p.Cert.URIs[0]
-	if id.Scheme != "spiffe" || len(id.RawQuery) > 0 || id.ForceQuery || id.RawFragment != "" || id.User != nil {
-		return false
-	}
-
-	var path Path
-	var wild bool
-	var err error
-
-	if raw := strings.TrimPrefix(id.Path, "/"); raw != "" {
-		path, wild, err = ParsePath(raw)
-	}
-
-	if wild || err != nil {
-		return false
-	}
-
-	domain := id.Host
-	if !validTrustDomain.MatchString(domain) {
-		return false
-	}
-
-	if ss.Domain != "" && domain != ss.Domain {
-		return false
-	}
-
-	if !ss.Path.IsZero() && !ss.Path.Match(path) {
-		return false
-	}
-
-	return true
 }
 
 func (g Grant) allow(p Path, a Action) bool {
