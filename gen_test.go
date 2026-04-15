@@ -112,6 +112,19 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	emptyGrantRules, err := yat.NewRuleSet(context.Background(), []yat.Rule{{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allowEmptyGrants := emptyGrantRules.Compile(yat.Principal{})
+	if allowEmptyGrants(yat.NewPath("empty/grants"), yat.ActionPub) {
+		t.Fatal("empty grant rule allowed pub")
+	}
+	if allowEmptyGrants(yat.NewPath("empty/grants"), yat.ActionSub) {
+		t.Fatal("empty grant rule allowed sub")
+	}
+
 	ruleErrors := []struct {
 		name  string
 		rules []yat.Rule
@@ -135,10 +148,6 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 					Actions: []yat.Action{yat.ActionPub},
 				}},
 			}},
-		},
-		{
-			name:  "empty grants",
-			rules: []yat.Rule{{}},
 		},
 		{
 			name: "empty grant path",

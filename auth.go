@@ -196,11 +196,6 @@ func (r Rule) validate() error {
 		}
 	}
 
-	if len(r.Grants) == 0 {
-		// FIX: is this actually an error?
-		return errors.New("empty grants")
-	}
-
 	for i, g := range r.Grants {
 		if g.Path.IsZero() {
 			return fmt.Errorf("grants[%d]: empty path", i)
