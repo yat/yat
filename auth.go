@@ -351,6 +351,19 @@ func (jc JWTCond) match(p Principal) bool {
 	return true
 }
 
+func (ec ExprCond) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ec.Match)
+}
+
+func (ec *ExprCond) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, &ec.Match); err != nil {
+		return err
+	}
+
+	ec.prog = nil
+	return nil
+}
+
 func (ec *ExprCond) compile() error {
 	ast, issues := exprCondEnv.Compile(ec.Match)
 	if err := issues.Err(); err != nil {
@@ -367,19 +380,6 @@ func (ec *ExprCond) compile() error {
 	}
 
 	ec.prog = p
-	return nil
-}
-
-func (ec ExprCond) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ec.Match)
-}
-
-func (ec *ExprCond) UnmarshalJSON(data []byte) error {
-	if err := json.Unmarshal(data, &ec.Match); err != nil {
-		return err
-	}
-
-	ec.prog = nil
 	return nil
 }
 
