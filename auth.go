@@ -3,6 +3,7 @@ package yat
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/cel-go/cel"
 )
 
 type RuleSet struct {
@@ -19,11 +21,12 @@ type RuleSet struct {
 	vv map[string]*oidc.IDTokenVerifier
 }
 
-// A Rule containing only Grants applies to all principals.
+// A Rule with no conditions applies to all principals.
 type Rule struct {
-	TLS    *TLSCond `json:"tls"`
-	JWT    *JWTCond `json:"jwt"`
-	Grants []Grant  `json:"grants"`
+	TLS    *TLSCond  `json:"tls"`
+	JWT    *JWTCond  `json:"jwt"`
+	Expr   *ExprCond `json:"expr"`
+	Grants []Grant   `json:"grants"`
 }
 
 // TLSCond requires a principal to have a matching certificate.
@@ -38,6 +41,12 @@ type JWTCond struct {
 	Issuer   string `json:"iss"`
 	Audience string `json:"aud"`
 	Subject  string `json:"sub"`
+}
+
+// ExprCond is a CEL expression that returns true if the principal matches.
+type ExprCond struct {
+	Match string
+	prog  cel.Program
 }
 
 type Grant struct {
@@ -56,6 +65,10 @@ const (
 type Principal struct {
 	Cert   *x509.Certificate
 	Claims *Claims
+
+	// env is set by RuleSet.Compile to cache
+	// the eval environment for expr conditions
+	env map[string]any
 }
 
 type Claims struct {
@@ -68,13 +81,32 @@ var jwtAlgs = []jose.SignatureAlgorithm{
 	jose.RS256,
 }
 
+var exprCondEnv *cel.Env
+
+func init() {
+	env, err := cel.NewEnv(
+		cel.Variable("claims", cel.MapType(cel.StringType, cel.AnyType)),
+	)
+
+	if err != nil {
+		panic(err)
+	}
+
+	exprCondEnv = env
+}
+
 // NewRuleSet builds a new rule set from the given rules.
 // The context is used for OIDC discovery requests
 // if any of the rules have JWT conditions.
 func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
+	rr := make([]Rule, len(rules))
+	for i, r := range rules {
+		rr[i] = r.clone()
+	}
+
 	vv := map[string]*oidc.IDTokenVerifier{}
 
-	for i, r := range rules {
+	for i, r := range rr {
 		if err := r.validate(); err != nil {
 			return nil, fmt.Errorf("rules[%d]: %v", i, err)
 		}
@@ -82,7 +114,7 @@ func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
 		if r.JWT != nil && vv[r.JWT.Issuer] == nil {
 			p, err := oidc.NewProvider(ctx, r.JWT.Issuer)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("rules[%d].jwt: %v", i, err)
 			}
 
 			var algs []string
@@ -95,11 +127,12 @@ func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
 				SkipClientIDCheck:    true,
 			})
 		}
-	}
 
-	rr := make([]Rule, len(rules))
-	for i, r := range rules {
-		rr[i] = r.clone()
+		if r.Expr != nil && r.Expr.prog == nil {
+			if err := rr[i].Expr.compile(); err != nil {
+				return nil, fmt.Errorf("rules[%d].expr: %v", i, err)
+			}
+		}
 	}
 
 	rs := &RuleSet{
@@ -132,6 +165,13 @@ func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 	var gg []Grant
 
 	for _, r := range rs.rr {
+		if r.Expr != nil && p.env == nil {
+			p.env = map[string]any{}
+			if p.Claims != nil {
+				p.env["claims"] = p.Claims.claims
+			}
+		}
+
 		if !r.match(p) {
 			continue
 		}
@@ -186,7 +226,9 @@ func (rs *RuleSet) VerifyToken(ctx context.Context, raw []byte) (*Claims, error)
 }
 
 func (r Rule) match(p Principal) bool {
-	return (r.TLS == nil || r.TLS.match(p)) && (r.JWT == nil || r.JWT.match(p))
+	return (r.TLS == nil || r.TLS.match(p)) &&
+		(r.JWT == nil || r.JWT.match(p)) &&
+		(r.Expr == nil || r.Expr.match(p))
 }
 
 func (r Rule) validate() error {
@@ -233,6 +275,13 @@ func (r Rule) clone() Rule {
 			Issuer:   r.JWT.Issuer,
 			Audience: r.JWT.Audience,
 			Subject:  r.JWT.Subject,
+		}
+	}
+
+	if r.Expr != nil {
+		c.Expr = &ExprCond{
+			Match: r.Expr.Match,
+			prog:  r.Expr.prog,
 		}
 	}
 
@@ -300,6 +349,44 @@ func (jc JWTCond) match(p Principal) bool {
 	}
 
 	return true
+}
+
+func (ec *ExprCond) compile() error {
+	ast, issues := exprCondEnv.Compile(ec.Match)
+	if err := issues.Err(); err != nil {
+		return err
+	}
+
+	if ast.OutputType() != cel.BoolType {
+		return errors.New("not a bool")
+	}
+
+	p, err := exprCondEnv.Program(ast)
+	if err != nil {
+		panic(err)
+	}
+
+	ec.prog = p
+	return nil
+}
+
+func (ec ExprCond) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ec.Match)
+}
+
+func (ec *ExprCond) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, &ec.Match); err != nil {
+		return err
+	}
+
+	ec.prog = nil
+	return nil
+}
+
+func (ec ExprCond) match(p Principal) bool {
+	val, _, _ := ec.prog.Eval(p.env)
+	ok, match := val.Value().(bool)
+	return ok && match
 }
 
 func (g Grant) allow(p Path, a Action) bool {

@@ -107,6 +107,19 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 				Actions: []yat.Action{yat.ActionPub},
 			}},
 		},
+		{
+			JWT: &yat.JWTCond{
+				Issuer:   issuer.url,
+				Audience: "yat",
+			},
+			Expr: &yat.ExprCond{
+				Match: `claims["sub"] == "users/alice"`,
+			},
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("d/**"),
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		},
 	}
 	if _, err := yat.NewRuleSet(context.Background(), validRules); err != nil {
 		t.Fatal(err)
@@ -167,6 +180,30 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("path"),
 					Actions: []yat.Action{"delete"},
+				}},
+			}},
+		},
+		{
+			name: "expr invalid syntax",
+			rules: []yat.Rule{{
+				Expr: &yat.ExprCond{
+					Match: `claims[`,
+				},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("path"),
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
+		{
+			name: "expr not bool",
+			rules: []yat.Rule{{
+				Expr: &yat.ExprCond{
+					Match: `claims["sub"]`,
+				},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("path"),
+					Actions: []yat.Action{yat.ActionPub},
 				}},
 			}},
 		},
@@ -317,6 +354,58 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 	}
 	if err := c.Request(context.Background(), yat.Msg{Path: yat.NewPath("path")}, func(context.Context, yat.Msg) error { return nil }); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("request after close: %v", err)
+	}
+}
+
+func TestGenIntegrationExprCondJSON(t *testing.T) {
+	match := `claims["sub"] == "users/alice"`
+
+	raw, err := json.Marshal(struct {
+		Expr *yat.ExprCond `json:"expr"`
+	}{
+		Expr: &yat.ExprCond{Match: match},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wire struct {
+		Expr string `json:"expr"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Expr != match {
+		t.Fatalf("expr json: %q != %q", wire.Expr, match)
+	}
+
+	var decoded struct {
+		Expr *yat.ExprCond `json:"expr"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Expr == nil {
+		t.Fatal("nil expr")
+	}
+	if decoded.Expr.Match != match {
+		t.Fatalf("expr match: %q != %q", decoded.Expr.Match, match)
+	}
+
+	var rules []yat.Rule
+	if err := json.Unmarshal([]byte(`[{"expr":"claims[\"sub\"] == \"users/alice\"","grants":[{"path":"expr/**","actions":["pub"]}]}]`), &rules); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rules) != 1 || rules[0].Expr == nil {
+		t.Fatalf("rules expr not decoded: %#v", rules)
+	}
+	if rules[0].Expr.Match != match {
+		t.Fatalf("rule expr match: %q != %q", rules[0].Expr.Match, match)
+	}
+
+	if _, err := yat.NewRuleSet(context.Background(), rules); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -2414,6 +2503,70 @@ func TestGenIntegrationTLSSPIFFEURIRulesOverTLS(t *testing.T) {
 		giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("pathless"), "")
 		giAssertMsg(t, giRecvMsg(t, caseC), "b/a", []byte("pathless"), "")
 	})
+}
+
+func TestGenIntegrationExprRulesOverClaims(t *testing.T) {
+	issuer := giStartOIDCIssuer(t)
+	giTrustHTTPServer(t, issuer.server)
+
+	rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
+		JWT: &yat.JWTCond{
+			Issuer:   issuer.url,
+			Audience: "yat",
+		},
+		Expr: &yat.ExprCond{
+			Match: `claims["sub"] == "users/alice"`,
+		},
+		Grants: []yat.Grant{{
+			Path:    yat.NewPath("b/**"),
+			Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		token []byte
+		want  bool
+	}{
+		{
+			name:  "matching expr",
+			token: issuer.token(t, "users/alice", "yat"),
+			want:  true,
+		},
+		{
+			name:  "expr mismatch",
+			token: issuer.token(t, "users/bob", "yat"),
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			claims, err := rules.VerifyToken(context.Background(), tc.token)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			allow := rules.Compile(yat.Principal{Claims: claims})
+			if got := allow(yat.NewPath("b/a"), yat.ActionPub); got != tc.want {
+				t.Fatalf("allow pub: %v != %v", got, tc.want)
+			}
+			if got := allow(yat.NewPath("b/a"), yat.ActionSub); got != tc.want {
+				t.Fatalf("allow sub: %v != %v", got, tc.want)
+			}
+		})
+	}
+
+	allowAnonymous := rules.Compile(yat.Principal{})
+	if allowAnonymous(yat.NewPath("b/a"), yat.ActionPub) {
+		t.Fatal("anonymous pub allowed")
+	}
+	if allowAnonymous(yat.NewPath("b/a"), yat.ActionSub) {
+		t.Fatal("anonymous sub allowed")
+	}
 }
 
 func TestGenIntegrationJWTRulesOverAuth(t *testing.T) {
