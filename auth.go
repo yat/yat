@@ -68,9 +68,9 @@ var jwtAlgs = []jose.SignatureAlgorithm{
 	jose.RS256,
 }
 
-// NewRuleSet returns a new rule set based on the given rules.
-// The given context is used for any OIDC discovery requests.
-// Changing the rules after calling NewRuleSet is not allowed.
+// NewRuleSet builds a new rule set from the given rules.
+// The context is used for OIDC discovery requests
+// if any of the rules have JWT conditions.
 func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
 	vv := map[string]*oidc.IDTokenVerifier{}
 
@@ -97,8 +97,13 @@ func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
 		}
 	}
 
+	rr := make([]Rule, len(rules))
+	for i, r := range rules {
+		rr[i] = r.clone()
+	}
+
 	rs := &RuleSet{
-		rr: rules,
+		rr: rr,
 		vv: vv,
 	}
 
@@ -213,6 +218,33 @@ func (r Rule) validate() error {
 	}
 
 	return nil
+}
+
+func (r Rule) clone() Rule {
+	var c Rule
+	if r.TLS != nil {
+		c.TLS = &TLSCond{
+			SAN: r.TLS.SAN,
+		}
+	}
+
+	if r.JWT != nil {
+		c.JWT = &JWTCond{
+			Issuer:   r.JWT.Issuer,
+			Audience: r.JWT.Audience,
+			Subject:  r.JWT.Subject,
+		}
+	}
+
+	c.Grants = make([]Grant, len(r.Grants))
+	for i, g := range r.Grants {
+		c.Grants[i] = Grant{
+			Path:    g.Path,
+			Actions: slices.Clone(g.Actions),
+		}
+	}
+
+	return c
 }
 
 func (tc TLSCond) match(p Principal) bool {
