@@ -50,7 +50,7 @@ type Action string
 
 const (
 	ActionPub = Action("pub") // publish a message
-	ActionSub = Action("sub") // subscribe to a stream of messages
+	ActionSub = Action("sub") // subscribe to a set of paths
 )
 
 type Principal struct {
