@@ -38,7 +38,7 @@ const (
 
 const (
 	_               = 0
-	_               = 1
+	authFrameType   = 1
 	pubFrameType    = 2
 	subFrameType    = 4
 	unsubFrameType  = 5

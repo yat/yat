@@ -41,7 +41,8 @@ type serverConn struct {
 	principal Principal
 
 	// allow decides whether client actions are allowed.
-	// It is initially compiled when a connection is accepted.
+	// It is initially compiled when a connection is accepted
+	// and recompiled if the connection sends an auth frame.
 	allow func(Path, Action) bool
 
 	subs  map[uint64]*rent
@@ -164,6 +165,9 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 		var handle func(context.Context, *slog.Logger, *serverConn, []byte) error
 
 		switch hdr.Type() {
+		case authFrameType:
+			handle = s.handleAuth
+
 		case pubFrameType:
 			handle = s.handlePub
 
@@ -193,6 +197,26 @@ func (s *Server) readFrames(ctx context.Context, logger *slog.Logger, conn *serv
 			return err
 		}
 	}
+}
+
+func (s *Server) handleAuth(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {
+	if s.config.Rules == nil {
+		return nil
+	}
+
+	claims, err := s.config.Rules.VerifyToken(ctx, body)
+	if err != nil {
+		return err
+	}
+
+	if conn.principal.Claims != nil {
+		return errors.New("duplicate auth frame")
+	}
+
+	conn.principal.Claims = claims
+	conn.allow = s.config.Rules.Compile(conn.principal)
+
+	return nil
 }
 
 func (s *Server) handlePub(ctx context.Context, logger *slog.Logger, conn *serverConn, body []byte) error {

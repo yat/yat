@@ -1,29 +1,43 @@
 package yat
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"regexp"
+	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 )
 
 type RuleSet struct {
 	rr []Rule
+	vv map[string]*oidc.IDTokenVerifier
 }
 
 // A Rule containing only Grants applies to all principals.
 type Rule struct {
 	TLS    *TLSCond `json:"tls"`
+	JWT    *JWTCond `json:"jwt"`
 	Grants []Grant  `json:"grants"`
 }
 
-// TLSCond requires a principal to present a certificate with a matching URI SAN.
+// TLSCond requires a principal to have a matching certificate.
 type TLSCond struct {
 	SAN struct {
 		URI string `json:"uri"`
 	} `json:"san"`
+}
+
+// JWTCond requires a principal to have a matching token.
+type JWTCond struct {
+	Issuer   string `json:"iss"`
+	Audience string `json:"aud"`
+	Subject  string `json:"sub"`
 }
 
 type Grant struct {
@@ -40,23 +54,52 @@ const (
 )
 
 type Principal struct {
-	Cert *x509.Certificate
+	Cert   *x509.Certificate
+	Claims *Claims
 }
 
-// SPIFFE ID is spiffe://trust-domain[/path]
-var validTrustDomain = regexp.MustCompile("^[-_.a-z0-9]+$")
+type Claims struct {
+	claims map[string]any
+}
+
+var jwtAlgs = []jose.SignatureAlgorithm{
+	jose.ES256,
+	jose.PS256,
+	jose.RS256,
+}
 
 // NewRuleSet returns a new rule set based on the given rules.
+// The given context is used for any OIDC discovery requests.
 // Changing the rules after calling NewRuleSet is not allowed.
-func NewRuleSet(rules []Rule) (*RuleSet, error) {
+func NewRuleSet(ctx context.Context, rules []Rule) (*RuleSet, error) {
+	vv := map[string]*oidc.IDTokenVerifier{}
+
 	for i, r := range rules {
 		if err := r.validate(); err != nil {
 			return nil, fmt.Errorf("rules[%d]: %v", i, err)
+		}
+
+		if r.JWT != nil && vv[r.JWT.Issuer] == nil {
+			p, err := oidc.NewProvider(ctx, r.JWT.Issuer)
+			if err != nil {
+				return nil, err
+			}
+
+			var algs []string
+			for _, a := range jwtAlgs {
+				algs = append(algs, string(a))
+			}
+
+			vv[r.JWT.Issuer] = p.Verifier(&oidc.Config{
+				SupportedSigningAlgs: algs,
+				SkipClientIDCheck:    true,
+			})
 		}
 	}
 
 	rs := &RuleSet{
 		rr: rules,
+		vv: vv,
 	}
 
 	return rs, nil
@@ -103,11 +146,56 @@ func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
 	}
 }
 
+// VerifyToken parses and verifies the raw bytes of a signed JWT.
+// The token's issuer must be referenced by at least one rule.
+func (rs *RuleSet) VerifyToken(ctx context.Context, raw []byte) (*Claims, error) {
+	tok, err := jwt.ParseSigned(string(raw), jwtAlgs)
+	if err != nil {
+		return nil, err
+	}
+
+	var unverified struct {
+		Issuer string `json:"iss"`
+	}
+
+	if err := tok.UnsafeClaimsWithoutVerification(&unverified); err != nil {
+		return nil, err
+	}
+
+	v, ok := rs.vv[unverified.Issuer]
+	if !ok {
+		return nil, fmt.Errorf("unknown issuer %s", unverified.Issuer)
+	}
+
+	id, err := v.Verify(ctx, string(raw))
+	if err != nil {
+		return nil, err
+	}
+
+	var cc map[string]any
+	if err := id.Claims(&cc); err != nil {
+		return nil, err
+	}
+
+	return &Claims{cc}, nil
+}
+
 func (r Rule) match(p Principal) bool {
-	return r.TLS == nil || r.TLS.match(p)
+	return (r.TLS == nil || r.TLS.match(p)) && (r.JWT == nil || r.JWT.match(p))
 }
 
 func (r Rule) validate() error {
+	if r.JWT != nil {
+		u, err := url.Parse(r.JWT.Issuer)
+		if err != nil {
+			return fmt.Errorf("jwt: invalid issuer: %v", err)
+		}
+
+		if u.Scheme != "https" || !u.IsAbs() {
+			return errors.New("jwt: invalid issuer")
+		}
+	}
+
 	if len(r.Grants) == 0 {
 		// FIX: is this actually an error?
 		return errors.New("empty grants")
@@ -142,6 +230,49 @@ func (tc TLSCond) match(p Principal) bool {
 	}
 
 	return smatch(tc.SAN.URI, p.Cert.URIs[0].String())
+}
+
+func (jc JWTCond) match(p Principal) bool {
+	if p.Claims == nil {
+		return false
+	}
+
+	if iss, _ := p.Claims.claims["iss"].(string); iss != jc.Issuer {
+		return false
+	}
+
+	if jc.Subject != "" {
+		if sub, _ := p.Claims.claims["sub"].(string); !smatch(jc.Subject, sub) {
+			return false
+		}
+	}
+
+	if jc.Audience != "" {
+		aud, ok := p.Claims.claims["aud"]
+		if !ok {
+			return false
+		}
+
+		switch aud := aud.(type) {
+		case string:
+			if aud != jc.Audience {
+				return false
+			}
+
+		case []any:
+			if !slices.ContainsFunc(aud, func(v any) bool {
+				s, ok := v.(string)
+				return ok && s == jc.Audience
+			}) {
+				return false
+			}
+
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 func (g Grant) allow(p Path, a Action) bool {

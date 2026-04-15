@@ -45,6 +45,12 @@ type Client struct {
 }
 
 type ClientConfig struct {
+
+	// GetToken, if set, is called during each connection attempt to get an token.
+	// Implementations should returned a signed JWT issued by an OIDC identity provider.
+	// If GetToken returns an error, the connection attempt is canceled and the client redials.
+	GetToken func(context.Context) ([]byte, error)
+
 	// Logger is where the client writes logs.
 	// If it is nil, client logs are discarded.
 	Logger *slog.Logger
@@ -370,6 +376,32 @@ func (c *Client) connect(dial DialFunc) {
 			dctx = context.Background()
 		}
 
+		c.config.Logger.DebugContext(ctx, "dialing", "n", ndial)
+
+		var token []byte
+		if c.config.GetToken != nil {
+			tctx, cancel := context.WithTimeout(dctx, 1*time.Second)
+			raw, err := c.config.GetToken(tctx)
+			cancel()
+
+			switch {
+			case err != nil:
+				c.config.Logger.ErrorContext(ctx,
+					"token fetch failed", "error", err)
+
+				select {
+				case <-ctx.Done():
+					return
+
+				case <-time.After(redialBackoff.NextBackOff()):
+					continue
+				}
+
+			default:
+				token = raw
+			}
+		}
+
 		dctx, cancel := context.WithTimeout(dctx, 3*time.Second)
 		conn, err := dial(dctx)
 		cancel()
@@ -388,19 +420,12 @@ func (c *Client) connect(dial DialFunc) {
 		}
 
 		redialBackoff.Reset()
-		start := time.Now()
 
 		logger := c.config.Logger.With(
 			"local", conn.LocalAddr().String(),
 			"remote", conn.RemoteAddr().String())
 
-		switch ndial {
-		case 1:
-			logger.DebugContext(ctx, "connection opened")
-
-		default:
-			logger.InfoContext(ctx, "connection established")
-		}
+		logger.DebugContext(ctx, "connected")
 
 		c.mu.Lock()
 
@@ -421,17 +446,45 @@ func (c *Client) connect(dial DialFunc) {
 		c.mu.Unlock()
 
 		if resubbed {
+			logger.DebugContext(ctx, "resubscribed")
+
 			select {
 			case c.wbufC <- struct{}{}:
 			default:
 			}
 		}
 
-		err = c.serve(ctx, logger, conn)
+		// write an auth frame first
+		// before any buffered frames
 
-		logger.DebugContext(ctx, "connection closed", "elapsed", time.Since(start))
+		if len(token) > 0 {
+			frm := appendFrame(nil, authFrameType, func(b []byte) []byte {
+				return append(b, token...)
+			})
+
+			err = func() error {
+				if conn.SetWriteDeadline(time.Now().Add(1 * time.Second)); err != nil {
+					return err
+				}
+
+				_, err := conn.Write(frm)
+				conn.SetWriteDeadline(time.Time{})
+
+				return err
+			}()
+
+			if err != nil {
+				conn.Close()
+			}
+		}
+
+		if err == nil {
+			err = c.serve(ctx, logger, conn)
+		}
+
+		logger.DebugContext(ctx, "connection closed")
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-			logger.ErrorContext(ctx, "connection error", "error", err)
+			logger.ErrorContext(ctx, "unable to connect", "error", err)
 		}
 
 		select {

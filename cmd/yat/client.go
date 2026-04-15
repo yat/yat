@@ -5,13 +5,16 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"net"
+	"os"
 
 	"yat.io/yat"
 )
 
 type ClientConfig struct {
 	*SharedConfig
-	Server string
+	Server    string
+	Token     string
+	TokenFile string
 }
 
 const clientALPN = "y0"
@@ -48,6 +51,18 @@ func (cc ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat
 
 	cfg := yat.ClientConfig{
 		Logger: logger,
+	}
+
+	if cc.Token != "" {
+		cfg.GetToken = func(context.Context) ([]byte, error) {
+			return []byte(cc.Token), nil
+		}
+	}
+
+	if cc.TokenFile != "" && cfg.GetToken == nil {
+		cfg.GetToken = func(context.Context) ([]byte, error) {
+			return os.ReadFile(cc.TokenFile)
+		}
 	}
 
 	return yat.NewClient(dial, cfg)

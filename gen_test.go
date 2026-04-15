@@ -13,17 +13,24 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"yat.io/yat"
@@ -34,6 +41,7 @@ import (
 const (
 	giFrameHdrLen = 4
 
+	giAuthFrameType   = 1
 	giPubFrameType    = 2
 	giSubFrameType    = 4
 	giUnsubFrameType  = 5
@@ -56,6 +64,9 @@ const (
 )
 
 func TestGenIntegrationSurfaceValidation(t *testing.T) {
+	issuer := giStartOIDCIssuer(t)
+	giTrustHTTPServer(t, issuer.server)
+
 	if _, err := yat.NewClient(nil, yat.ClientConfig{}); err == nil {
 		t.Fatal("nil dial func was accepted")
 	}
@@ -85,8 +96,19 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
 			}},
 		},
+		{
+			JWT: &yat.JWTCond{
+				Issuer:   issuer.url,
+				Audience: "yat",
+				Subject:  "users/*",
+			},
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("c/**"),
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		},
 	}
-	if _, err := yat.NewRuleSet(validRules); err != nil {
+	if _, err := yat.NewRuleSet(context.Background(), validRules); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,6 +116,26 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 		name  string
 		rules []yat.Rule
 	}{
+		{
+			name: "jwt invalid issuer parse",
+			rules: []yat.Rule{{
+				JWT: &yat.JWTCond{Issuer: "https://%"},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("path"),
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
+		{
+			name: "jwt invalid issuer scheme",
+			rules: []yat.Rule{{
+				JWT: &yat.JWTCond{Issuer: "http://issuer.example"},
+				Grants: []yat.Grant{{
+					Path:    yat.NewPath("path"),
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			}},
+		},
 		{
 			name:  "empty grants",
 			rules: []yat.Rule{{}},
@@ -123,7 +165,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 
 	for _, tc := range ruleErrors {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := yat.NewRuleSet(tc.rules); err == nil {
+			if _, err := yat.NewRuleSet(context.Background(), tc.rules); err == nil {
 				t.Fatal("expected NewRuleSet error")
 			}
 		})
@@ -143,7 +185,7 @@ func TestGenIntegrationSurfaceValidation(t *testing.T) {
 			Actions: []yat.Action{yat.ActionPub},
 		}},
 	}}
-	rs, err := yat.NewRuleSet(compiledRules)
+	rs, err := yat.NewRuleSet(context.Background(), compiledRules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1073,7 +1115,7 @@ func TestGenIntegrationServerConnWriteBufferLimit(t *testing.T) {
 func TestGenIntegrationServerProtocolRules(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		rr := yat.NewRouter()
-		rules, err := yat.NewRuleSet([]yat.Rule{{
+		rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
 			Grants: []yat.Grant{
 				{
 					Path:    yat.NewPath("allowed/pub"),
@@ -1486,7 +1528,7 @@ func TestGenIntegrationRequestAndRespondMatrix(t *testing.T) {
 
 	t.Run("permission denied yields eperm", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			rules, err := yat.NewRuleSet([]yat.Rule{{
+			rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("ready/**"),
 					Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
@@ -1953,7 +1995,7 @@ func TestGenIntegrationTLSCondRulesOverTLS(t *testing.T) {
 		pkigen.URI(allowedURI),
 	)
 
-	rules, err := yat.NewRuleSet([]yat.Rule{
+	rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 		{
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("a/**"),
@@ -2058,7 +2100,7 @@ func TestGenIntegrationTLSCondRulesOverTLS(t *testing.T) {
 		wildcardCond := &yat.TLSCond{}
 		wildcardCond.SAN.URI = wildcardPattern
 
-		wildcardRules, err := yat.NewRuleSet([]yat.Rule{
+		wildcardRules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 			{
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("a/**"),
@@ -2185,7 +2227,7 @@ func TestGenIntegrationTLSSPIFFEURIRulesOverTLS(t *testing.T) {
 		pkigen.URI("spiffe://trust-domain/a/b"),
 	)
 
-	rules, err := yat.NewRuleSet([]yat.Rule{
+	rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 		{
 			Grants: []yat.Grant{{
 				Path:    yat.NewPath("a/**"),
@@ -2319,7 +2361,7 @@ func TestGenIntegrationTLSSPIFFEURIRulesOverTLS(t *testing.T) {
 			pkigen.URI("spiffe://trust-domain"),
 		)
 
-		domainRules, err := yat.NewRuleSet([]yat.Rule{
+		domainRules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
 			{
 				Grants: []yat.Grant{{
 					Path:    yat.NewPath("a/**"),
@@ -2365,6 +2407,297 @@ func TestGenIntegrationTLSSPIFFEURIRulesOverTLS(t *testing.T) {
 	})
 }
 
+func TestGenIntegrationJWTRulesOverAuth(t *testing.T) {
+	issuer := giStartOIDCIssuer(t)
+	giTrustHTTPServer(t, issuer.server)
+
+	rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
+		{
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("a/**"),
+				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+			}},
+		},
+		{
+			JWT: &yat.JWTCond{
+				Issuer:   issuer.url,
+				Audience: "yat",
+				Subject:  "users/a*",
+			},
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("b/**"),
+				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := giMustNewServer(t, yat.NewRouter(), rules)
+
+	allowedToken := issuer.token(t, "users/alice", "yat")
+	watcher := giNewAuthPipeClient(t, srv, allowedToken)
+	publisher := giNewAuthPipeClient(t, srv, allowedToken)
+
+	giWaitClientReadyPath(t, watcher, "a/ready/watch")
+	giWaitClientReadyPath(t, publisher, "a/ready/publisher")
+
+	watchC, watchSub := giMustSubscribeClient(t, watcher, yat.Sel{Path: yat.NewPath("b/a")})
+	t.Cleanup(watchSub.Cancel)
+	giWaitClientReadyPath(t, watcher, "a/ready/watch-sub")
+
+	cases := []struct {
+		name    string
+		token   []byte
+		wantSub bool
+		wantPub bool
+	}{
+		{
+			name:    "matching jwt",
+			token:   issuer.token(t, "users/alice", "yat"),
+			wantSub: true,
+			wantPub: true,
+		},
+		{
+			name:    "matching aud array",
+			token:   issuer.token(t, "users/alex", []string{"other", "yat"}),
+			wantSub: true,
+			wantPub: true,
+		},
+		{
+			name:  "subject mismatch",
+			token: issuer.token(t, "users/bob", "yat"),
+		},
+		{
+			name:  "audience mismatch",
+			token: issuer.token(t, "users/alice", "other"),
+		},
+		{
+			name: "missing token",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			client := giNewAuthPipeClient(t, srv, tc.token)
+
+			giWaitClientReadyPath(t, client, "a/ready/"+tc.name)
+
+			caseC, caseSub := giMustSubscribeClient(t, client, yat.Sel{Path: yat.NewPath("b/a")})
+			t.Cleanup(caseSub.Cancel)
+			giWaitClientReadyPath(t, client, "a/subready/"+tc.name)
+
+			if err := publisher.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("b/a"),
+				Data: []byte("from-allowed"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-allowed"), "")
+			if tc.wantSub {
+				giAssertMsg(t, giRecvMsg(t, caseC), "b/a", []byte("from-allowed"), "")
+			} else {
+				giExpectNoMsg(t, caseC)
+			}
+
+			if err := client.Publish(context.Background(), yat.Msg{
+				Path: yat.NewPath("b/a"),
+				Data: []byte("from-case"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.wantPub {
+				giAssertMsg(t, giRecvMsg(t, watchC), "b/a", []byte("from-case"), "")
+			} else {
+				giExpectNoMsg(t, watchC)
+			}
+		})
+	}
+}
+
+func TestGenIntegrationJWTCloseBeforeFirstDialFlushAuthenticates(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		issuer := giStartOIDCIssuer(t)
+		giTrustHTTPServer(t, issuer.server)
+
+		rr := yat.NewRouter()
+		rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
+			JWT: &yat.JWTCond{
+				Issuer:   issuer.url,
+				Audience: "yat",
+				Subject:  "users/*",
+			},
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("secure/**"),
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		srv := giMustNewServer(t, rr, rules)
+		dialer := giNewGatePipeDialer(srv)
+
+		token := issuer.token(t, "users/alice", "yat")
+		c, err := yat.NewClient(dialer.Dial, yat.ClientConfig{
+			GetToken: func(context.Context) ([]byte, error) {
+				return bytes.Clone(token), nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			dialer.Enable()
+			_ = c.Close()
+			dialer.Wait()
+		})
+
+		routerC, routerSub := giMustSubscribeRouter(t, rr, yat.Sel{Path: yat.NewPath("secure/flush")})
+		t.Cleanup(routerSub.Cancel)
+
+		if err := c.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("secure/flush"),
+			Data: []byte("after-close"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		go func() {
+			<-dialer.Dialed()
+			dialer.Enable()
+		}()
+
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		giAssertMsg(t, giRecvMsg(t, routerC), "secure/flush", []byte("after-close"), "")
+	})
+}
+
+func TestGenIntegrationClientTokenErrorPreventsAnonymousDial(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		dialed := make(chan struct{}, 1)
+
+		c, err := yat.NewClient(func(ctx context.Context) (net.Conn, error) {
+			select {
+			case dialed <- struct{}{}:
+			default:
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}, yat.ClientConfig{
+			GetToken: func(ctx context.Context) ([]byte, error) {
+				close(started)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		<-started
+
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		select {
+		case <-dialed:
+			t.Fatal("unexpected anonymous dial")
+		default:
+		}
+	})
+}
+
+func TestGenIntegrationJWTAuthFrameFailures(t *testing.T) {
+	issuer := giStartOIDCIssuer(t)
+	giTrustHTTPServer(t, issuer.server)
+
+	rules, err := yat.NewRuleSet(context.Background(), []yat.Rule{
+		{
+			JWT: &yat.JWTCond{
+				Issuer:   issuer.url,
+				Audience: "yat",
+				Subject:  "users/*",
+			},
+			Grants: []yat.Grant{{
+				Path:    yat.NewPath("b/**"),
+				Actions: []yat.Action{yat.ActionPub, yat.ActionSub},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		frames [][]byte
+	}{
+		{
+			name: "invalid token syntax closes connection",
+			frames: [][]byte{
+				giAuthFrame([]byte("not-a-jwt")),
+			},
+		},
+		{
+			name: "unknown issuer closes connection",
+			frames: [][]byte{
+				giAuthFrame(issuer.tokenWithClaims(t, map[string]any{
+					"iss": "https://unknown.example",
+					"sub": "users/alice",
+					"aud": "yat",
+					"iat": time.Now().Unix(),
+					"exp": time.Now().Add(time.Hour).Unix(),
+				})),
+			},
+		},
+		{
+			name: "expired token closes connection",
+			frames: [][]byte{
+				giAuthFrame(issuer.tokenWithClaims(t, map[string]any{
+					"iss": issuer.url,
+					"sub": "users/alice",
+					"aud": "yat",
+					"iat": time.Now().Add(-2 * time.Hour).Unix(),
+					"exp": time.Now().Add(-1 * time.Hour).Unix(),
+				})),
+			},
+		},
+		{
+			name: "duplicate auth closes connection",
+			frames: [][]byte{
+				giAuthFrame(issuer.token(t, "users/alice", "yat")),
+				giAuthFrame(issuer.token(t, "users/alice", "yat")),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			srv := giMustNewServer(t, yat.NewRouter(), rules)
+			peer, done := giServeRawPeer(t, srv)
+			t.Cleanup(func() {
+				_ = peer.Close()
+				<-done
+			})
+
+			giWriteFrames(t, peer, tc.frames...)
+			giExpectConnClose(t, peer)
+		})
+	}
+}
+
 func giMustNewServer(t *testing.T, rr *yat.Router, rules *yat.RuleSet) *yat.Server {
 	t.Helper()
 
@@ -2378,6 +2711,24 @@ func giMustNewServer(t *testing.T, rr *yat.Router, rules *yat.RuleSet) *yat.Serv
 
 func giNewPipeClient(t *testing.T, srv *yat.Server) *yat.Client {
 	t.Helper()
+	return giNewPipeClientConfig(t, srv, yat.ClientConfig{})
+}
+
+func giNewAuthPipeClient(t *testing.T, srv *yat.Server, token []byte) *yat.Client {
+	t.Helper()
+
+	cfg := yat.ClientConfig{}
+	if len(token) > 0 {
+		cfg.GetToken = func(context.Context) ([]byte, error) {
+			return bytes.Clone(token), nil
+		}
+	}
+
+	return giNewPipeClientConfig(t, srv, cfg)
+}
+
+func giNewPipeClientConfig(t *testing.T, srv *yat.Server, cfg yat.ClientConfig) *yat.Client {
+	t.Helper()
 
 	var wg sync.WaitGroup
 
@@ -2389,7 +2740,7 @@ func giNewPipeClient(t *testing.T, srv *yat.Server) *yat.Client {
 			srv.ServeConn(context.Background(), serverConn)
 		}()
 		return clientConn, nil
-	}, yat.ClientConfig{})
+	}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2421,6 +2772,12 @@ type giPeerDialer struct {
 	peerC chan net.Conn
 }
 
+type giOIDCIssuer struct {
+	url    string
+	server *httptest.Server
+	signer jose.Signer
+}
+
 type giWriteFailConn struct {
 	net.Conn
 	peer net.Conn
@@ -2435,6 +2792,15 @@ type giSwitchPipeDialer struct {
 	wg      sync.WaitGroup
 }
 
+type giGatePipeDialer struct {
+	enableC chan struct{}
+	dialedC chan struct{}
+	dialed  sync.Once
+	once    sync.Once
+	srv     *yat.Server
+	wg      sync.WaitGroup
+}
+
 func giNewPeerDialer() *giPeerDialer {
 	return &giPeerDialer{
 		peerC: make(chan net.Conn, 8),
@@ -2443,6 +2809,14 @@ func giNewPeerDialer() *giPeerDialer {
 
 func giNewSwitchPipeDialer(srv *yat.Server) *giSwitchPipeDialer {
 	return &giSwitchPipeDialer{srv: srv}
+}
+
+func giNewGatePipeDialer(srv *yat.Server) *giGatePipeDialer {
+	return &giGatePipeDialer{
+		enableC: make(chan struct{}),
+		dialedC: make(chan struct{}),
+		srv:     srv,
+	}
 }
 
 func (d *giPeerDialer) Dial(context.Context) (net.Conn, error) {
@@ -2489,6 +2863,26 @@ func (d *giSwitchPipeDialer) Dial(context.Context) (net.Conn, error) {
 	return clientConn, nil
 }
 
+func (d *giGatePipeDialer) Dial(ctx context.Context) (net.Conn, error) {
+	d.dialed.Do(func() {
+		close(d.dialedC)
+	})
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-d.enableC:
+	}
+
+	serverConn, clientConn := net.Pipe()
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.srv.ServeConn(context.Background(), serverConn)
+	}()
+	return clientConn, nil
+}
+
 func (d *giPeerDialer) Next(t *testing.T) net.Conn {
 	t.Helper()
 
@@ -2518,7 +2912,21 @@ func (d *giSwitchPipeDialer) Enable() {
 	d.mu.Unlock()
 }
 
+func (d *giGatePipeDialer) Enable() {
+	d.once.Do(func() {
+		close(d.enableC)
+	})
+}
+
+func (d *giGatePipeDialer) Dialed() <-chan struct{} {
+	return d.dialedC
+}
+
 func (d *giSwitchPipeDialer) Wait() {
+	d.wg.Wait()
+}
+
+func (d *giGatePipeDialer) Wait() {
 	d.wg.Wait()
 }
 
@@ -2526,6 +2934,120 @@ func giTLSCond(uri string) *yat.TLSCond {
 	cond := &yat.TLSCond{}
 	cond.SAN.URI = uri
 	return cond
+}
+
+func giAuthFrame(token []byte) []byte {
+	return giFrame(giAuthFrameType, token)
+}
+
+func giStartOIDCIssuer(t *testing.T) *giOIDCIssuer {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keyID := "test-key"
+	signingKey := jose.JSONWebKey{
+		Key:       key,
+		KeyID:     keyID,
+		Algorithm: string(jose.ES256),
+		Use:       "sig",
+	}
+
+	signer, err := jose.NewSigner(jose.SigningKey{
+		Algorithm: jose.ES256,
+		Key:       signingKey,
+	}, (&jose.SignerOptions{}).WithType("JWT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publicKey := jose.JSONWebKey{
+		Key:       &key.PublicKey,
+		KeyID:     keyID,
+		Algorithm: string(jose.ES256),
+		Use:       "sig",
+	}
+
+	mux := http.NewServeMux()
+	s := httptest.NewTLSServer(mux)
+	issuer := &giOIDCIssuer{
+		url:    s.URL,
+		server: s,
+		signer: signer,
+	}
+
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                issuer.url,
+			"jwks_uri":                              issuer.url + "/keys",
+			"id_token_signing_alg_values_supported": []string{"ES256"},
+		})
+	})
+
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{
+			Keys: []jose.JSONWebKey{publicKey},
+		})
+	})
+
+	t.Cleanup(s.Close)
+	return issuer
+}
+
+func (iss *giOIDCIssuer) token(t *testing.T, subject string, audience any) []byte {
+	t.Helper()
+
+	now := time.Now()
+	return iss.tokenWithClaims(t, map[string]any{
+		"iss": iss.url,
+		"sub": subject,
+		"aud": audience,
+		"iat": now.Unix(),
+		"exp": now.Add(time.Hour).Unix(),
+	})
+}
+
+func (iss *giOIDCIssuer) tokenWithClaims(t *testing.T, claims map[string]any) []byte {
+	t.Helper()
+
+	raw, err := jwt.Signed(iss.signer).Claims(claims).Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return []byte(raw)
+}
+
+func giTrustHTTPServer(t *testing.T, s *httptest.Server) {
+	t.Helper()
+
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default transport has unexpected type %T", http.DefaultTransport)
+	}
+
+	clone := base.Clone()
+	if clone.TLSClientConfig != nil {
+		clone.TLSClientConfig = clone.TLSClientConfig.Clone()
+	} else {
+		clone.TLSClientConfig = &tls.Config{}
+	}
+
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	roots.AddCert(s.Certificate())
+	clone.TLSClientConfig.RootCAs = roots
+
+	old := http.DefaultTransport
+	http.DefaultTransport = clone
+	t.Cleanup(func() {
+		http.DefaultTransport = old
+	})
 }
 
 func giLeafCertificate(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, opts ...pkigen.CertOpt) tls.Certificate {

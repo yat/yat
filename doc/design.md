@@ -58,6 +58,7 @@ struct {
 
 frame types
 
+- auth: optionally sent once by the client to identify itself (with a JWT)
 - pub: sent by the client to publish a message
 - sub: sent by the client to subscribe to a stream of messages
 - unsub: sent by the client to cancel a subscription

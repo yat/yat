@@ -47,6 +47,8 @@ func run(ctx context.Context, args []string) error {
 	clientConfig := &ClientConfig{
 		SharedConfig: sharedConfig,
 		Server:       os.Getenv("YAT_SERVER"),
+		Token:        os.Getenv("YAT_TOKEN"),
+		TokenFile:    os.Getenv("YAT_TOKEN_FILE"),
 	}
 
 	if clientConfig.Server == "" {
@@ -57,6 +59,7 @@ func run(ctx context.Context, args []string) error {
 	flags.Text(&sharedConfig.LogLevel, "log-level")
 	flags.String(&sharedConfig.TLSDir, "tls-dir")
 	flags.String(&clientConfig.Server, "server")
+	flags.String(&clientConfig.TokenFile, "token-file")
 
 	args, err := flags.Parse(args)
 	if err != nil {

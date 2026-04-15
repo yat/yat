@@ -18,6 +18,11 @@ Client Flags:
   -server localhost:25120 ($YAT_SERVER)
       Address of the Yat server.
       The default port is 443.
+  
+  -token-file PATH ($YAT_TOKEN_FILE)
+      Path to a file containing a JWT signed by a trusted issuer.
+      The client reads this file every time it dials.
+      This flag is ignored if $YAT_TOKEN is set.
 
 Shared Flags:
 

@@ -77,7 +77,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	rs, err := yat.NewRuleSet(cfg.Rules)
+	rs, err := yat.NewRuleSet(ctx, cfg.Rules)
 	if err != nil {
 		return err
 	}
