@@ -1,53 +1,49 @@
 //line path.rl:1
 package yat
 
-import (
-	"errors"
-)
+import "errors"
 
-//line path.rl:20
+//line path.rl:13
 
-//line path.rl.go:16
+//line path.rl.go:13
 const path_start int = 1
 const path_first_final int = 2
 const path_error int = 0
 
 const path_en_main int = 1
 
-//line path.rl:23
+//line path.rl:16
 
 // ParsePath parses a path from a buffer.
 // The returned path is a view into the buffer.
-// If the path contains a * or ** wildcard, ParsePath returns wild=true.
-func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
+func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, err error) {
 	if len(raw) == 0 {
 		err = errors.New("short path")
 		return
 	}
 
 	data := []byte(raw)
-	if len(data) > maxPathLen {
+	if len(data) > MaxPathLen {
 		err = errors.New("long path")
 		return
 	}
 
 	var (
-		_   = path_error
-		_   = path_en_main
-		cs  = 0
-		p   = 0
-		pe  = len(data)
-		eof = pe
+		_  = path_error
+		_  = path_en_main
+		cs = 0
+		p  = 0
+		pe = len(data)
 	)
 
-//line path.rl.go:51
+//line path.rl.go:46
 	{
 		cs = path_start
 	}
 
-//line path.rl:49
+//line path.rl:40
 
-//line path.rl.go:58
+//line path.rl.go:53
 	{
 		if p == pe {
 			goto _test_eof
@@ -65,18 +61,11 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 			goto st_case_4
 		}
 		goto st_out
-	tr5:
-//line path.rl:12
-
-		wild = true
-
-		goto st1
 	st1:
 		if p++; p == pe {
 			goto _test_eof1
 		}
 	st_case_1:
-//line path.rl.go:87
 		switch data[p] {
 		case 0:
 			goto st0
@@ -113,7 +102,7 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 		case 42:
 			goto st4
 		case 47:
-			goto tr5
+			goto st1
 		}
 		goto st0
 	st4:
@@ -139,29 +128,18 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 	_test_eof:
 		{
 		}
-		if p == eof {
-			switch cs {
-			case 3, 4:
-//line path.rl:12
-
-				wild = true
-
-//line path.rl.go:147
-			}
-		}
-
 	_out:
 		{
 		}
 	}
 
-//line path.rl:50
+//line path.rl:41
 
 	if cs < path_first_final {
 		err = errors.New("invalid path")
 		return
 	}
 
-	parsed = Path{data}
+	parsed = unsafePath(data)
 	return
 }

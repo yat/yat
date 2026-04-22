@@ -1,14 +1,14 @@
 ## Docker Images
 
-`ghcr.io/yat/yat:latest` tracks the `main` branch. It's just `yat`, no userland.
-`ghcr.io/yat/yat:alpine-latest` also tracks `main`, but the entrypoint is a shell for easy debugging.
+`ghcr.io/yat/yat:latest` tracks the `wip` branch. It's just `yat`, no userland.
+`ghcr.io/yat/yat:alpine-latest` also tracks `wip`, but the entrypoint is a shell for easy debugging.
 
 ## Development
 
 ```
 bin/setup
-bin/air
-# or bin/serve
+bin/dev # for hot reloads 
+# or run bin/serve directly
 ```
 
 ```
@@ -21,5 +21,5 @@ echo hi | bin/yat pub greetings
 
 ### Occasional Tools
 
-- `protoc` is required to run `go generate ./api`
-- `ragel` is required to run `go generate .`, which compiles path.rl
+- `buf` is required to run `cd api && buf build`, which generates `internal/wire`
+- `ragel` is required to run `go generate .`, which compiles `path.rl`

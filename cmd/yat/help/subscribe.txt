@@ -1,5 +1,4 @@
-Subscribe prints a stream of selected messages.
-Messages are printed as JSON objects, one per line.
+Subscribe prints a stream of messages as JSON lines.
 
 Usage:
 
@@ -7,15 +6,11 @@ Usage:
 
 Flags:
 
-  -group, -g NAME
-      Add the subscriber to a route group.
-      Messages are routed to a random group member.
-
-  -limit, -n N
-      Unsubscribe after N deliveries.
+  -limit, -n 0
+      Stop after n deliveries.
 
   -duration, -d 0s
-      Unsubscribe after some amount of time.
+      Stop after some amount of time.
 
   -raw
       Print raw message data.

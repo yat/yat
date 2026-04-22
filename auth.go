@@ -14,6 +14,9 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/common/types/ref"
+	"yat.io/yat/internal/interpol"
 )
 
 type RuleSet struct {
@@ -29,7 +32,7 @@ type Rule struct {
 	Grants []Grant   `json:"grants"`
 }
 
-// TLSCond requires a principal to have a matching certificate.
+// TLSCond requires a principal to have a matching verified certificate.
 type TLSCond struct {
 	SAN struct {
 		URI string `json:"uri"`
@@ -43,14 +46,14 @@ type JWTCond struct {
 	Subject  string `json:"sub"`
 }
 
-// ExprCond is a CEL expression that returns true if the principal matches.
+// ExprCond requires a CEL expression to return true for a principal.
 type ExprCond struct {
 	Match string
 	prog  cel.Program
 }
 
 type Grant struct {
-	Path    Path     `json:"path"`
+	Paths   []string `json:"paths"`
 	Actions []Action `json:"actions"`
 }
 
@@ -75,24 +78,37 @@ type Claims struct {
 	claims map[string]any
 }
 
+type AllowFunc func(Path, Action) bool
+
 var jwtAlgs = []jose.SignatureAlgorithm{
 	jose.ES256,
 	jose.PS256,
 	jose.RS256,
 }
 
-var exprCondEnv *cel.Env
+var rulesEnv *cel.Env
 
 func init() {
 	env, err := cel.NewEnv(
 		cel.Variable("claims", cel.MapType(cel.StringType, cel.AnyType)),
+		cel.Function("interpol",
+			cel.Overload("interpol", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(arg ref.Val) ref.Val {
+					s := string(arg.(types.String))
+					if strings.Contains(s, "*") {
+						return types.NewErr("wildcard interpolation")
+					}
+					return arg
+				}),
+			),
+		),
 	)
 
 	if err != nil {
 		panic(err)
 	}
 
-	exprCondEnv = env
+	rulesEnv = env
 }
 
 // NewRuleSet builds a new rule set from the given rules.
@@ -150,7 +166,7 @@ func AllowAll() *RuleSet {
 			{
 				Grants: []Grant{
 					{
-						Path:    NewPath("**"),
+						Paths:   []string{"**"},
 						Actions: []Action{ActionPub, ActionSub},
 					},
 				},
@@ -160,41 +176,46 @@ func AllowAll() *RuleSet {
 }
 
 // Compile compiles an allow function for the given principal.
-// The functions returns true if an action is allowed for a particular path.
-func (rs *RuleSet) Compile(p Principal) func(Path, Action) bool {
-	var gg []Grant
+// The functions returns true if an act ion is allowed for a particular path.
+func (rs *RuleSet) Compile(p Principal) (AllowFunc, error) {
+	if len(rs.rr) == 0 {
+		return func(Path, Action) bool {
+			return false
+		}, nil
+	}
 
-	for _, r := range rs.rr {
-		if r.Expr != nil && p.env == nil {
-			p.env = map[string]any{}
-			if p.Claims != nil {
-				p.env["claims"] = p.Claims.claims
-			}
-		}
+	p.env = map[string]any{}
+	if p.Claims != nil {
+		p.env["claims"] = p.Claims.claims
+	}
 
+	var allowed []AllowFunc
+	for i, r := range rs.rr {
 		if !r.match(p) {
 			continue
 		}
 
-		for _, g := range r.Grants {
-			gg = append(gg, Grant{
-				Path:    g.Path.Clone(),
-				Actions: slices.Clone(g.Actions),
-			})
+		for j, g := range r.Grants {
+			allow, err := g.compile(p)
+			if err != nil {
+				return nil, fmt.Errorf("rules[%d].grants[%d]: %v", i, j, err)
+			}
+
+			allowed = append(allowed, allow)
 		}
 	}
 
 	return func(p Path, a Action) bool {
-		return slices.ContainsFunc(gg, func(g Grant) bool {
-			return g.allow(p, a)
+		return slices.ContainsFunc(allowed, func(allow AllowFunc) bool {
+			return allow(p, a)
 		})
-	}
+	}, nil
 }
 
-// VerifyToken parses and verifies the raw bytes of a signed JWT.
+// VerifyToken parses and verifies a signed JWT.
 // The token's issuer must be referenced by at least one rule.
-func (rs *RuleSet) VerifyToken(ctx context.Context, raw []byte) (*Claims, error) {
-	tok, err := jwt.ParseSigned(string(raw), jwtAlgs)
+func (rs *RuleSet) VerifyToken(ctx context.Context, raw string) (*Claims, error) {
+	tok, err := jwt.ParseSigned(raw, jwtAlgs)
 	if err != nil {
 		return nil, err
 	}
@@ -244,8 +265,12 @@ func (r Rule) validate() error {
 	}
 
 	for i, g := range r.Grants {
-		if g.Path.IsZero() {
-			return fmt.Errorf("grants[%d]: empty path", i)
+		for j, p := range g.Paths {
+			if !strings.Contains(p, "${") {
+				if _, err := ParsePath(p); err != nil {
+					return fmt.Errorf("grants[%d].paths[%d]: %v", i, j, err)
+				}
+			}
 		}
 
 		if len(g.Actions) == 0 {
@@ -288,7 +313,7 @@ func (r Rule) clone() Rule {
 	c.Grants = make([]Grant, len(r.Grants))
 	for i, g := range r.Grants {
 		c.Grants[i] = Grant{
-			Path:    g.Path,
+			Paths:   slices.Clone(g.Paths),
 			Actions: slices.Clone(g.Actions),
 		}
 	}
@@ -301,11 +326,13 @@ func (tc TLSCond) match(p Principal) bool {
 		return false
 	}
 
-	if len(p.Cert.URIs) == 0 || len(p.Cert.URIs) > 1 {
+	if len(p.Cert.URIs) == 0 {
 		return false
 	}
 
-	return smatch(tc.SAN.URI, p.Cert.URIs[0].String())
+	return slices.ContainsFunc(p.Cert.URIs, func(u *url.URL) bool {
+		return smatch(tc.SAN.URI, u.String())
+	})
 }
 
 func (jc JWTCond) match(p Principal) bool {
@@ -365,7 +392,7 @@ func (ec *ExprCond) UnmarshalJSON(data []byte) error {
 }
 
 func (ec *ExprCond) compile() error {
-	ast, issues := exprCondEnv.Compile(ec.Match)
+	ast, issues := rulesEnv.Compile(ec.Match)
 	if err := issues.Err(); err != nil {
 		return err
 	}
@@ -374,7 +401,7 @@ func (ec *ExprCond) compile() error {
 		return errors.New("not a bool")
 	}
 
-	p, err := exprCondEnv.Program(ast)
+	p, err := rulesEnv.Program(ast)
 	if err != nil {
 		panic(err)
 	}
@@ -389,8 +416,41 @@ func (ec ExprCond) match(p Principal) bool {
 	return ok && match
 }
 
-func (g Grant) allow(p Path, a Action) bool {
-	return g.Path.Match(p) && slices.Contains(g.Actions, a)
+func (g Grant) compile(p Principal) (AllowFunc, error) {
+	var paths []Path
+
+	for i, gp := range g.Paths {
+		pat, err := compilePath(gp, p)
+		if err != nil {
+			return nil, fmt.Errorf("paths[%d]: %v", i, err)
+		}
+
+		paths = append(paths, pat)
+	}
+
+	return func(p Path, a Action) bool {
+		return slices.Contains(g.Actions, a) &&
+			slices.ContainsFunc(paths, func(pat Path) bool {
+				return pat.Match(p)
+			})
+	}, nil
+}
+
+func compilePath(s string, p Principal) (Path, error) {
+	prg, err := interpol.Compile(rulesEnv, s)
+	if err != nil {
+		return Path{}, err
+	}
+
+	if prg != nil {
+		v, _, err := prg.Eval(p.env)
+		if err != nil {
+			return Path{}, err
+		}
+		s = v.Value().(string)
+	}
+
+	return ParsePath(s)
 }
 
 // smatch returns true if the string matches the pattern.

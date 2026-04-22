@@ -1,35 +1,53 @@
-Yat is a message server.
+Yat is a message bus.
 
 Usage:
 
   yat COMMAND ARGS
 
-Commands:
+Client Commands:
 
   publish     publish a message
   subscribe   print selected messages
-  request     publish a request
-  respond     respond to requests
-  serve       run a server instance
-  seed        generate local creds
+  post        publish a request and wait
+  handle      handle posted requests
+
+Other Commands:
+
+  serve       run a Yat server
+  seed        generate local config
 
 Client Flags:
 
-  -server localhost:25120 ($YAT_SERVER)
-      Address of the Yat server.
-      The default port is 443.
+  -server TARGET ($YAT_SERVER)
+      The address of the Yat server.
+      This flag is required.
   
   -token-file PATH ($YAT_TOKEN_FILE)
       Path to a file containing a JWT signed by a trusted issuer.
       The client reads this file every time it dials.
-      This flag is ignored if $YAT_TOKEN is set.
+      This value is ignored if $YAT_TOKEN is set.
 
 Shared Flags:
-
-  -tls-dir PATH ($YAT_TLS_DIR)
-      Path to a directory containing tls.crt and tls.key files.
-      The directory may also contain a ca.crt file for verification.
 
   -log-level info ($YAT_LOG_LEVEL)
       Sets the minimum log level.
       Values are debug, warn, info, and error.
+
+  -tls-cert-file PATH ($YAT_TLS_CERT_FILE)
+      Path to a file containing a PEM encoded certificate.
+
+  -tls-key-file PATH ($YAT_TLS_KEY_FILE)
+      Path to a file containing the corresponding private key.
+
+  -tls-ca-file PATH ($YAT_TLS_CA_FILE)
+      Path to a PEM encoded file containing trust roots.
+      This flag can be set more than once.
+      To load multiple CA files from the environment,
+      set $YAT_TLS_CA_FILES to a comma-separated list.
+
+  The client doesn't require any TLS flags,
+  but it will use them if they are set.
+
+  The server requires -tls-cert-file and -tls-key-file.
+  If -tls-ca-file is set at least once, the server
+  requires clients to present a valid certificate.

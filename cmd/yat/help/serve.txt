@@ -13,4 +13,4 @@ Flags:
       Path to a JSON or YAML configuration file.
       This flag can be set more than once.
 
-The -tls-dir flag or YAT_TLS_DIR environment variable must be set.
+The server requires a TLS certificate and key.

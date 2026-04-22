@@ -1,0 +1,20 @@
+Handle handles posted requests by sending a static response.
+
+Usage:
+
+  yat handle PATH
+
+Flags:
+
+  -file, -f /dev/stdin
+      Read response data from a file.
+      This flag is ignored if -empty is set.
+
+  -empty, -e
+      Respond with no data.
+
+  -limit, -n 0
+      Unsubscribe after n responses.
+
+  -duration 0s
+      Unsubscribe after some amount of time.

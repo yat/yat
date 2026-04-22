@@ -1,20 +1,13 @@
 package yat
 
-import (
-	"errors"
-	"math"
-)
+import "errors"
 
 %%{
 	machine path;
 	alphtype byte;
 
-	action wildcard {
-		wild = true
-	}
-
-	star  = "*" %wildcard;
-	suf   = "**" %wildcard;
+	star  = "*";
+	suf   = "**";
 	seg   = [^\0/*]+ | star;
 	main := suf | (seg ("/" seg)* ("/" suf)?);
 }%%
@@ -23,15 +16,14 @@ import (
 
 // ParsePath parses a path from a buffer.
 // The returned path is a view into the buffer.
-// If the path contains a * or ** wildcard, ParsePath returns wild=true.
-func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
+func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, err error) {
 	if len(raw) == 0 {
 		err = errors.New("short path")
 		return
 	}
 
 	data := []byte(raw)
-	if len(data) > maxPathLen {
+	if len(data) > MaxPathLen {
 		err = errors.New("long path")
 		return
 	}
@@ -42,7 +34,6 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 		cs  = 0
 		p   = 0
 		pe  = len(data)
-		eof = pe
 	)
 
 	%% write init;
@@ -53,6 +44,6 @@ func ParsePath[V ~[]byte | ~string](raw V) (parsed Path, wild bool, err error) {
 		return
 	}
 
-  parsed = Path{data}
+	parsed = unsafePath(data)
 	return
 }

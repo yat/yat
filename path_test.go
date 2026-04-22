@@ -2,14 +2,13 @@ package yat_test
 
 import (
 	"encoding/json"
-	"math"
 	"strings"
 	"testing"
 
 	"yat.io/yat"
 )
 
-func TestMustPath(t *testing.T) {
+func TestNewPath(t *testing.T) {
 	defer func() {
 		if err := recover(); err == nil {
 			t.Fatal("no panic")
@@ -24,13 +23,12 @@ func TestParsePath(t *testing.T) {
 	type testCase struct {
 		Path  string
 		Valid bool
-		Wild  bool
 	}
 
 	tcs := []testCase{
 		// bad
 		{Path: ""},
-		{Path: strings.Repeat("x", math.MaxUint16+1)},
+		{Path: strings.Repeat("x", yat.MaxPathLen+1)},
 		{Path: "/"},
 		{Path: "//"},
 		{Path: "/x"},
@@ -53,21 +51,21 @@ func TestParsePath(t *testing.T) {
 		{Path: "x/**/y"},
 
 		// good wildcards
-		{Path: "*", Valid: true, Wild: true},
-		{Path: "*/x", Valid: true, Wild: true},
-		{Path: "x/*", Valid: true, Wild: true},
-		{Path: "*/x/*", Valid: true, Wild: true},
-		{Path: "*/*/*", Valid: true, Wild: true},
-		{Path: "**", Valid: true, Wild: true},
-		{Path: "x/**", Valid: true, Wild: true},
-		{Path: "x/y/**", Valid: true, Wild: true},
+		{Path: "*", Valid: true},
+		{Path: "*/x", Valid: true},
+		{Path: "x/*", Valid: true},
+		{Path: "*/x/*", Valid: true},
+		{Path: "*/*/*", Valid: true},
+		{Path: "**", Valid: true},
+		{Path: "x/**", Valid: true},
+		{Path: "x/y/**", Valid: true},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.Path, func(t *testing.T) {
 			t.Parallel()
 
-			p, wild, err := yat.ParsePath([]byte(tc.Path))
+			p, err := yat.ParsePath([]byte(tc.Path))
 
 			switch {
 			case err != nil && tc.Valid:
@@ -75,12 +73,6 @@ func TestParsePath(t *testing.T) {
 
 			case err == nil && !tc.Valid:
 				t.Fatal("no error")
-
-			case tc.Wild && !wild:
-				t.Fatal("not wild")
-
-			case !tc.Wild && wild:
-				t.Fatal("unexpectedly wild")
 			}
 
 			if tc.Valid && p.String() != tc.Path {
@@ -90,25 +82,9 @@ func TestParsePath(t *testing.T) {
 	}
 }
 
-func TestPath_Clone(t *testing.T) {
-	buf := []byte("hello")
-	p := mustPath(buf)
-
-	buf[0] = 'H'
-	if p.String() != string(buf) {
-		t.Fatal("path doesn't alias its source buffer")
-	}
-
-	c := p.Clone()
-	buf[0] = '\''
-	if c.Equal(p) {
-		t.Fatal("not cloned")
-	}
-}
-
 func TestPath_IsZero(t *testing.T) {
 	zero := yat.Path{}
-	nonzero := mustPath("test")
+	nonzero := yat.NewPath("test")
 
 	if !zero.IsZero() {
 		t.Fatal("zero is not zero")
@@ -120,9 +96,9 @@ func TestPath_IsZero(t *testing.T) {
 }
 
 func TestPath_Equal(t *testing.T) {
-	p1 := mustPath("test")
-	p2 := mustPath("test")
-	p3 := mustPath("test2")
+	p1 := yat.NewPath("test")
+	p2 := yat.NewPath("test")
+	p3 := yat.NewPath("test2")
 
 	if !p1.Equal(p2) {
 		t.Fatalf("%v != %v", p1, p2)
@@ -144,7 +120,7 @@ func TestPath_Match(t *testing.T) {
 }
 
 func TestPath_MarshalJSON(t *testing.T) {
-	p := mustPath("x/y/z")
+	p := yat.NewPath("x/y/z")
 	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
@@ -184,12 +160,4 @@ func TestPath_UnmarshalJSON(t *testing.T) {
 			}
 		})
 	}
-}
-
-func mustPath[T ~[]byte | ~string](v T) yat.Path {
-	top, _, err := yat.ParsePath(v)
-	if err != nil {
-		panic(err)
-	}
-	return top
 }

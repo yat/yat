@@ -1,0 +1,95 @@
+edition = "2023";
+
+package msg.v1;
+
+service MsgService {
+  // Pub publishes a message.
+  rpc Pub(PubRequest) returns (PubResponse) {}
+
+  // Mpub publishes a stream of messages
+  // and receives a stream of corresponding responses.
+  rpc Mpub(stream MpubRequest) returns (stream MpubResponse) {}
+
+  // Emit publishes a stream of messages without waiting for a response.
+  rpc Emit(stream EmitRequest) returns (EmitResponse) {}
+
+  // Post publishes a message and receives a stream of responses.
+  // At least one interested subscriber must be flagged as a handler
+  // for the message to be published. If there are no handlers,
+  // the stream fails with status UNAVAILABLE.
+  //
+  // (A handler flag means a subscriber will try to reply
+  // to every message it receives.)
+  //
+  // The limit field controls the number of responses
+  // delivered to the post's server-generated inbox.
+  // If the limit is 0, the number of responses is unlimited.
+  rpc Post(PostRequest) returns (stream PostResponse) {}
+
+  // Sub subscribes to a stream of published messages.
+  rpc Sub(SubRequest) returns (stream SubResponse) {}
+}
+
+// to help the server convert between types,
+// these messages use a consistent set of fields:
+//
+// int64 ack = 1;
+// bytes path = 2;
+// bytes inbox = 3;
+// bytes data = 4;
+// bytes uuid = 5;
+// int64 limit = 6;
+// int32 status = 7;
+// bool handler = 8;
+
+message PubRequest {
+  bytes path = 2;
+  bytes inbox = 3;
+  bytes data = 4;
+}
+
+message PubResponse {}
+
+message MpubRequest {
+  int64 ack = 1;
+  bytes path = 2;
+  bytes inbox = 3;
+  bytes data = 4;
+}
+
+message MpubResponse {
+  int64 ack = 1;
+  int32 status = 7;
+}
+
+message EmitRequest {
+  bytes path = 2;
+  bytes inbox = 3;
+  bytes data = 4;
+}
+
+message EmitResponse {}
+
+message PostRequest {
+  bytes path = 2;
+  bytes data = 4;
+  int64 limit = 6;
+}
+
+message PostResponse {
+  bytes inbox = 3;
+  bytes data = 4;
+}
+
+message SubRequest {
+  bytes path = 2;
+  int64 limit = 6;
+  bool handler = 8;
+}
+
+message SubResponse {
+  bytes path = 2;
+  bytes inbox = 3;
+  bytes data = 4;
+  bytes uuid = 5;
+}

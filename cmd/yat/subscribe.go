@@ -13,14 +13,12 @@ import (
 
 type SubscribeCmd struct {
 	*ClientConfig
-	Group    string
 	Limit    int
 	Duration time.Duration
 	Raw      bool
 }
 
 func (cmd *SubscribeCmd) AddFlags(flags *flagset.Set) {
-	flags.String(&cmd.Group, "group", "g")
 	flags.Int(&cmd.Limit, "limit", "n")
 	flags.Duration(&cmd.Duration, "duration", "d")
 	flags.Bool(&cmd.Raw, "raw")
@@ -54,7 +52,7 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		}
 	}
 
-	path, _, err := yat.ParsePath(args[0])
+	path, err := yat.ParsePath(args[0])
 	if err != nil {
 		return err
 	}
@@ -64,17 +62,13 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		Limit: cmd.Limit,
 	}
 
-	if cmd.Group != "" {
-		sel.Group = yat.NewGroup(cmd.Group)
-	}
-
 	if cmd.Duration > 0 {
 		var cancel func()
 		ctx, cancel = context.WithTimeout(ctx, cmd.Duration)
 		defer cancel()
 	}
 
-	sub, err := yc.Subscribe(sel, cb)
+	sub, err := yc.Subscribe(ctx, sel, cb)
 	if err != nil {
 		return err
 	}

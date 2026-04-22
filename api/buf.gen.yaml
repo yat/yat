@@ -1,0 +1,17 @@
+version: v2
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: ../internal/wire
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-go-grpc]
+    out: ../internal/wire
+    opt: paths=source_relative
+
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: yat.io/yat/internal/wire
+  disable:
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate

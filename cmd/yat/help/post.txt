@@ -1,0 +1,26 @@
+Post posts a request and prints responses as JSON lines.
+
+Usage:
+
+  yat post PATH
+
+Flags:
+
+  -file, -f /dev/stdin
+      Read request data from a file.
+      This flag is ignored if -empty is set.
+
+  -empty, -e
+      Post a request with no data.
+
+  -raw
+      Print raw response data.
+
+  -limit, -n 1
+      Stop after n responses.
+
+  -duration -d 0s
+      Succeed after some amount of time.
+
+  -timeout, -t 0s
+      Fail after some amount of time.

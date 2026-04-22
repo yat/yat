@@ -2,716 +2,522 @@ package yat
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
-	"slices"
 	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/cenkalti/backoff/v5"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/protobuf/proto"
-	"yat.io/yat/wire"
+	"github.com/google/uuid"
+	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials/oauth"
+
+	msgv1 "yat.io/yat/internal/wire/msg/v1"
 )
 
 type Client struct {
 	config ClientConfig
-
-	mu   sync.Mutex
-	num  uint64
-	subs map[uint64]*clientSub
-
-	// bsub holds the numbers of buffered subs and reqs, cleared when the
-	// buffer is flushed. The connect loop uses bsub to decide if it
-	// should re-buffer a subscription. The flusher uses bsub to fail
-	// pending requests if the flush write fails.
-	bsub []uint64
-
-	wbuf  []byte
-	wbufC chan struct{}
-
-	// wbufD tracks total buffered [Msg.Data] bytes in wbuf.
-	// Publish will fail if it exceeds [maxClientDataLen].
-	wbufD int
-
-	// doneC is closed by Close.
-	doneC chan struct{}
-
-	// connC is closed after connect returns.
-	connC chan struct{}
+	conn   *grpc.ClientConn
+	mc     msgv1.MsgServiceClient
 }
 
 type ClientConfig struct {
-
-	// GetToken, if set, is called during each connection attempt to get an token.
-	// Implementations should returned a signed JWT issued by an OIDC identity provider.
-	// If GetToken returns an error, the connection attempt is canceled and the client redials.
-	GetToken func(context.Context) ([]byte, error)
-
-	// Logger is where the client writes logs.
-	// If it is nil, client logs are discarded.
 	Logger *slog.Logger
+
+	// TLSConfig configures the client's transport credentials.
+	// If it is nil, transport security is disabled.
+	TLSConfig *tls.Config
+
+	// TokenSource, if set, is called by the client to produce
+	// bearer tokens for each outbound operation.
+	TokenSource oauth2.TokenSource
 }
 
-type DialFunc func(context.Context) (net.Conn, error)
+// NewClient returns a new client for the given server and configuration.
+func NewClient(server string, config ClientConfig) (*Client, error) {
+	config = config.withDefaults()
+	creds := insecure.NewCredentials()
 
-type clientSub struct {
-	Sel   Sel
-	Do    func(delivery)
-	n     atomic.Uint64
-	doneC chan struct{}
-	unsub func()
-}
-
-func NewClient(dial DialFunc, config ClientConfig) (*Client, error) {
-	if dial == nil {
-		return nil, errors.New("nil dial func")
+	if config.TLSConfig == nil && config.TokenSource != nil {
+		return nil, errors.New("token source requires tls")
 	}
 
-	config = config.withDefaults()
+	if config.TLSConfig != nil {
+		creds = credentials.NewTLS(config.TLSConfig)
+	}
+
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(creds),
+	}
+
+	if config.TLSConfig != nil && config.TokenSource != nil {
+		opts = append(opts, grpc.WithPerRPCCredentials(
+			oauth.TokenSource{TokenSource: config.TokenSource}))
+	}
+
+	conn, err := grpc.NewClient(server, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	mc := msgv1.NewMsgServiceClient(conn)
 
 	c := &Client{
 		config: config,
-		subs:   map[uint64]*clientSub{},
-		wbufC:  make(chan struct{}, 1),
-		doneC:  make(chan struct{}),
-		connC:  make(chan struct{}),
+		conn:   conn,
+		mc:     mc,
 	}
-
-	go c.connect(dial)
 
 	return c, nil
 }
 
-func (c *Client) Close() error {
-	c.mu.Lock()
-
-	select {
-	case <-c.doneC:
-		c.mu.Unlock()
-		return net.ErrClosed
-	default:
-	}
-
-	close(c.doneC)
-	c.mu.Unlock()
-
-	// unblock [Sub.Done]
-	for _, cs := range c.subs {
-		if cs.unsub != nil {
-			cs.unsub()
-		}
-	}
-
-	<-c.connC
-	return nil
-}
-
-// Publish publishes a copy of the message.
+// Publish publishes m.
+// It returns an error if m is invalid or rejected by the server.
 func (c *Client) Publish(ctx context.Context, m Msg) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if err := validateMsg(m, false); err != nil {
+	if c.isShutdown() {
+		return net.ErrClosed
+	}
+
+	if err := validateOutboundMsg(m); err != nil {
 		return err
 	}
 
-	c.mu.Lock()
-
-	select {
-	case <-c.doneC:
-		c.mu.Unlock()
-		return net.ErrClosed
-	default:
+	req := &msgv1.PubRequest{
+		Path:  m.Path.bytes(),
+		Inbox: m.Inbox.bytes(),
+		Data:  m.Data,
 	}
 
-	if c.wbufD+len(m.Data) > maxClientDataLen {
-		c.mu.Unlock()
-		return errBufferFull
-	}
-
-	c.wbufD += len(m.Data)
-	c.wbuf = appendFrame(c.wbuf, pubFrameType, func(b []byte) []byte {
-		return appendMsgFields(b, m)
-	})
-
-	c.mu.Unlock()
-
-	select {
-	case c.wbufC <- struct{}{}:
-	default:
-	}
-
-	return nil
+	// FIX: transform some gRPC errors into our own client errors
+	_, err := c.mc.Pub(ctx, req)
+	return err
 }
 
-// Subscribe arranges for the callback func to be called in a new goroutine
-// when a selected message is published.
+// NewPublisher returns a new publish stream.
+// Use it to efficiently publish many messages.
 //
-// Call [Sub.Cancel] to unsubscribe.
-//
-// The callback func must not retain or modify delivered messages.
-func (c *Client) Subscribe(sel Sel, cb func(context.Context, Msg)) (Sub, error) {
-	if err := validateSel(sel); err != nil {
+// The returned stream must not be called concurrently.
+func (c *Client) NewPublisher(ctx context.Context) (*PublishStream, error) {
+	if c.isShutdown() {
+		return nil, net.ErrClosed
+	}
+
+	ctx, cancel := ctxWithCancelCause(ctx)
+	stream, err := c.mc.Mpub(ctx)
+	if err != nil {
 		return nil, err
 	}
 
-	if cb == nil {
-		return nil, errNilCallback
+	p := &PublishStream{
+		context: ctx,
+		cancel:  cancel,
+		stream:  stream,
+		acks:    map[int64]chan *msgv1.MpubResponse{},
 	}
 
-	c.mu.Lock()
-	select {
-	case <-c.doneC:
-		c.mu.Unlock()
-		return nil, net.ErrClosed
-	default:
-	}
-
-	num := c.nextNum()
-	doneC := make(chan struct{})
-
-	cs := &clientSub{
-		Sel:   sel,
-		Do:    goDeliver(cb),
-		doneC: doneC,
-	}
-
-	cs.unsub = sync.OnceFunc(func() {
-		close(doneC)
-		c.unsub(num)
-	})
-
-	c.bsub = append(c.bsub, num)
-	c.subs[num] = cs
-
-	c.wbuf = appendSubFrame(c.wbuf, num, sel)
-	c.mu.Unlock()
-
-	select {
-	case c.wbufC <- struct{}{}:
-	default:
-	}
-
-	return cs, nil
+	go p.recv()
+	return p, nil
 }
 
-func (c *Client) Request(ctx context.Context, m Msg, cb func(context.Context, Msg) error) error {
+// NewEmitter returns a new emit stream.
+// Use it to publish messages without waiting for the server.
+//
+// The returned stream must not be called concurrently.
+func (c *Client) NewEmitter(ctx context.Context) (*EmitStream, error) {
+	if c.isShutdown() {
+		return nil, net.ErrClosed
+	}
+
+	ctx, cancel := ctxWithCancelCause(ctx)
+	stream, err := c.mc.Emit(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EmitStream{
+		context: ctx,
+		cancel:  cancel,
+		stream:  stream,
+	}, nil
+}
+
+func (c *Client) Post(ctx context.Context, req Req, f func(Res) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if err := validateMsg(m, false); err != nil {
+	if f == nil {
+		return errNilFunc
+	}
+
+	if c.isShutdown() {
+		return net.ErrClosed
+	}
+
+	if err := validateOutboundReq(req); err != nil {
 		return err
 	}
 
-	if cb == nil {
-		return errNilCallback
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	in := &msgv1.PostRequest{
+		Path:  req.Path.bytes(),
+		Data:  req.Data,
+		Limit: new(int64(req.Limit)),
 	}
 
-	c.mu.Lock()
-
-	select {
-	case <-c.doneC:
-		c.mu.Unlock()
-		return net.ErrClosed
-	default:
+	stream, err := c.mc.Post(ctx, in)
+	if err != nil {
+		return err
 	}
 
-	if c.wbufD+len(m.Data) > maxClientDataLen {
-		c.mu.Unlock()
-		return errBufferFull
+	// did the stream end early?
+	md, err := stream.Header()
+	if err != nil {
+		return err
 	}
 
-	num := c.nextNum()
-	dC := make(chan delivery, 1)
-
-	req := &clientSub{
-		Do:    sendResponse(dC),
-		unsub: func() { c.unsub(num) },
+	// yes it did,
+	// probably auth
+	if md == nil {
+		_, err := stream.Recv()
+		return err
 	}
 
-	c.bsub = append(c.bsub, num)
-	c.subs[num] = req
+	for {
+		out, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
 
-	c.wbufD += len(m.Data)
-	c.wbuf = appendFrame(c.wbuf, pubFrameType, func(b []byte) []byte {
-		return appendReqFields(b, num, m)
-	})
+		if err != nil {
+			return err
+		}
 
-	delivered := false
-	defer func() {
-		if delivered {
+		var res Res
+		err = func() error {
+			inbox, err := parseMsgInboxFromServer(out.GetInbox())
+			if err != nil {
+				return err
+			}
+
+			res = Res{
+				Inbox: inbox,
+				Data:  out.GetData(),
+			}
+
+			return nil
+		}()
+
+		if err != nil {
+			c.config.Logger.Error("drop invalid response", "error", err)
+			continue
+		}
+
+		if err := f(res); err != nil {
+			return err
+		}
+	}
+}
+
+// Subscribe arranges for f to be called in a new goroutine when a message matching sel is published.
+// The given context controls the lifetime of the subscription.
+func (c *Client) Subscribe(ctx context.Context, sel Sel, f func(context.Context, Msg)) (Sub, error) {
+	return c.sub(ctx, sel, false, f)
+}
+
+func (c *Client) Handle(ctx context.Context, sel Sel, f func(ctx context.Context, path Path, in []byte) (out []byte)) (Sub, error) {
+	if f == nil {
+		return nil, errNilFunc
+	}
+
+	return c.sub(ctx, sel, true, func(ctx context.Context, m Msg) {
+		if m.Inbox.IsZero() {
 			return
 		}
 
-		req.unsub()
-	}()
+		data := f(ctx, m.Path, m.Data)
 
-	c.mu.Unlock()
+		om := Msg{
+			Path: m.Inbox,
+			Data: data,
+		}
 
-	select {
-	case c.wbufC <- struct{}{}:
-	default:
+		// FIX: this is a pretty expensive way to respond
+		// because Publish sends a new RPC for every response
+		// instead, create a new emitter for the handler
+		// or use a shared emitter for responses
+
+		if err := c.Publish(ctx, om); err != nil {
+			c.config.Logger.ErrorContext(ctx, "handler response failed",
+				"error", err, "path", m.Path, "inbox", m.Inbox)
+		}
+	})
+}
+
+func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.Context, Msg)) (Sub, error) {
+	if err := validateOutboundSel(sel); err != nil {
+		return nil, err
 	}
 
-	var d delivery
+	if f == nil {
+		return nil, errNilFunc
+	}
+
+	if c.isShutdown() {
+		return nil, net.ErrClosed
+	}
+
+	req := &msgv1.SubRequest{
+		Path:    sel.Path.bytes(),
+		Handler: new(handler),
+	}
+
+	if sel.Limit > 0 {
+		req.Limit = new(int64(sel.Limit))
+	}
+
+	// FIX: transform some gRPC errors into our own client errors
+	stream, err := c.mc.Sub(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// did the stream end early?
+	md, err := stream.Header()
+	if err != nil {
+		return nil, err
+	}
+
+	// yes it did,
+	// probably auth
+	if md == nil {
+		_, err := stream.Recv()
+		return nil, err
+	}
+
+	sub := csub{make(chan struct{})}
+	wg := &sync.WaitGroup{}
+
+	go func() {
+		defer close(sub.C)
+		defer wg.Wait()
+
+		for {
+			res, err := stream.Recv()
+			if err != nil {
+				return
+			}
+
+			var m Msg
+			err = func() error {
+				path, err := parseMsgPath(res.GetPath())
+				if err != nil {
+					return err
+				}
+
+				inbox, err := parseMsgInboxFromServer(res.GetInbox())
+				if err != nil {
+					return err
+				}
+
+				id, err := uuid.FromBytes(res.GetUuid())
+				if err != nil {
+					return err
+				}
+
+				m = Msg{
+					Path:  path,
+					Inbox: inbox,
+					Data:  res.GetData(),
+					uuid:  id,
+				}
+
+				return nil
+			}()
+
+			if err != nil {
+				c.config.Logger.Error("drop invalid message", "error", err)
+				continue
+			}
+
+			wg.Go(func() { f(ctx, m) })
+		}
+	}()
+
+	return sub, nil
+}
+
+// Close stops all subscriptions and closes the client.
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
+func (c *Client) isShutdown() bool {
+	return c.conn.GetState() == connectivity.Shutdown
+}
+
+// A PublishStream efficiently publishes a stream of messages.
+// It is not safe for concurrent use.
+type PublishStream struct {
+	context context.Context
+	cancel  context.CancelCauseFunc
+	stream  grpc.BidiStreamingClient[msgv1.MpubRequest, msgv1.MpubResponse]
+
+	mu   sync.Mutex
+	ackn int64
+	acks map[int64]chan *msgv1.MpubResponse
+}
+
+// Publish publishes m.
+// It returns an error if m is invalid or rejected by the server.
+func (p *PublishStream) Publish(ctx context.Context, m Msg) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := context.Cause(p.context); err != nil {
+		return err
+	}
+
+	if err := validateOutboundMsg(m); err != nil {
+		return err
+	}
+
+	resC := make(chan *msgv1.MpubResponse, 1)
+
+	p.mu.Lock()
+	p.ackn++
+	ack := p.ackn
+	p.acks[ack] = resC
+	p.mu.Unlock()
+
+	defer func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		delete(p.acks, ack)
+	}()
+
+	err := p.stream.Send(&msgv1.MpubRequest{
+		Ack:   &ack,
+		Path:  m.Path.bytes(),
+		Inbox: m.Inbox.bytes(),
+		Data:  m.Data,
+	})
+
+	if err != nil {
+		return err
+	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 
-	case <-c.doneC:
-		return net.ErrClosed
+	case <-p.context.Done():
+		return context.Cause(p.context)
 
-	case d = <-dC:
-		delivered = true
-		if d.Err != nil {
-			return d.Err
-		}
-	}
+	case res := <-resC:
+		// FIX: translate some codes to our own errors
+		// otherwise a status.Error is fine
+		c := codes.Code(res.GetStatus())
+		switch c {
+		case codes.OK:
+			return nil
 
-	return cb(d.Ctx, d.Msg)
-}
-
-func (c *Client) Respond(s Sel, cb func(ctx context.Context, in Msg) (out []byte)) (Sub, error) {
-	return respond(c, s, cb)
-}
-
-func (c *Client) unsub(num uint64) bool {
-	c.mu.Lock()
-
-	select {
-	case <-c.doneC:
-		c.mu.Unlock()
-		return false
-	default:
-	}
-
-	var ok bool
-	if _, ok = c.subs[num]; ok {
-		delete(c.subs, num)
-		c.wbuf = appendFrame(c.wbuf, unsubFrameType, func(b []byte) []byte {
-			b, _ = proto.MarshalOptions{}.MarshalAppend(b, &wire.UnsubFrame{Num: num})
-			return b
-		})
-	}
-
-	c.mu.Unlock()
-
-	if ok {
-		select {
-		case c.wbufC <- struct{}{}:
 		default:
+			return errors.New(c.String())
 		}
 	}
-
-	return ok
 }
 
-// connect redials in a loop until the client is closed.
-// When it successfully connects,
-// it serves the connection until an error occurs,
-// after which the redial loop continues.
-func (c *Client) connect(dial DialFunc) {
-	defer close(c.connC)
+// Close closes the stream.
+func (p *PublishStream) Close() error {
+	// FIX: all errors must be reconsidered
+	p.cancel(errors.New("publisher closed"))
+	return nil
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		select {
-		case <-c.doneC:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	redialBackoff := &backoff.ExponentialBackOff{
-		InitialInterval:     200 * time.Millisecond,
-		RandomizationFactor: 0.5,
-		Multiplier:          1.6,
-		MaxInterval:         5 * time.Second,
-	}
-
-	var ndial int
-
+func (p *PublishStream) recv() {
 	for {
-		c.mu.Lock()
-
-		buffered := len(c.wbuf) > 0
-
-		// fail stale requests
-		failed := delivery{Err: EIO}
-		for num, sub := range c.subs {
-			if slices.Contains(c.bsub, num) || !sub.IsRequest() {
-				continue
-			}
-
-			delete(c.subs, num)
-			sub.Do(failed)
-		}
-
-		c.mu.Unlock()
-
-		// stop if the client is done
-		// unless this is the first dial
-		// and there's something in the write buffer,
-		// in which case try to connect and flush
-
-		select {
-		case <-ctx.Done():
-			if ndial > 0 || !buffered {
-				return
-			}
-		default:
-		}
-
-		dctx := ctx
-		if ndial == 0 && buffered {
-			dctx = context.Background()
-		}
-
-		c.config.Logger.DebugContext(ctx, "dialing", "n", ndial)
-
-		var token []byte
-		if c.config.GetToken != nil {
-			tctx, cancel := context.WithTimeout(dctx, 1*time.Second)
-			raw, err := c.config.GetToken(tctx)
-			cancel()
-
-			switch {
-			case err != nil:
-				c.config.Logger.ErrorContext(ctx,
-					"token fetch failed", "error", err)
-
-				select {
-				case <-ctx.Done():
-					return
-
-				case <-time.After(redialBackoff.NextBackOff()):
-					continue
-				}
-
-			default:
-				token = raw
-			}
-		}
-
-		dctx, cancel := context.WithTimeout(dctx, 3*time.Second)
-		conn, err := dial(dctx)
-		cancel()
-		ndial++
-
-		if err != nil {
-			c.config.Logger.ErrorContext(ctx, "dial failed", "error", err)
-
-			select {
-			case <-ctx.Done():
-				return
-
-			case <-time.After(redialBackoff.NextBackOff()):
-				continue
-			}
-		}
-
-		redialBackoff.Reset()
-
-		logger := c.config.Logger.With(
-			"local", conn.LocalAddr().String(),
-			"remote", conn.RemoteAddr().String())
-
-		logger.DebugContext(ctx, "connected")
-
-		c.mu.Lock()
-
-		resubbed := false
-		for num, sub := range c.subs {
-			if slices.Contains(c.bsub, num) {
-				continue
-			}
-
-			logger.DebugContext(ctx, "resubscribe",
-				"num", num, "path", sub.Sel.Path)
-
-			resubbed = true
-			c.bsub = append(c.bsub, num)
-			c.wbuf = appendSubFrame(c.wbuf, num, sub.Sel)
-		}
-
-		c.mu.Unlock()
-
-		if resubbed {
-			logger.DebugContext(ctx, "resubscribed")
-
-			select {
-			case c.wbufC <- struct{}{}:
-			default:
-			}
-		}
-
-		// write an auth frame first
-		// before any buffered frames
-
-		if len(token) > 0 {
-			frm := appendFrame(nil, authFrameType, func(b []byte) []byte {
-				return append(b, token...)
-			})
-
-			err = func() error {
-				if conn.SetWriteDeadline(time.Now().Add(1 * time.Second)); err != nil {
-					return err
-				}
-
-				_, err := conn.Write(frm)
-				conn.SetWriteDeadline(time.Time{})
-
-				return err
-			}()
-
-			if err != nil {
-				conn.Close()
-			}
-		}
-
-		if err == nil {
-			err = c.serve(ctx, logger, conn)
-		}
-
-		logger.DebugContext(ctx, "connection closed")
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
-			logger.ErrorContext(ctx, "unable to connect", "error", err)
-		}
-
-		select {
-		case <-ctx.Done():
+		res, err := p.stream.Recv()
+		if err != nil && err != p.context.Err() {
+			p.cancel(err)
 			return
+		}
 
-		case <-time.After(redialBackoff.NextBackOff()):
+		p.mu.Lock()
+		ack := res.GetAck()
+		resC := p.acks[ack]
+		delete(p.acks, ack)
+		p.mu.Unlock()
+
+		if resC == nil {
 			continue
 		}
-	}
-}
 
-func (c *Client) serve(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error { return c.readFrames(ctx, logger, conn) })
-	eg.Go(func() error { return c.writeFrames(ctx, logger, conn) })
-	eg.Go(func() error { return c.keepalive(ctx) })
-	return eg.Wait()
-}
-
-func (c *Client) readFrames(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
-	for {
-		hdr, err := readFrameHdr(conn)
-		if err != nil {
-			return err
-		}
-
-		if hdr.Len() < minFrameLen {
-			return errShortFrame
-		}
-
-		var handle func(context.Context, *slog.Logger, []byte) error
-
-		switch hdr.Type() {
-		case msgFrameType:
-			handle = c.handleMsg
-
-		case statusFrameType:
-			handle = c.handleStatus
-
+		select {
+		case resC <- res:
 		default:
-			logger.DebugContext(ctx, "discard frame", "type", hdr.Type(), "len", hdr.Len())
-			if _, err := io.CopyN(io.Discard, conn, int64(hdr.BodyLen())); err != nil {
-				return err
-			}
-		}
-
-		if handle == nil {
-			continue
-		}
-
-		body := make([]byte, hdr.BodyLen())
-		if _, err := io.ReadFull(conn, body); err != nil {
-			return err
-		}
-
-		if err := handle(ctx, logger, body); err != nil {
-			return err
 		}
 	}
 }
 
-func (c *Client) handleMsg(ctx context.Context, logger *slog.Logger, body []byte) error {
-	fields, _, err := parseFields(body)
+// EmitStream publishes a stream of messages as quickly as possible.
+type EmitStream struct {
+	context context.Context
+	cancel  context.CancelCauseFunc
+	stream  grpc.ClientStreamingClient[msgv1.EmitRequest, msgv1.EmitResponse]
+}
+
+// Emit publishes m without waiting for the server to respond.
+func (e *EmitStream) Emit(m Msg) error {
+	if err := context.Cause(e.context); err != nil {
+		return err
+	}
+
+	if err := validateOutboundMsg(m); err != nil {
+		return err
+	}
+
+	req := &msgv1.EmitRequest{
+		Path:  m.Path.bytes(),
+		Inbox: m.Inbox.bytes(),
+		Data:  m.Data,
+	}
+
+	if err := e.stream.Send(req); err != nil {
+		e.cancel(err)
+		return err
+	}
+
+	return nil
+}
+
+func (e *EmitStream) Close() error {
+	if err := context.Cause(e.context); err != nil {
+		return err
+	}
+
+	_, err := e.stream.CloseAndRecv()
 	if err != nil {
+		e.cancel(err)
 		return err
 	}
 
-	if err := validateMsg(fields.Msg, true); err != nil {
-		return err
-	}
-
-	c.mu.Lock()
-
-	sub, ok := c.subs[fields.Num]
-	req := ok && sub.IsRequest()
-
-	if ok && req {
-		delete(c.subs, fields.Num)
-	}
-
-	c.mu.Unlock()
-
-	if !ok {
-		return nil
-	}
-
-	d := delivery{
-		Msg: fields.Msg,
-	}
-
-	if req {
-		sub.Do(d)
-		return nil
-	}
-
-	n := sub.n.Add(1)
-	lim := uint64(sub.Sel.Limit)
-
-	if lim == 0 || n <= lim {
-		sub.Do(d)
-	}
-
-	if lim > 0 && n >= lim {
-		sub.unsub()
-	}
-
+	// FIX: all errors must be reconsidered
+	e.cancel(errors.New("emitter closed"))
 	return nil
-}
-
-func (c *Client) handleStatus(ctx context.Context, logger *slog.Logger, body []byte) error {
-	var status wire.StatusFrame
-	if err := proto.Unmarshal(body, &status); err != nil {
-		return err
-	}
-
-	// malformed status
-	if status.Num == 0 || status.Status == 0 {
-		return nil
-	}
-
-	c.mu.Lock()
-
-	sub, ok := c.subs[status.Num]
-	req := ok && sub.Sel.IsZero()
-
-	if ok && req {
-		delete(c.subs, status.Num)
-	}
-
-	c.mu.Unlock()
-
-	// not a request
-	if !ok || !req {
-		return nil
-	}
-
-	sub.Do(delivery{
-		Err: Errno(status.Status),
-	})
-
-	return nil
-}
-
-func (c *Client) writeFrames(ctx context.Context, logger *slog.Logger, conn net.Conn) error {
-	defer conn.Close()
-
-	for {
-		var err error
-		select {
-		case <-ctx.Done():
-			err = context.Cause(ctx)
-		case <-c.wbufC:
-		}
-
-		c.mu.Lock()
-		buf := c.wbuf
-		bsub := c.bsub
-		c.bsub = nil
-		c.wbuf = nil
-		c.wbufD = 0
-		c.mu.Unlock()
-
-		if len(buf) > 0 {
-			if _, err := conn.Write(buf); err != nil {
-				if len(bsub) > 0 {
-					c.mu.Lock()
-
-					failure := delivery{Err: err}
-					for _, num := range bsub {
-						if sub, ok := c.subs[num]; ok && sub.IsRequest() {
-							delete(c.subs, num)
-							sub.Do(failure)
-						}
-					}
-
-					c.mu.Unlock()
-				}
-
-				return err
-			}
-		}
-
-		if err != nil {
-			return err
-		}
-	}
-}
-
-func (c *Client) keepalive(ctx context.Context) error {
-	tick := time.NewTicker(1 * time.Second)
-	keepalive := []byte{4, 0, 0, 0}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-
-		case <-tick.C:
-			c.mu.Lock()
-
-			flush := len(c.wbuf) == 0
-			if flush {
-				c.wbuf = append(c.wbuf, keepalive...)
-			}
-
-			c.mu.Unlock()
-
-			if flush {
-				select {
-				case c.wbufC <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}
-}
-
-// nextNum returns the next subscription number.
-// The caller must hold mu.
-func (c *Client) nextNum() uint64 {
-	c.num++
-	// unlikely, but
-	if c.num == 0 {
-		c.num++
-	}
-	return c.num
 }
 
 func (c ClientConfig) withDefaults() ClientConfig {
@@ -722,14 +528,17 @@ func (c ClientConfig) withDefaults() ClientConfig {
 	return c
 }
 
-func (cs *clientSub) Cancel() {
-	cs.unsub()
+// csub implements [Sub] in terms of a channel,
+// like a very simple [context.Context].
+type csub struct {
+	C chan struct{}
 }
 
-func (cs *clientSub) Done() <-chan struct{} {
-	return cs.doneC
+func (s csub) Done() <-chan struct{} {
+	return s.C
 }
 
-func (cs *clientSub) IsRequest() bool {
-	return cs.Sel.IsZero()
+// ctxWithCancelCause silences a (usually useful) Go warning about not calling cancel.
+func ctxWithCancelCause(parent context.Context) (context.Context, func(error)) {
+	return context.WithCancelCause(parent)
 }

@@ -33,8 +33,9 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	sharedConfig := &SharedConfig{
-		LogLevel: slog.LevelInfo,
-		TLSDir:   os.Getenv("YAT_TLS_DIR"),
+		LogLevel:    slog.LevelInfo,
+		TLSCertFile: os.Getenv("YAT_TLS_CERT_FILE"),
+		TLSKeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
 	}
 
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
@@ -43,21 +44,37 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
+	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
+		if name := strings.TrimSpace(name); name != "" {
+			sharedConfig.TLSCAFiles = append(sharedConfig.TLSCAFiles, name)
+		}
+	}
+
+	if names, ok := os.LookupEnv("YAT_TLS_CA_FILES"); ok {
+		for name := range strings.SplitSeq(names, ",") {
+			if name := strings.TrimSpace(name); name != "" {
+				sharedConfig.TLSCAFiles = append(sharedConfig.TLSCAFiles, name)
+			}
+		}
+	}
+
 	// embedded in client cmds
 	clientConfig := &ClientConfig{
 		SharedConfig: sharedConfig,
 		Server:       os.Getenv("YAT_SERVER"),
-		Token:        os.Getenv("YAT_TOKEN"),
+		StaticToken:  os.Getenv("YAT_TOKEN"),
 		TokenFile:    os.Getenv("YAT_TOKEN_FILE"),
 	}
 
-	if clientConfig.Server == "" {
-		clientConfig.Server = "localhost:25120"
-	}
-
 	flags := flagset.New()
+
+	// shared flags
 	flags.Text(&sharedConfig.LogLevel, "log-level")
-	flags.String(&sharedConfig.TLSDir, "tls-dir")
+	flags.String(&sharedConfig.TLSCertFile, "tls-cert-file")
+	flags.String(&sharedConfig.TLSKeyFile, "tls-key-file")
+	flags.Strings(&sharedConfig.TLSCAFiles, "tls-ca-file")
+
+	// client flags
 	flags.String(&clientConfig.Server, "server")
 	flags.String(&clientConfig.TokenFile, "token-file")
 
@@ -66,12 +83,17 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if flags.Help {
+		return HelpCmd{}.Run(ctx, nil, nil)
+	}
+
 	// a subcommand is required
 	if len(args) == 0 || args[0][0] == '-' {
 		return errNoCommand
 	}
 
-	ctx, _ = signal.NotifyContext(ctx, os.Interrupt)
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
 
 	name, args := args[0], args[1:]
 
@@ -80,8 +102,21 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	switch name {
+	case "handle", "respond", "res":
+		cmd = &HandleCmd{
+			ClientConfig: clientConfig,
+			File:         "/dev/stdin",
+		}
+
 	case "help":
 		cmd = &HelpCmd{}
+
+	case "post", "request", "req":
+		cmd = &PostCmd{
+			ClientConfig: clientConfig,
+			File:         "/dev/stdin",
+			Limit:        1,
+		}
 
 	case "publish", "pub":
 		cmd = &PublishCmd{
@@ -89,22 +124,8 @@ func run(ctx context.Context, args []string) error {
 			File:         "/dev/stdin",
 		}
 
-	case "subscribe", "sub":
-		cmd = &SubscribeCmd{
-			ClientConfig: clientConfig,
-		}
-
-	case "request", "req":
-		cmd = &RequestCmd{
-			ClientConfig: clientConfig,
-			File:         "/dev/stdin",
-		}
-
-	case "respond", "res":
-		cmd = &RespondCmd{
-			ClientConfig: clientConfig,
-			File:         "/dev/stdin",
-		}
+	case "seed":
+		cmd = &SeedCmd{}
 
 	case "serve", "server":
 		cmd = &ServeCmd{
@@ -112,8 +133,10 @@ func run(ctx context.Context, args []string) error {
 			BindAddr:     "localhost:25120",
 		}
 
-	case "seed":
-		cmd = &SeedCmd{}
+	case "subscribe", "sub":
+		cmd = &SubscribeCmd{
+			ClientConfig: clientConfig,
+		}
 
 	default:
 		return fmt.Errorf("yat %s: unknown command", name)
@@ -141,6 +164,11 @@ func run(ctx context.Context, args []string) error {
 
 		// preserve positional args
 		args = append(args[:fi], tail...)
+	}
+
+	if flags.Help && name != "help" {
+		args = []string{name}
+		cmd = HelpCmd{}
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{

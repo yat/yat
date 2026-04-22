@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"os"
 
+	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
@@ -41,4 +44,27 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 	defer yc.Close()
 
 	return yc.Publish(ctx, msg)
+}
+
+func readMsg(path, inbox string, file string, empty bool) (m yat.Msg, err error) {
+	m.Path, err = yat.ParsePath(path)
+	if err != nil {
+		return
+	}
+
+	if inbox != "" {
+		if m.Inbox, err = yat.ParsePath(inbox); err != nil {
+			return
+		}
+	}
+
+	if !empty {
+		if file == "-" || file == "/dev/stdin" {
+			m.Data, err = io.ReadAll(os.Stdin)
+		} else {
+			m.Data, err = os.ReadFile(file)
+		}
+	}
+
+	return
 }

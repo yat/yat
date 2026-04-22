@@ -6,5 +6,5 @@ rules:
       san:
         uri: "spiffe://local/*"
     grants:
-      - path: "**"
+      - paths: ["**"]
         actions: [pub, sub]

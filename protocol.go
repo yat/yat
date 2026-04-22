@@ -1,199 +1,284 @@
 package yat
 
 import (
-	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
-	"slices"
-	"unsafe"
+	"net/http"
 
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
-	"google.golang.org/protobuf/proto"
-	"yat.io/yat/wire"
 )
 
-// type frameHdr struct {
-// 	Len  uint24
-// 	Type byte
-// }
-
-// frameHdr holds the first 4 bytes of a wire frame.
-// b0-b2 are the u24le frame length including the header.
-// b3 is the frame type.
-type frameHdr uint32
-
-// sharedFields captures all the fields parsed by [parseFields].
-type sharedFields struct {
-	Num uint64
-	Msg
+func init() {
+	uuid.EnableRandPool()
 }
 
+// grpcFrmHdr is the first 5 bytes of a gRPC stream frame.
+type grpcFrmHdr [grpcFrmHdrLen]byte
+
+// grpcFrmHdrLen is the length in bytes of a gRPC stream frame header.
+const grpcFrmHdrLen = 5
+
 const (
-	frameHdrLen      = 4
-	minFrameLen      = frameHdrLen
-	maxMsgDataLen    = 8 << 20
-	maxClientDataLen = 32 << 20
-	maxSvrConnBufLen = 32 << 20
+	ackField    = 1
+	pathField   = 2
+	inboxField  = 3
+	dataField   = 4
+	uuidField   = 5
+	limitField  = 6
+	statusField = 7
+	// handlerField = 8
 )
 
-const (
-	_               = 0
-	authFrameType   = 1
-	pubFrameType    = 2
-	subFrameType    = 4
-	unsubFrameType  = 5
-	msgFrameType    = 16
-	statusFrameType = 17
-)
+// uuidFieldLen is the length in bytes of a server-appended uuid field.
+const uuidFieldLen = 18
 
-const (
-	// Msg
-	numField   = 1
-	pathField  = 2
-	dataField  = 3
-	inboxField = 4
+// postboxFieldMaxLen is maximum length in bytes of a server-appended
+// path field containing a router postbox.
+const postboxFieldLen = 69
 
-	// StatusFrame
-	statusField = 2
+// maxPubMsgLen is the maximum body length in bytes of a pub stream frame.
+// It's a little less than 4M to match the common gRPC size limit,
+// and to leave space for a server-appended uuid field.
+const maxPubMsgLen = (4 << 20) - uuidFieldLen - postboxFieldLen
+
+// maxSubBufLen is the maximum length in bytes of a subscription's send buffer.
+// When a sub's send buffer is full, new deliveries are dropped.
+const maxSubBufLen = maxPubMsgLen + (maxPubMsgLen / 2)
+
+var (
+	errEmptyPath = errors.New("empty path")
+	errLongData  = errors.New("long data")
+	errNilFunc   = errors.New("nil func")
+	errPostbox   = errors.New("invalid postbox")
+	errWildInbox = errors.New("wild inbox path")
+	errWildPath  = errors.New("wild path")
+	errNegLimit  = errors.New("negative limit")
 )
 
 var (
-	errShortFrame    = errors.New("short frame")
-	errBufferFull    = errors.New("buffer full")
-	errEmptyPath     = errors.New("empty path")
-	errWildPath      = errors.New("wildcard path")
-	errReservedInbox = errors.New("reserved inbox path")
-	errWildInbox     = errors.New("wildcard inbox path")
-	errLongData      = errors.New("long data")
-	errLongGroup     = errors.New("long group")
-	errLimitRange    = errors.New("limit out of range")
-	errDupSub        = errors.New("duplicate subscription number")
-	errSubNum        = errors.New("invalid subscription number")
-	errNilCallback   = errors.New("nil callback func")
+	httpErrPerms = httpError{http.StatusForbidden, "permission denied"}
 )
 
-func (h frameHdr) Len() int {
-	return int(h & 0x00ffffff)
+var (
+	// rpcErrLongData  = status.Error(codes.InvalidArgument, errLongData.Error())
+	rpcErrNegLimit  = status.Error(codes.InvalidArgument, errNegLimit.Error())
+	rpcErrNoHandler = status.Error(codes.Unavailable, "no handler for post")
+	rpcErrPerms     = status.Error(codes.PermissionDenied, "permission denied")
+	rpcErrPostbox   = status.Error(codes.InvalidArgument, errPostbox.Error())
+	rpcErrWildInbox = status.Error(codes.InvalidArgument, errWildInbox.Error())
+	rpcErrWildPath  = status.Error(codes.InvalidArgument, errWildPath.Error())
+)
+
+func (h grpcFrmHdr) IsCompressed() bool {
+	return h[0] != 0
 }
 
-func (h frameHdr) BodyLen() int {
-	return h.Len() - int(unsafe.Sizeof(h))
+func (h grpcFrmHdr) BodyLen() int {
+	return int(binary.BigEndian.Uint32(h[1:]))
 }
 
-func (h frameHdr) Type() byte {
-	return byte(h >> 24)
-}
-
-func readFrameHdr(r io.Reader) (hdr frameHdr, err error) {
-	_, err = io.ReadFull(r, (*(*[4]byte)(unsafe.Pointer(&hdr)))[:])
-	return
-}
-
-func appendSubFrame(buf []byte, num uint64, sel Sel) []byte {
-	sf := &wire.SubFrame{
-		Num:  num,
-		Path: sel.Path.p,
-	}
-
-	if !sel.Group.IsZero() {
-		sf.Group = []byte(sel.Group.String())
-	}
-
-	if limit := max(0, min(sel.Limit, MaxLimit)); limit > 0 {
-		sf.Limit = int64(limit)
-	}
-
-	if sel.Flags > 0 {
-		sf.Flags = uint64(sel.Flags)
-	}
-
-	return appendFrame(buf, subFrameType, func(b []byte) []byte {
-		b, _ = proto.MarshalOptions{}.MarshalAppend(b, sf)
-		return b
-	})
-}
-
-func appendStatusFrame(b []byte, num uint64, status Errno) []byte {
-	if num == 0 || status == 0 {
-		return b
-	}
-
-	b = protowire.AppendTag(b, numField, protowire.VarintType)
-	b = protowire.AppendVarint(b, num)
-
-	b = protowire.AppendTag(b, statusField, protowire.VarintType)
-	b = protowire.AppendVarint(b, uint64(status))
-
+func appendGRPCFrm(b []byte, f func(b []byte) []byte) []byte {
+	i := len(b)
+	b = f(append(b, 0, 0, 0, 0, 0))
+	binary.BigEndian.PutUint32(b[i+1:], uint32(len(b)-i-grpcFrmHdrLen))
 	return b
 }
 
-// appendFrame appends a frame header and body to buf and returns the extended slice.
-// The body comes from calling f, which must append to its argument and return the extended slice.
-func appendFrame(buf []byte, typ byte, f func([]byte) []byte) []byte {
-	off := len(buf)
-	buf = append(buf, 0, 0, 0, typ)
-	buf = f(buf)
+func readGRPCFrmHdr(r io.Reader) (hdr grpcFrmHdr, err error) {
+	_, err = io.ReadFull(r, hdr[:])
+	if err != nil {
+		return
+	}
 
-	n := len(buf) - off
-	buf[off+0] = byte(n)
-	buf[off+1] = byte(n >> 8)
-	buf[off+2] = byte(n >> 16)
+	if hdr.IsCompressed() {
+		return hdr, errors.New("compressed frame")
+	}
 
-	return buf
+	if hdr.BodyLen() > maxPubMsgLen {
+		return hdr, errors.New("long frame")
+	}
+
+	return
 }
 
-// parseFields parses a raw proto and extracts shared fields:
-// num (1; varint), path (2; bytes), data (3; bytes), and inbox (4; bytes).
-// It also destructively cleans the raw proto, preserving only fields 2, 3, and 4.
-// The returned fields.Msg and msg bytes alias the raw proto.
-func parseFields(raw []byte) (fields sharedFields, msg []byte, err error) {
-	in, out := 0, 0
-	msg = raw[:0]
+func parseMsgPath(raw []byte) (Path, error) {
+	path, err := ParsePath(raw)
+	if err != nil {
+		return Path{}, invalid(err)
+	}
 
-	// clean the proto
-	for in < len(raw) {
-		fnum, ftyp, nt := protowire.ConsumeTag(raw[in:])
+	if path.IsWild() {
+		return path, rpcErrWildPath
+	}
+
+	return path, nil
+}
+
+// parseMsgInboxFromClient is called by the server to parse an optional message inbox.
+// If the raw path is empty, the zero path is returned.
+func parseMsgInboxFromClient(raw []byte) (Path, error) {
+	if len(raw) == 0 {
+		return Path{}, nil
+	}
+
+	inbox, err := ParsePath(raw)
+	if err != nil {
+		return Path{}, invalid(err)
+	}
+
+	if inbox.IsWild() {
+		return inbox, rpcErrWildInbox
+	}
+
+	if inbox.IsPostbox() {
+		return inbox, rpcErrPostbox
+	}
+
+	return inbox, nil
+}
+
+// parseMsgInboxFromServer is called by the client to parse an optional message inbox.
+// Unline parseMsgInboxFromClient, postboxes are allowed.
+// If the raw path is empty, the zero path is returned.
+func parseMsgInboxFromServer(raw []byte) (Path, error) {
+	if len(raw) == 0 {
+		return Path{}, nil
+	}
+
+	inbox, err := ParsePath(raw)
+	if err != nil {
+		return Path{}, err
+	}
+
+	if inbox.IsWild() {
+		return inbox, rpcErrWildInbox
+	}
+
+	return inbox, nil
+}
+
+// parseSelPath parses a path like parseMsgPath,
+// but the returned path may be wild.
+func parseSelPath(raw []byte) (Path, error) {
+	path, err := ParsePath(raw)
+	if err != nil {
+		return Path{}, invalid(err)
+	}
+
+	return path, nil
+}
+
+func parseLimit(v int64) (int, error) {
+	if v < 0 {
+		return 0, rpcErrNegLimit
+	}
+	return int(v), nil
+}
+
+func readMsgPubFrm(r io.Reader) (hdr grpcFrmHdr, frm []byte, err error) {
+	hdr, err = readGRPCFrmHdr(r)
+	if err != nil {
+		return
+	}
+
+	flen := grpcFrmHdrLen + hdr.BodyLen()
+
+	// extra cap for possible server-appended fields
+	fcap := flen + uuidFieldLen + postboxFieldLen
+
+	// round to the nearest page
+	fcap = (fcap + 4095) &^ 4095
+	frm = make([]byte, flen, fcap)
+
+	// reconstruct
+	copy(frm, hdr[:])
+	body := frm[grpcFrmHdrLen:]
+	_, err = io.ReadFull(r, body)
+
+	// short body
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+
+	return
+}
+
+// parseMsgPubFrm parses a gRPC stream frame containing a PubRequest or MpubRequest.
+// It cleans and updates the frame in place, removing fields other than
+// path (2), inbox (3), and data (4).
+//
+// The returned clean frame and fields alias the original frame.
+func parseMsgPubFrm(frm []byte) (clean []byte, fields msgPubFields, err error) {
+	req := frm[grpcFrmHdrLen:]
+	res := req[:0]
+	in, out := 0, 0
+
+	for in < len(req) {
+		fnum, ftyp, nt := protowire.ConsumeTag(req[in:])
 		if err = protowire.ParseError(nt); err != nil {
 			return
 		}
 
 		switch fnum {
-		case numField:
+		case ackField:
 			if ftyp != protowire.VarintType {
 				err = errors.New("not a varint")
 				return
 			}
 
-			num, nv := protowire.ConsumeVarint(raw[in+nt:])
+			var nv int
+			fields.Ack, nv = protowire.ConsumeVarint(req[in+nt:])
 			if err = protowire.ParseError(nv); err != nil {
 				return
 			}
 
-			fields.Num = num
 			in += nt + nv
 
-		case pathField, dataField, inboxField:
+		case pathField, inboxField, dataField:
 			if ftyp != protowire.BytesType {
 				err = errors.New("not bytes")
 				return
 			}
 
-			_, nv := protowire.ConsumeBytes(raw[in+nt:])
+			v, nv := protowire.ConsumeBytes(req[in+nt:])
 			if err = protowire.ParseError(nv); err != nil {
 				return
 			}
 
-			n := nt + nv
-			if out != in {
-				copy(raw[out:], raw[in:in+n])
+			var dst *[]byte
+			switch fnum {
+			case pathField:
+				dst = &fields.Path
+
+			case inboxField:
+				dst = &fields.Inbox
+
+			case dataField:
+				dst = &fields.Data
 			}
 
+			n := nt + nv
+			if *dst != nil {
+				in += n
+				continue
+			}
+
+			if out != in {
+				copy(req[out:], req[in:in+n])
+			}
+
+			start := out + n - len(v)
+			*dst = req[start : out+n : out+n]
 			out += n
 			in += n
-			msg = raw[:out]
+			res = req[:out]
 
 		default:
-			nv := protowire.ConsumeFieldValue(fnum, ftyp, raw[in+nt:])
+			nv := protowire.ConsumeFieldValue(fnum, ftyp, req[in+nt:])
 			if err = protowire.ParseError(nv); err != nil {
 				return
 			}
@@ -202,139 +287,223 @@ func parseFields(raw []byte) (fields sharedFields, msg []byte, err error) {
 		}
 	}
 
-	// parse the msg fields
-	for clean := msg; len(clean) > 0; {
-		fn, typ, nt := protowire.ConsumeTag(clean)
+	binary.BigEndian.PutUint32(frm[1:grpcFrmHdrLen], uint32(len(res)))
+	clean = frm[:grpcFrmHdrLen+len(res)]
+	return
+}
+
+type msgPubFields struct {
+	Ack   uint64 // only appears in mpub frames
+	Path  []byte
+	Inbox []byte
+	Data  []byte
+}
+
+func (f msgPubFields) Parse() (valid Msg, err error) {
+	valid.Path, err = parseMsgPath(f.Path)
+	if err != nil {
+		return
+	}
+
+	valid.Inbox, err = parseMsgInboxFromClient(f.Inbox)
+	if err != nil {
+		return
+	}
+
+	valid.Data = f.Data
+	if len(valid.Data) > MaxDataLen {
+		err = invalid(errLongData)
+		return
+	}
+
+	return
+}
+
+// parseMsgPubFrm parses a gRPC stream frame containing a PubRequest or MpubRequest.
+// It cleans and updates the frame in place, removing fields other than
+// path (2), inbox (3), and data (4).
+//
+// The returned clean frame and fields alias the original frame.
+func parseMsgPostFrm(frm []byte) (clean []byte, fields msgPostFields, err error) {
+	req := frm[grpcFrmHdrLen:]
+	res := req[:0]
+	in, out := 0, 0
+
+	for in < len(req) {
+		fnum, ftyp, nt := protowire.ConsumeTag(req[in:])
 		if err = protowire.ParseError(nt); err != nil {
 			return
 		}
-		if typ != protowire.BytesType {
-			err = errors.New("not bytes")
-			return
-		}
 
-		v, nv := protowire.ConsumeBytes(clean[nt:])
-		if err = protowire.ParseError(nv); err != nil {
-			return
-		}
-		clean = clean[nt+nv:]
-
-		switch fn {
-		case pathField:
-			fields.Path, _, err = ParsePath(v)
-			if err != nil {
+		switch fnum {
+		case limitField:
+			if ftyp != protowire.VarintType {
+				err = errors.New("not a varint")
 				return
 			}
 
-		case dataField:
-			fields.Data = v
-
-		case inboxField:
-			fields.Inbox, _, err = ParsePath(v)
-			if err != nil {
+			lim, nv := protowire.ConsumeVarint(req[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
 				return
 			}
+
+			fields.Limit = int64(lim)
+			in += nt + nv
+
+		case pathField, dataField:
+			if ftyp != protowire.BytesType {
+				err = errors.New("not bytes")
+				return
+			}
+
+			v, nv := protowire.ConsumeBytes(req[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
+				return
+			}
+
+			var dst *[]byte
+			switch fnum {
+			case pathField:
+				dst = &fields.Path
+
+			case dataField:
+				dst = &fields.Data
+			}
+
+			n := nt + nv
+			if *dst != nil {
+				in += n
+				continue
+			}
+
+			if out != in {
+				copy(req[out:], req[in:in+n])
+			}
+
+			start := out + n - len(v)
+			*dst = req[start : out+n : out+n]
+			out += n
+			in += n
+			res = req[:out]
+
+		default:
+			nv := protowire.ConsumeFieldValue(fnum, ftyp, req[in+nt:])
+			if err = protowire.ParseError(nv); err != nil {
+				return
+			}
+
+			in += nt + nv
 		}
 	}
 
+	binary.BigEndian.PutUint32(frm[1:grpcFrmHdrLen], uint32(len(res)))
+	clean = frm[:grpcFrmHdrLen+len(res)]
 	return
 }
 
-func appendMsgFields(b []byte, m Msg) []byte {
-	b = protowire.AppendTag(b, pathField, protowire.BytesType)
-	b = protowire.AppendBytes(b, m.Path.p)
-
-	if len(m.Data) > 0 {
-		b = protowire.AppendTag(b, dataField, protowire.BytesType)
-		b = protowire.AppendBytes(b, m.Data)
-	}
-
-	if !m.Inbox.IsZero() {
-		b = appendInboxField(b, m.Inbox)
-	}
-
-	return b
+type msgPostFields struct {
+	Limit int64
+	Path  []byte
+	Data  []byte
 }
 
-func appendReqFields(b []byte, num uint64, m Msg) []byte {
-	b = protowire.AppendTag(b, numField, protowire.VarintType)
-	b = protowire.AppendVarint(b, num)
-	return appendMsgFields(b, m)
-}
-
-func appendInboxField(b []byte, inbox Path) []byte {
-	b = protowire.AppendTag(b, inboxField, protowire.BytesType)
-	return protowire.AppendBytes(b, inbox.p)
-}
-
-// aliasMsgFields returns a Msg with fields backed by the raw proto.
-// The encoded message must already be valid.
-func aliasMsgFields(raw []byte) (m Msg) {
-	for len(raw) > 0 {
-		num, _, nt := protowire.ConsumeTag(raw)
-		v, nv := protowire.ConsumeBytes(raw[nt:])
-		raw = raw[nt+nv:]
-
-		switch num {
-		case pathField:
-			m.Path.p = v
-
-		case dataField:
-			m.Data = v
-
-		case inboxField:
-			m.Inbox.p = v
-		}
+func (f msgPostFields) Parse() (path Path, data []byte, err error) {
+	path, err = parseMsgPath(f.Path)
+	if err != nil {
+		return
 	}
 
+	if len(f.Data) > MaxDataLen {
+		err = invalid(errLongData)
+		return
+	}
+
+	data = f.Data
 	return
 }
 
-// isWild returns true if the path contains a * or ** wildcard.
-func isWild(p Path) bool {
-	return slices.Contains(p.p, '*')
+type httpError struct {
+	Status  int
+	Message string
 }
 
-func validateMsg(m Msg, allowReservedInbox bool) error {
+func (e httpError) Error() string {
+	return e.Message
+}
+
+func invalid(err error) error {
+	return status.Error(codes.InvalidArgument, err.Error())
+}
+
+// validateOutboundMsg validates a message passed to Publish or Send.
+func validateOutboundMsg(m Msg) error {
 	if m.Path.IsZero() {
 		return errEmptyPath
 	}
 
-	if isWild(m.Path) {
+	if m.Path.IsWild() {
 		return errWildPath
 	}
 
-	if isWild(m.Inbox) {
+	if m.Inbox.IsWild() {
 		return errWildInbox
 	}
 
-	if !allowReservedInbox && isReservedInbox(m.Inbox) {
-		return errReservedInbox
+	if m.Inbox.IsPostbox() {
+		return errPostbox
 	}
 
-	if len(m.Data) > maxMsgDataLen {
+	if len(m.Data) > MaxDataLen {
 		return errLongData
 	}
 
 	return nil
 }
 
-func validateSel(s Sel) error {
+// validateOutboundSel validates a selector passed to Subscribe.
+func validateOutboundSel(s Sel) error {
 	if s.Path.IsZero() {
 		return errEmptyPath
 	}
 
-	if isReservedInbox(s.Path) {
-		return errReservedInbox
-	}
-
-	if s.Limit < 0 || s.Limit > MaxLimit {
-		return errLimitRange
+	if s.Path.IsPostbox() {
+		return errPostbox
 	}
 
 	return nil
 }
 
-func isReservedInbox(p Path) bool {
-	return bytes.HasPrefix(p.p, []byte("@/"))
+// validateOutboundReq validates a selector passed to Post.
+func validateOutboundReq(r Req) error {
+	if r.Path.IsZero() {
+		return errEmptyPath
+	}
+
+	if r.Path.IsWild() {
+		return errWildPath
+	}
+
+	if len(r.Data) > MaxDataLen {
+		return errLongData
+	}
+
+	if r.Limit < 0 {
+		return errNegLimit
+	}
+
+	return nil
+}
+
+// validateEOF returns an error if r is not at EOF.
+func validateEOF(r io.Reader) error {
+	n, err := r.Read(make([]byte, 1))
+	if err != nil && err != io.EOF {
+		return err
+	}
+
+	if n > 0 {
+		return errors.New("trailing bytes")
+	}
+
+	return nil
 }

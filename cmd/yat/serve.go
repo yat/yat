@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/goccy/go-yaml"
-	"golang.org/x/net/http2"
 	"yat.io/yat"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
@@ -49,21 +48,25 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	if cmd.TLSDir == "" {
-		return errors.New("missing required -tls-dir flag")
-	}
-
-	baseTLSConfig := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		NextProtos: []string{clientALPN, "h2", "http/1.1"},
-	}
-
-	td, err := cmd.LoadTLSConfig(baseTLSConfig)
+	chains, roots, err := cmd.LoadTLSConfig()
 	if err != nil {
 		return err
 	}
 
-	go td.Watch(ctx, logger)
+	if len(chains) == 0 {
+		return errors.New("missing TLS credentials")
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: chains,
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{"h2", "http/1.1"},
+	}
+
+	if roots != nil {
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsConfig.ClientCAs = roots
+	}
 
 	var cfg serverConfig
 	for _, name := range cmd.ConfigFiles {
@@ -77,56 +80,60 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	rs, err := yat.NewRuleSet(ctx, cfg.Rules)
-	if err != nil {
-		return err
-	}
-
-	l, err := tls.Listen("tcp", cmd.BindAddr, td.ServerConfig())
+	rules, err := yat.NewRuleSet(ctx, cfg.Rules)
 	if err != nil {
 		return err
 	}
 
 	ys, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
 		Logger: logger,
-		Rules:  rs,
+		Rules:  rules,
 	})
 
 	if err != nil {
 		return err
 	}
 
-	hs := &http.Server{
-		TLSConfig: baseTLSConfig.Clone(),
-		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){
-			"y0": func(_ *http.Server, conn *tls.Conn, _ http.Handler) {
-				ys.ServeConn(ctx, conn)
-			},
-		},
-	}
-
-	if err := http2.ConfigureServer(hs, &http2.Server{}); err != nil {
+	l, err := tls.Listen("tcp", cmd.BindAddr, tlsConfig)
+	if err != nil {
 		return err
 	}
 
-	go func() {
-		<-ctx.Done()
-
-		logger.InfoContext(ctx, "shutdown",
-			"cause", context.Cause(ctx))
-
-		l.Close()
-	}()
+	hs := &http.Server{
+		Handler: ys,
+	}
 
 	logger.InfoContext(ctx, "serve",
 		"addr", l.Addr().String())
 
-	err = hs.Serve(l)
-	if errors.Is(err, net.ErrClosed) {
-		err = nil
+	srvC := make(chan error, 1)
+	go func() {
+		err := hs.Serve(l)
+		if err == http.ErrServerClosed {
+			err = nil
+		}
+		srvC <- err
+	}()
+
+	select {
+	case err := <-srvC:
+		return err
+
+	case <-ctx.Done():
 	}
 
-	return err
+	logger.InfoContext(ctx, "shutdown",
+		"cause", context.Cause(ctx))
+
+	// give the server a few seconds to shut down
+	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := hs.Shutdown(sctx); err != nil {
+		return err
+	}
+
+	return <-srvC
 }
 
 func loadServerConfig(cfg *serverConfig, data []byte) error {

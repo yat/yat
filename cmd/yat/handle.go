@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -10,24 +11,22 @@ import (
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
-type RespondCmd struct {
+type HandleCmd struct {
 	*ClientConfig
 	File     string
 	Empty    bool
-	Group    string
 	Limit    int
 	Duration time.Duration
 }
 
-func (cmd *RespondCmd) AddFlags(flags *flagset.Set) {
+func (cmd *HandleCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.File, "file", "f")
 	flags.Bool(&cmd.Empty, "empty", "e")
-	flags.String(&cmd.Group, "group", "g")
 	flags.Int(&cmd.Limit, "limit", "n")
 	flags.Duration(&cmd.Duration, "duration")
 }
 
-func (cmd *RespondCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
+func (cmd *HandleCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
 	if len(args) != 1 {
 		return usageError{
 			Usage: "yat respond PATH",
@@ -35,19 +34,18 @@ func (cmd *RespondCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		}
 	}
 
-	path, _, err := yat.ParsePath(args[0])
+	path, err := yat.ParsePath(args[0])
 	if err != nil {
 		return err
 	}
 
 	var data []byte
 	if !cmd.Empty {
-		in := cmd.File
-		if in == "-" {
-			in = "/dev/stdin"
+		if cmd.File == "-" || cmd.File == "/dev/stdin" {
+			data, err = io.ReadAll(os.Stdin)
+		} else {
+			data, err = os.ReadFile(cmd.File)
 		}
-
-		data, err = os.ReadFile(in)
 		if err != nil {
 			return err
 		}
@@ -65,17 +63,13 @@ func (cmd *RespondCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		Limit: cmd.Limit,
 	}
 
-	if cmd.Group != "" {
-		sel.Group = yat.NewGroup(cmd.Group)
-	}
-
 	if cmd.Duration > 0 {
 		var cancel func()
 		ctx, cancel = context.WithTimeout(ctx, cmd.Duration)
 		defer cancel()
 	}
 
-	sub, err := yc.Respond(sel, func(_ context.Context, _ yat.Msg) []byte {
+	sub, err := yc.Handle(ctx, sel, func(context.Context, yat.Path, []byte) []byte {
 		return data
 	})
 
