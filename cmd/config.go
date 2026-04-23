@@ -64,6 +64,7 @@ func EnvConfig() Config {
 
 	return ec
 }
+
 func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
 	if c.Server == "" {
 		return nil, errors.New("server is not configured")
