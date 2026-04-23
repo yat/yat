@@ -83,9 +83,5 @@ func (cmd *SeedCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 		return err
 	}
 
-	if err := os.WriteFile(rulesFile, []byte(rulesYAML), 0600); err != nil {
-		return err
-	}
-
-	return nil
+	return os.WriteFile(rulesFile, []byte(rulesYAML), 0600)
 }

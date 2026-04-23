@@ -99,7 +99,7 @@ func (tf TLSFiles) ClientConfig() (*tls.Config, TLSWatchFunc, error) {
 			defer mu.Unlock()
 
 			if len(cs.PeerCertificates) == 0 {
-				return fmt.Errorf("no server cert")
+				return errors.New("no server cert")
 			}
 
 			opts := x509.VerifyOptions{

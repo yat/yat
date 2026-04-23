@@ -45,7 +45,7 @@ func EnvConfig() Config {
 	}
 
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
-		ec.LogLevel.UnmarshalText([]byte(ll))
+		_ = ec.LogLevel.UnmarshalText([]byte(ll))
 	}
 
 	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
@@ -64,12 +64,12 @@ func EnvConfig() Config {
 
 	return ec
 }
-func (sc Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
-	if sc.Server == "" {
+func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
+	if c.Server == "" {
 		return nil, errors.New("server is not configured")
 	}
 
-	tcfg, watch, err := sc.TLSFiles.ClientConfig()
+	tcfg, watch, err := c.TLSFiles.ClientConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -81,28 +81,28 @@ func (sc Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Clien
 		TLSConfig: tcfg,
 	}
 
-	if sc.Token != "" || sc.TokenFile != "" {
-		cfg.TokenSource = oauth2.ReuseTokenSource(nil, sc.TokenSource())
+	if c.Token != "" || c.TokenFile != "" {
+		cfg.TokenSource = oauth2.ReuseTokenSource(nil, c.TokenSource())
 	}
 
-	return yat.NewClient(sc.Server, cfg)
+	return yat.NewClient(c.Server, cfg)
 }
 
 // TokenSource returns an oauth2 token source backed by ReadToken.
-func (sc Config) TokenSource() oauth2.TokenSource {
-	return tokenSourceFunc(sc.ReadToken)
+func (c Config) TokenSource() oauth2.TokenSource {
+	return tokenSourceFunc(c.ReadToken)
 }
 
 // ReadToken reads an oauth2 token from the configuration.
-func (cc Config) ReadToken() (access *oauth2.Token, err error) {
+func (c Config) ReadToken() (access *oauth2.Token, err error) {
 	var raw []byte
 
 	switch {
-	case cc.Token != "":
-		raw = []byte(cc.Token)
+	case c.Token != "":
+		raw = []byte(c.Token)
 
-	case cc.TokenFile != "":
-		raw, err = os.ReadFile(cc.TokenFile)
+	case c.TokenFile != "":
+		raw, err = os.ReadFile(c.TokenFile)
 
 	default:
 		err = errors.New("no token")
