@@ -1,7 +1,7 @@
 ## Docker Images
 
-`ghcr.io/yat/yat:latest` tracks the `wip` branch. It's just `yat`, no userland.
-`ghcr.io/yat/yat:alpine-latest` also tracks `wip`, but the entrypoint is a shell for easy debugging.
+`ghcr.io/yat/yat:latest` tracks the `main` branch. It's just `yat`, no userland.
+`ghcr.io/yat/yat:alpine-latest` also tracks `main`, but the entrypoint is a shell for easy debugging.
 
 ## Development
 
