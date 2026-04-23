@@ -312,6 +312,6 @@ func (n *rnode) match(ee *[]*rent, p Path) {
 	}
 }
 
-func (e rent) IsHandler() bool {
+func (e *rent) IsHandler() bool {
 	return e.Flags&msgv1.SubFlags_SUB_FLAGS_HANDLER > 0
 }
