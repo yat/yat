@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type SubscribeCmd struct {
-	*ClientConfig
+	*cmd.Config
+
 	Limit    int
 	Duration time.Duration
 	Raw      bool

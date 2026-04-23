@@ -33,6 +33,15 @@ func New() *Set {
 	return flags
 }
 
+func (fs *Set) Has(name string) (found bool) {
+	fs.set.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return
+}
+
 func (fs *Set) NArg() int {
 	return fs.set.NArg()
 }

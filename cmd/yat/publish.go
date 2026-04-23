@@ -7,11 +7,13 @@ import (
 	"os"
 
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type PublishCmd struct {
-	*ClientConfig
+	*cmd.Config
+
 	File  string
 	Empty bool
 	Inbox string

@@ -12,11 +12,13 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type ServeCmd struct {
-	*SharedConfig
+	*cmd.Config
+
 	BindAddr    string
 	ConfigFiles []string
 }
@@ -48,10 +50,11 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	tcfg, err := cmd.TLSFiles.ServerConfig()
+	tcfg, watch, err := cmd.TLSFiles.ServerConfig()
 	if err != nil {
 		return err
 	}
+	go watch(ctx, logger)
 
 	var cfg serverConfig
 	for _, name := range cmd.ConfigFiles {

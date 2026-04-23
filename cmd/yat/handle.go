@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type HandleCmd struct {
-	*ClientConfig
+	*cmd.Config
+
 	File     string
 	Empty    bool
 	Limit    int

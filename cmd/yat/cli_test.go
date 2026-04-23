@@ -5,9 +5,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"yat.io/yat"
 	"yat.io/yat/cmd"
 )
@@ -442,6 +448,43 @@ func TestCLIDurationsAndErrors(t *testing.T) {
 		stderrContains(t, "no handler for post")
 }
 
+func TestCLITokenSources(t *testing.T) {
+	h := newCLIHarness(t)
+	h.seed(t)
+
+	issuer := newCLITestAuthIssuer(t)
+	rulesFile := h.writeFile(t, "jwt-rules.yaml", fmt.Sprintf(`apiVersion: yat.io/v1alpha1
+kind: RuleSet
+
+rules:
+  - jwt:
+      iss: %q
+      aud: yat-client
+      sub: writer
+    grants:
+      - paths: ["cli/token"]
+        actions: [pub]
+`, issuer.url))
+
+	server := h.start(t, nil, nil,
+		"serve",
+		"-bind", "127.0.0.1:0",
+		"-config", rulesFile,
+		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
+		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"))
+	h.waitForServer(t, server)
+
+	writerToken := issuer.rawToken(t, "writer")
+	deniedToken := issuer.rawToken(t, "denied")
+	writerTokenFile := h.writeFile(t, "writer.jwt", writerToken)
+
+	h.runWithEnv(nil, []string{"YAT_TOKEN=" + writerToken},
+		h.clientArgs("pub", "cli/token", "-empty")...).mustSucceed(t)
+
+	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
+		h.clientArgs("pub", "cli/token", "-empty", "-token-file", writerTokenFile)...).mustSucceed(t)
+}
+
 type cliHarness struct {
 	dir        string
 	seedDir    string
@@ -564,6 +607,12 @@ func (h *cliHarness) startServer(t *testing.T) {
 		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
 		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
 
+	h.waitForServer(t, server)
+}
+
+func (h *cliHarness) waitForServer(t *testing.T, server *cliProcess) {
+	t.Helper()
+
 	deadline := time.After(cliTestTimeout)
 	for h.server == "" {
 		select {
@@ -622,13 +671,11 @@ func (h *cliHarness) clientArgs(args ...string) []string {
 func (h *cliHarness) newClient(t *testing.T) *yat.Client {
 	t.Helper()
 
-	cfg := ClientConfig{
-		SharedConfig: &SharedConfig{
-			TLSFiles: cmd.TLSFiles{
-				CertFile: filepath.Join(h.seedDir, "tls.crt"),
-				KeyFile:  filepath.Join(h.seedDir, "tls.key"),
-				CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
-			},
+	cfg := cmd.Config{
+		TLSFiles: cmd.TLSFiles{
+			CertFile: filepath.Join(h.seedDir, "tls.crt"),
+			KeyFile:  filepath.Join(h.seedDir, "tls.key"),
+			CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
 		},
 		Server: h.server,
 	}
@@ -827,6 +874,92 @@ func (p *cliProcess) result(err error) cliResult {
 
 func (p *cliProcess) stderr() []byte {
 	return p.h.readSince(p.h.stderr, p.h.stderrPath, p.errOff)
+}
+
+type cliTestAuthIssuer struct {
+	server *httptest.Server
+	signer jose.Signer
+	url    string
+}
+
+func newCLITestAuthIssuer(t *testing.T) *cliTestAuthIssuer {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := (&jose.SignerOptions{}).WithType("JWT")
+	opts.WithHeader("kid", "cli-auth-test")
+
+	signer, err := jose.NewSigner(jose.SigningKey{
+		Algorithm: jose.RS256,
+		Key:       key,
+	}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jwks, err := json.Marshal(jose.JSONWebKeySet{
+		Keys: []jose.JSONWebKey{{
+			Key:       &key.PublicKey,
+			KeyID:     "cli-auth-test",
+			Use:       "sig",
+			Algorithm: string(jose.RS256),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	server := httptest.NewTLSServer(mux)
+	oldDefaultClient := http.DefaultClient
+	http.DefaultClient = server.Client()
+	t.Cleanup(func() {
+		http.DefaultClient = oldDefaultClient
+		server.Close()
+	})
+
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                server.URL,
+			"authorization_endpoint":                server.URL + "/auth",
+			"token_endpoint":                        server.URL + "/token",
+			"jwks_uri":                              server.URL + "/keys",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	})
+
+	mux.HandleFunc("/keys", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write(jwks)
+	})
+
+	return &cliTestAuthIssuer{
+		server: server,
+		signer: signer,
+		url:    server.URL,
+	}
+}
+
+func (i *cliTestAuthIssuer) rawToken(t *testing.T, subject string) string {
+	t.Helper()
+
+	raw, err := jwt.Signed(i.signer).Claims(jwt.Claims{
+		Issuer:   i.url,
+		Subject:  subject,
+		Audience: jwt.Audience{"yat-client"},
+		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		IssuedAt: jwt.NewNumericDate(time.Now()),
+	}).Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return raw
 }
 
 type cliResult struct {

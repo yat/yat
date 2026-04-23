@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type PostCmd struct {
-	*ClientConfig
+	*cmd.Config
+
 	File     string
 	Empty    bool
 	Raw      bool

@@ -33,53 +33,18 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	sharedConfig := &SharedConfig{
-		LogLevel: slog.LevelInfo,
-		TLSFiles: cmd.TLSFiles{
-			CertFile: os.Getenv("YAT_TLS_CERT_FILE"),
-			KeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
-		},
-	}
-
-	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
-		if err := sharedConfig.LogLevel.UnmarshalText([]byte(ll)); err != nil {
-			return err
-		}
-	}
-
-	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
-		if name := strings.TrimSpace(name); name != "" {
-			sharedConfig.TLSFiles.CAFiles = append(sharedConfig.TLSFiles.CAFiles, name)
-		}
-	}
-
-	if names, ok := os.LookupEnv("YAT_TLS_CA_FILES"); ok {
-		for name := range strings.SplitSeq(names, ",") {
-			if name := strings.TrimSpace(name); name != "" {
-				sharedConfig.TLSFiles.CAFiles = append(sharedConfig.TLSFiles.CAFiles, name)
-			}
-		}
-	}
-
-	// embedded in client cmds
-	clientConfig := &ClientConfig{
-		SharedConfig: sharedConfig,
-		Server:       os.Getenv("YAT_SERVER"),
-		StaticToken:  os.Getenv("YAT_TOKEN"),
-		TokenFile:    os.Getenv("YAT_TOKEN_FILE"),
-	}
-
+	cfg := cmd.EnvConfig()
 	flags := flagset.New()
 
 	// shared flags
-	flags.Text(&sharedConfig.LogLevel, "log-level")
-	flags.String(&sharedConfig.TLSFiles.CertFile, "tls-cert-file")
-	flags.String(&sharedConfig.TLSFiles.KeyFile, "tls-key-file")
-	flags.Strings(&sharedConfig.TLSFiles.CAFiles, "tls-ca-file")
+	flags.Text(&cfg.LogLevel, "log-level")
+	flags.String(&cfg.TLSFiles.CertFile, "tls-cert-file")
+	flags.String(&cfg.TLSFiles.KeyFile, "tls-key-file")
+	flags.Strings(&cfg.TLSFiles.CAFiles, "tls-ca-file")
 
 	// client flags
-	flags.String(&clientConfig.Server, "server")
-	flags.String(&clientConfig.TokenFile, "token-file")
+	flags.String(&cfg.Server, "server")
+	flags.String(&cfg.TokenFile, "token-file")
 
 	args, err := flags.Parse(args)
 	if err != nil {
@@ -107,8 +72,8 @@ func run(ctx context.Context, args []string) error {
 	switch name {
 	case "handle", "respond", "res":
 		cmd = &HandleCmd{
-			ClientConfig: clientConfig,
-			File:         "/dev/stdin",
+			Config: &cfg,
+			File:   "/dev/stdin",
 		}
 
 	case "help":
@@ -116,15 +81,15 @@ func run(ctx context.Context, args []string) error {
 
 	case "post", "request", "req":
 		cmd = &PostCmd{
-			ClientConfig: clientConfig,
-			File:         "/dev/stdin",
-			Limit:        1,
+			Config: &cfg,
+			File:   "/dev/stdin",
+			Limit:  1,
 		}
 
 	case "publish", "pub":
 		cmd = &PublishCmd{
-			ClientConfig: clientConfig,
-			File:         "/dev/stdin",
+			Config: &cfg,
+			File:   "/dev/stdin",
 		}
 
 	case "seed":
@@ -132,13 +97,13 @@ func run(ctx context.Context, args []string) error {
 
 	case "serve", "server":
 		cmd = &ServeCmd{
-			SharedConfig: sharedConfig,
-			BindAddr:     "localhost:25120",
+			Config:   &cfg,
+			BindAddr: "localhost:25120",
 		}
 
 	case "subscribe", "sub":
 		cmd = &SubscribeCmd{
-			ClientConfig: clientConfig,
+			Config: &cfg,
 		}
 
 	default:
@@ -169,13 +134,18 @@ func run(ctx context.Context, args []string) error {
 		args = append(args[:fi], tail...)
 	}
 
+	// flag shadows YAT_TOKEN
+	if flags.Has("token-file") {
+		cfg.Token = ""
+	}
+
 	if flags.Help && name != "help" {
 		args = []string{name}
 		cmd = HelpCmd{}
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: sharedConfig.LogLevel,
+		Level: cfg.LogLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			switch a.Value.Kind() {
 			case slog.KindDuration:
