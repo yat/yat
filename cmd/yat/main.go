@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 
 	_ "golang.org/x/crypto/x509roots/fallback"
@@ -33,9 +34,11 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	sharedConfig := &SharedConfig{
-		LogLevel:    slog.LevelInfo,
-		TLSCertFile: os.Getenv("YAT_TLS_CERT_FILE"),
-		TLSKeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
+		LogLevel: slog.LevelInfo,
+		TLSFiles: cmd.TLSFiles{
+			CertFile: os.Getenv("YAT_TLS_CERT_FILE"),
+			KeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
+		},
 	}
 
 	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
@@ -46,14 +49,14 @@ func run(ctx context.Context, args []string) error {
 
 	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
 		if name := strings.TrimSpace(name); name != "" {
-			sharedConfig.TLSCAFiles = append(sharedConfig.TLSCAFiles, name)
+			sharedConfig.TLSFiles.CAFiles = append(sharedConfig.TLSFiles.CAFiles, name)
 		}
 	}
 
 	if names, ok := os.LookupEnv("YAT_TLS_CA_FILES"); ok {
 		for name := range strings.SplitSeq(names, ",") {
 			if name := strings.TrimSpace(name); name != "" {
-				sharedConfig.TLSCAFiles = append(sharedConfig.TLSCAFiles, name)
+				sharedConfig.TLSFiles.CAFiles = append(sharedConfig.TLSFiles.CAFiles, name)
 			}
 		}
 	}
@@ -70,9 +73,9 @@ func run(ctx context.Context, args []string) error {
 
 	// shared flags
 	flags.Text(&sharedConfig.LogLevel, "log-level")
-	flags.String(&sharedConfig.TLSCertFile, "tls-cert-file")
-	flags.String(&sharedConfig.TLSKeyFile, "tls-key-file")
-	flags.Strings(&sharedConfig.TLSCAFiles, "tls-ca-file")
+	flags.String(&sharedConfig.TLSFiles.CertFile, "tls-cert-file")
+	flags.String(&sharedConfig.TLSFiles.KeyFile, "tls-key-file")
+	flags.Strings(&sharedConfig.TLSFiles.CAFiles, "tls-ca-file")
 
 	// client flags
 	flags.String(&clientConfig.Server, "server")

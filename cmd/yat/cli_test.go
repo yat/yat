@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 )
 
 const cliTestTimeout = 5 * time.Second
@@ -623,9 +624,11 @@ func (h *cliHarness) newClient(t *testing.T) *yat.Client {
 
 	cfg := ClientConfig{
 		SharedConfig: &SharedConfig{
-			TLSCertFile: filepath.Join(h.seedDir, "tls.crt"),
-			TLSKeyFile:  filepath.Join(h.seedDir, "tls.key"),
-			TLSCAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
+			TLSFiles: cmd.TLSFiles{
+				CertFile: filepath.Join(h.seedDir, "tls.crt"),
+				KeyFile:  filepath.Join(h.seedDir, "tls.key"),
+				CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
+			},
 		},
 		Server: h.server,
 	}

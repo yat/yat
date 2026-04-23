@@ -48,24 +48,9 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	chains, roots, err := cmd.LoadTLSConfig()
+	tcfg, err := cmd.TLSFiles.ServerConfig()
 	if err != nil {
 		return err
-	}
-
-	if len(chains) == 0 {
-		return errors.New("missing TLS credentials")
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates: chains,
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{"h2", "http/1.1"},
-	}
-
-	if roots != nil {
-		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsConfig.ClientCAs = roots
 	}
 
 	var cfg serverConfig
@@ -94,7 +79,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		return err
 	}
 
-	l, err := tls.Listen("tcp", cmd.BindAddr, tlsConfig)
+	l, err := tls.Listen("tcp", cmd.BindAddr, tcfg)
 	if err != nil {
 		return err
 	}

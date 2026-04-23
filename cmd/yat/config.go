@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -13,49 +10,12 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"golang.org/x/oauth2"
 	"yat.io/yat"
+	"yat.io/yat/cmd"
 )
 
 type SharedConfig struct {
-	LogLevel    slog.Level
-	TLSCertFile string
-	TLSKeyFile  string
-	TLSCAFiles  []string
-}
-
-func (sc SharedConfig) LoadTLSConfig() (chains []tls.Certificate, roots *x509.CertPool, err error) {
-	haveCertFile := sc.TLSCertFile != ""
-	haveKeyFile := sc.TLSKeyFile != ""
-	haveCAFiles := len(sc.TLSCAFiles) > 0
-
-	if haveCertFile != haveKeyFile {
-		err = errors.New("-tls-cert-file and -tls-key-file must be set together")
-		return
-	}
-
-	if haveCertFile {
-		crt, err := tls.LoadX509KeyPair(sc.TLSCertFile, sc.TLSKeyFile)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		chains = []tls.Certificate{crt}
-	}
-
-	if haveCAFiles {
-		roots = x509.NewCertPool()
-		for _, name := range sc.TLSCAFiles {
-			raw, err := os.ReadFile(name)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			if !roots.AppendCertsFromPEM(raw) {
-				return nil, nil, fmt.Errorf("parse %s: no roots", name)
-			}
-		}
-	}
-
-	return
+	LogLevel slog.Level
+	TLSFiles cmd.TLSFiles
 }
 
 type ClientConfig struct {
@@ -70,24 +30,14 @@ func (cc ClientConfig) NewClient(ctx context.Context, logger *slog.Logger) (*yat
 		return nil, errors.New("server is not configured")
 	}
 
-	cfg := yat.ClientConfig{
-		Logger: logger,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS13,
-		},
-	}
-
-	chains, roots, err := cc.LoadTLSConfig()
+	tcfg, err := cc.TLSFiles.ClientConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(chains) > 0 {
-		cfg.TLSConfig.Certificates = chains
-	}
-
-	if roots != nil {
-		cfg.TLSConfig.RootCAs = roots
+	cfg := yat.ClientConfig{
+		Logger:    logger,
+		TLSConfig: tcfg,
 	}
 
 	if cc.StaticToken != "" || cc.TokenFile != "" {
