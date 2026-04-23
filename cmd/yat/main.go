@@ -33,11 +33,16 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
+	logLevel := slog.LevelInfo
+	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
+		_ = logLevel.UnmarshalText([]byte(ll))
+	}
+
 	cfg := cmd.EnvConfig()
 	flags := flagset.New()
 
 	// shared flags
-	flags.Text(&cfg.LogLevel, "log-level")
+	flags.Text(&logLevel, "log-level")
 	flags.String(&cfg.TLSFiles.CertFile, "tls-cert-file")
 	flags.String(&cfg.TLSFiles.KeyFile, "tls-key-file")
 	flags.Strings(&cfg.TLSFiles.CAFiles, "tls-ca-file")
@@ -145,7 +150,7 @@ func run(ctx context.Context, args []string) error {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: cfg.LogLevel,
+		Level: logLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			switch a.Value.Kind() {
 			case slog.KindDuration:
