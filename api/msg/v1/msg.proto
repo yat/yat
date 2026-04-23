@@ -40,7 +40,7 @@ service MsgService {
 // bytes uuid = 5;
 // int64 limit = 6;
 // int32 status = 7;
-// bool handler = 8;
+// SubFlags flags = 8;
 
 message PubRequest {
   bytes path = 2;
@@ -84,7 +84,7 @@ message PostResponse {
 message SubRequest {
   bytes path = 2;
   int64 limit = 6;
-  bool handler = 8;
+  SubFlags flags = 8;
 }
 
 message SubResponse {
@@ -92,4 +92,9 @@ message SubResponse {
   bytes inbox = 3;
   bytes data = 4;
   bytes uuid = 5;
+}
+
+enum SubFlags {
+  SUB_FLAGS_UNKNOWN_UNSPECIFIED = 0;
+  SUB_FLAGS_HANDLER = 1;
 }

@@ -282,12 +282,15 @@ func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.
 	}
 
 	req := &msgv1.SubRequest{
-		Path:    sel.Path.bytes(),
-		Handler: new(handler),
+		Path: sel.Path.bytes(),
 	}
 
 	if sel.Limit > 0 {
 		req.Limit = new(int64(sel.Limit))
+	}
+
+	if handler {
+		req.Flags = new(msgv1.SubFlags_SUB_FLAGS_HANDLER)
 	}
 
 	// FIX: transform some gRPC errors into our own client errors

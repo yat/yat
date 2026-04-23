@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	msgv1 "yat.io/yat/internal/wire/msg/v1"
 )
 
 type Router struct {
@@ -35,7 +37,7 @@ type rnode struct {
 
 type rsub struct {
 	Sel
-	Handler bool
+	Flags msgv1.SubFlags
 }
 
 type rent struct {
@@ -72,7 +74,9 @@ func (rr *Router) route(m Msg) []*rent {
 
 	rr.mu.RLock()
 	defer rr.mu.RUnlock()
-	return rr.rn.Match(m.Path)
+	return slices.DeleteFunc(rr.rn.Match(m.Path), func(e *rent) bool {
+		return e.IsHandler() && m.Inbox.IsZero()
+	})
 }
 
 func (r *Router) deliver(ee []*rent, m rmsg) {
@@ -306,4 +310,8 @@ func (n *rnode) match(ee *[]*rent, p Path) {
 	if n.wildElem != nil {
 		n.wildElem.match(ee, cdr)
 	}
+}
+
+func (e rent) IsHandler() bool {
+	return e.Flags&msgv1.SubFlags_SUB_FLAGS_HANDLER > 0
 }

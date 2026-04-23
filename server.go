@@ -315,16 +315,15 @@ func (s *Server) handleMsgPost(allow func(Path, Action) bool, w http.ResponseWri
 		Data: data,
 	}
 
+	m.Inbox, frm = s.addPostboxField(frm)
+
 	ee := s.router.route(m)
-	hnd := slices.ContainsFunc(ee, func(e *rent) bool {
-		return e.Handler
-	})
+	hnd := slices.ContainsFunc(ee, (*rent).IsHandler)
 
 	if len(ee) == 0 || !hnd {
 		return rpcErrNoHandler
 	}
 
-	m.Inbox, frm = s.addPostboxField(frm)
 	m.uuid, frm = addUUIDField(frm)
 
 	sel := Sel{
@@ -408,8 +407,8 @@ func (s *Server) handleMsgSub(allow func(Path, Action) bool, w http.ResponseWrit
 	}
 
 	rs := rsub{
-		Sel:     sel,
-		Handler: req.GetHandler(),
+		Sel:   sel,
+		Flags: req.GetFlags(),
 	}
 
 	e := s.router.ins(rs, sb.Deliver)

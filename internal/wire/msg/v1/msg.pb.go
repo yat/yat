@@ -21,6 +21,52 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type SubFlags int32
+
+const (
+	SubFlags_SUB_FLAGS_UNKNOWN_UNSPECIFIED SubFlags = 0
+	SubFlags_SUB_FLAGS_HANDLER             SubFlags = 1
+)
+
+// Enum value maps for SubFlags.
+var (
+	SubFlags_name = map[int32]string{
+		0: "SUB_FLAGS_UNKNOWN_UNSPECIFIED",
+		1: "SUB_FLAGS_HANDLER",
+	}
+	SubFlags_value = map[string]int32{
+		"SUB_FLAGS_UNKNOWN_UNSPECIFIED": 0,
+		"SUB_FLAGS_HANDLER":             1,
+	}
+)
+
+func (x SubFlags) Enum() *SubFlags {
+	p := new(SubFlags)
+	*p = x
+	return p
+}
+
+func (x SubFlags) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SubFlags) Descriptor() protoreflect.EnumDescriptor {
+	return file_msg_v1_msg_proto_enumTypes[0].Descriptor()
+}
+
+func (SubFlags) Type() protoreflect.EnumType {
+	return &file_msg_v1_msg_proto_enumTypes[0]
+}
+
+func (x SubFlags) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SubFlags.Descriptor instead.
+func (SubFlags) EnumDescriptor() ([]byte, []int) {
+	return file_msg_v1_msg_proto_rawDescGZIP(), []int{0}
+}
+
 type PubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          []byte                 `protobuf:"bytes,2,opt,name=path" json:"path,omitempty"`
@@ -449,7 +495,7 @@ type SubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          []byte                 `protobuf:"bytes,2,opt,name=path" json:"path,omitempty"`
 	Limit         *int64                 `protobuf:"varint,6,opt,name=limit" json:"limit,omitempty"`
-	Handler       *bool                  `protobuf:"varint,8,opt,name=handler" json:"handler,omitempty"`
+	Flags         *SubFlags              `protobuf:"varint,8,opt,name=flags,enum=msg.v1.SubFlags" json:"flags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -498,11 +544,11 @@ func (x *SubRequest) GetLimit() int64 {
 	return 0
 }
 
-func (x *SubRequest) GetHandler() bool {
-	if x != nil && x.Handler != nil {
-		return *x.Handler
+func (x *SubRequest) GetFlags() SubFlags {
+	if x != nil && x.Flags != nil {
+		return *x.Flags
 	}
-	return false
+	return SubFlags_SUB_FLAGS_UNKNOWN_UNSPECIFIED
 }
 
 type SubResponse struct {
@@ -603,17 +649,20 @@ const file_msg_v1_msg_proto_rawDesc = "" +
 	"\x05limit\x18\x06 \x01(\x03R\x05limit\"8\n" +
 	"\fPostResponse\x12\x14\n" +
 	"\x05inbox\x18\x03 \x01(\fR\x05inbox\x12\x12\n" +
-	"\x04data\x18\x04 \x01(\fR\x04data\"P\n" +
+	"\x04data\x18\x04 \x01(\fR\x04data\"^\n" +
 	"\n" +
 	"SubRequest\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
-	"\x05limit\x18\x06 \x01(\x03R\x05limit\x12\x18\n" +
-	"\ahandler\x18\b \x01(\bR\ahandler\"_\n" +
+	"\x05limit\x18\x06 \x01(\x03R\x05limit\x12&\n" +
+	"\x05flags\x18\b \x01(\x0e2\x10.msg.v1.SubFlagsR\x05flags\"_\n" +
 	"\vSubResponse\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
 	"\x05inbox\x18\x03 \x01(\fR\x05inbox\x12\x12\n" +
 	"\x04data\x18\x04 \x01(\fR\x04data\x12\x12\n" +
-	"\x04uuid\x18\x05 \x01(\fR\x04uuid2\x99\x02\n" +
+	"\x04uuid\x18\x05 \x01(\fR\x04uuid*D\n" +
+	"\bSubFlags\x12!\n" +
+	"\x1dSUB_FLAGS_UNKNOWN_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11SUB_FLAGS_HANDLER\x10\x012\x99\x02\n" +
 	"\n" +
 	"MsgService\x120\n" +
 	"\x03Pub\x12\x12.msg.v1.PubRequest\x1a\x13.msg.v1.PubResponse\"\x00\x127\n" +
@@ -636,35 +685,38 @@ func file_msg_v1_msg_proto_rawDescGZIP() []byte {
 	return file_msg_v1_msg_proto_rawDescData
 }
 
+var file_msg_v1_msg_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_msg_v1_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_msg_v1_msg_proto_goTypes = []any{
-	(*PubRequest)(nil),   // 0: msg.v1.PubRequest
-	(*PubResponse)(nil),  // 1: msg.v1.PubResponse
-	(*MpubRequest)(nil),  // 2: msg.v1.MpubRequest
-	(*MpubResponse)(nil), // 3: msg.v1.MpubResponse
-	(*EmitRequest)(nil),  // 4: msg.v1.EmitRequest
-	(*EmitResponse)(nil), // 5: msg.v1.EmitResponse
-	(*PostRequest)(nil),  // 6: msg.v1.PostRequest
-	(*PostResponse)(nil), // 7: msg.v1.PostResponse
-	(*SubRequest)(nil),   // 8: msg.v1.SubRequest
-	(*SubResponse)(nil),  // 9: msg.v1.SubResponse
+	(SubFlags)(0),        // 0: msg.v1.SubFlags
+	(*PubRequest)(nil),   // 1: msg.v1.PubRequest
+	(*PubResponse)(nil),  // 2: msg.v1.PubResponse
+	(*MpubRequest)(nil),  // 3: msg.v1.MpubRequest
+	(*MpubResponse)(nil), // 4: msg.v1.MpubResponse
+	(*EmitRequest)(nil),  // 5: msg.v1.EmitRequest
+	(*EmitResponse)(nil), // 6: msg.v1.EmitResponse
+	(*PostRequest)(nil),  // 7: msg.v1.PostRequest
+	(*PostResponse)(nil), // 8: msg.v1.PostResponse
+	(*SubRequest)(nil),   // 9: msg.v1.SubRequest
+	(*SubResponse)(nil),  // 10: msg.v1.SubResponse
 }
 var file_msg_v1_msg_proto_depIdxs = []int32{
-	0, // 0: msg.v1.MsgService.Pub:input_type -> msg.v1.PubRequest
-	2, // 1: msg.v1.MsgService.Mpub:input_type -> msg.v1.MpubRequest
-	4, // 2: msg.v1.MsgService.Emit:input_type -> msg.v1.EmitRequest
-	6, // 3: msg.v1.MsgService.Post:input_type -> msg.v1.PostRequest
-	8, // 4: msg.v1.MsgService.Sub:input_type -> msg.v1.SubRequest
-	1, // 5: msg.v1.MsgService.Pub:output_type -> msg.v1.PubResponse
-	3, // 6: msg.v1.MsgService.Mpub:output_type -> msg.v1.MpubResponse
-	5, // 7: msg.v1.MsgService.Emit:output_type -> msg.v1.EmitResponse
-	7, // 8: msg.v1.MsgService.Post:output_type -> msg.v1.PostResponse
-	9, // 9: msg.v1.MsgService.Sub:output_type -> msg.v1.SubResponse
-	5, // [5:10] is the sub-list for method output_type
-	0, // [0:5] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: msg.v1.SubRequest.flags:type_name -> msg.v1.SubFlags
+	1,  // 1: msg.v1.MsgService.Pub:input_type -> msg.v1.PubRequest
+	3,  // 2: msg.v1.MsgService.Mpub:input_type -> msg.v1.MpubRequest
+	5,  // 3: msg.v1.MsgService.Emit:input_type -> msg.v1.EmitRequest
+	7,  // 4: msg.v1.MsgService.Post:input_type -> msg.v1.PostRequest
+	9,  // 5: msg.v1.MsgService.Sub:input_type -> msg.v1.SubRequest
+	2,  // 6: msg.v1.MsgService.Pub:output_type -> msg.v1.PubResponse
+	4,  // 7: msg.v1.MsgService.Mpub:output_type -> msg.v1.MpubResponse
+	6,  // 8: msg.v1.MsgService.Emit:output_type -> msg.v1.EmitResponse
+	8,  // 9: msg.v1.MsgService.Post:output_type -> msg.v1.PostResponse
+	10, // 10: msg.v1.MsgService.Sub:output_type -> msg.v1.SubResponse
+	6,  // [6:11] is the sub-list for method output_type
+	1,  // [1:6] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_msg_v1_msg_proto_init() }
@@ -677,13 +729,14 @@ func file_msg_v1_msg_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_msg_v1_msg_proto_rawDesc), len(file_msg_v1_msg_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_msg_v1_msg_proto_goTypes,
 		DependencyIndexes: file_msg_v1_msg_proto_depIdxs,
+		EnumInfos:         file_msg_v1_msg_proto_enumTypes,
 		MessageInfos:      file_msg_v1_msg_proto_msgTypes,
 	}.Build()
 	File_msg_v1_msg_proto = out.File
