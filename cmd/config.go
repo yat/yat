@@ -83,8 +83,12 @@ func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client
 	return yat.NewClient(c.Server, cfg)
 }
 
-// TokenSource returns an oauth2 token source backed by ReadToken.
+// TokenSource returns an oauth2 token source backed by ReadToken,
+// or nil if no token or token file is configured.
 func (c Config) TokenSource() oauth2.TokenSource {
+	if c.Token == "" && c.TokenFile == "" {
+		return nil
+	}
 	return tokenSourceFunc(c.ReadToken)
 }
 
