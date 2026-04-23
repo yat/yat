@@ -759,12 +759,11 @@ func (h *cliHarness) start(t *testing.T, stdin []byte, env []string, args ...str
 			proc.done <- err
 			return
 		}
-		defer restoreStdin()
-
 		err = run(ctx, args)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
+		restoreStdin()
 		proc.done <- err
 	}()
 
