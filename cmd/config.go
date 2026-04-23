@@ -15,7 +15,6 @@ import (
 
 // Config collects configuration for the yat command.
 type Config struct {
-	LogLevel  slog.Level
 	TLSFiles  TLSFiles
 	Server    string
 	Token     string
@@ -24,7 +23,6 @@ type Config struct {
 
 // Env reads configuration from the yat environment variables.
 //
-//   - YAT_LOG_LEVEL
 //   - YAT_TLS_CERT_FILE
 //   - YAT_TLS_KEY_FILE
 //   - YAT_TLS_CA_FILE
@@ -42,10 +40,6 @@ func EnvConfig() Config {
 		Server:    os.Getenv("YAT_SERVER"),
 		Token:     os.Getenv("YAT_TOKEN"),
 		TokenFile: os.Getenv("YAT_TOKEN_FILE"),
-	}
-
-	if ll, ok := os.LookupEnv("YAT_LOG_LEVEL"); ok {
-		_ = ec.LogLevel.UnmarshalText([]byte(ll))
 	}
 
 	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
