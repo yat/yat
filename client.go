@@ -40,6 +40,7 @@ type ClientConfig struct {
 }
 
 // NewClient returns a new client for the given server and configuration.
+// The client connects lazily and redials if the connection is broken.
 func NewClient(server string, config ClientConfig) (*Client, error) {
 	config = config.withDefaults()
 	creds := insecure.NewCredentials()
@@ -53,6 +54,7 @@ func NewClient(server string, config ClientConfig) (*Client, error) {
 	}
 
 	opts := []grpc.DialOption{
+		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithTransportCredentials(creds),
 	}
 

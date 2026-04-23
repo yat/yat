@@ -1883,7 +1883,10 @@ func TestGenAuthMTLS(t *testing.T) {
 		client := newAuthClient(t, endpoint, nil)
 		defer closeClient(t, client)
 
-		if err := client.Publish(context.Background(), yat.Msg{Path: path, Data: []byte("no-cert")}); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		if err := client.Publish(ctx, yat.Msg{Path: path, Data: []byte("no-cert")}); err == nil {
 			t.Fatal("missing client cert unexpectedly succeeded")
 		}
 	})
