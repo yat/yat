@@ -203,6 +203,25 @@ func TestGenServerProtocol(t *testing.T) {
 		if got := rr.Header().Get("allow"); got != http.MethodPost {
 			t.Fatalf("allow = %q", got)
 		}
+
+		badTimeout := newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, nil)
+		badTimeout.Header.Set("grpc-timeout", "tomorrow")
+
+		rr = httptest.NewRecorder()
+		server.ServeHTTP(rr, badTimeout)
+		assertHTTPStatus(t, rr, http.StatusBadRequest)
+	})
+
+	t.Run("grpc_timeout_maps_context_deadline_to_deadline_exceeded", func(t *testing.T) {
+		server := newTestServer(t, yat.AllowAll())
+		subBody := marshalProto(t, &msgv1.SubRequest{Path: []byte("timeout/topic")})
+		req := newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody))
+		req.Header.Set("grpc-timeout", "0n")
+
+		rr := httptest.NewRecorder()
+		server.ServeHTTP(rr, req)
+
+		assertGRPCStatus(t, rr, codes.DeadlineExceeded)
 	})
 
 	t.Run("malformed_frames_return_expected_status_codes", func(t *testing.T) {

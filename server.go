@@ -1,6 +1,7 @@
 package yat
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -78,6 +79,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if to := r.Header.Get("grpc-timeout"); to != "" {
+		d, err := grpcDecodeTimeout(to)
+		if err != nil {
+			http.Error(w, "bad grpc-timeout",
+				http.StatusBadRequest)
+
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), d)
+		defer cancel()
+
+		r = r.WithContext(ctx)
+	}
+
 	var handle func(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error
 
 	switch r.URL.Path {
@@ -138,6 +154,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if he, ok := err.(httpError); ok {
 		http.Error(w, he.Message, he.Status)
 		return
+	}
+
+	if st := status.FromContextError(err); st != nil && st.Code() != codes.Unknown {
+		err = st.Err()
 	}
 
 	st, _ := status.FromError(err)
