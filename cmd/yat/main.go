@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/uuid"
 	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 
@@ -162,7 +161,6 @@ func run(ctx context.Context, args []string) error {
 		},
 	}))
 
-	logger = logger.With("this", uuid.New())
 	return cmd.Run(ctx, logger, args)
 }
 

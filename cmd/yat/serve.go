@@ -92,7 +92,8 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	logger.InfoContext(ctx, "serve",
-		"addr", l.Addr().String())
+		"addr", l.Addr().String(),
+		"rules", len(cfg.Rules))
 
 	srvC := make(chan error, 1)
 	go func() {
@@ -142,7 +143,7 @@ func loadServerConfig(cfg *serverConfig, data []byte) error {
 	switch hdr.Kind {
 	case "RuleSet":
 		var ruleSet serverConfigRuleSet
-		if err := yaml.Unmarshal(data, &ruleSet); err != nil {
+		if err := yaml.UnmarshalWithOptions(data, &ruleSet, yaml.UseJSONUnmarshaler()); err != nil {
 			return err
 		}
 		cfg.Rules = append(cfg.Rules, ruleSet.Rules...)
