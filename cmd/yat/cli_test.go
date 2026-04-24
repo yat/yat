@@ -485,6 +485,47 @@ rules:
 		h.clientArgs("pub", "cli/token", "-empty", "-token-file", writerTokenFile)...).mustSucceed(t)
 }
 
+func TestCLIRuleSetScalarExpr(t *testing.T) {
+	h := newCLIHarness(t)
+	h.seed(t)
+
+	issuer := newCLITestAuthIssuer(t)
+	rulesFile := h.writeFile(t, "jwt-expr-rules.yaml", fmt.Sprintf(`apiVersion: yat.io/v1alpha1
+kind: RuleSet
+
+rules:
+  - jwt:
+      iss: %q
+      aud: yat-client
+    expr: '"group@example.com" in claims.groups'
+    grants:
+      - paths: ["cli/expr"]
+        actions: [pub]
+`, issuer.url))
+
+	server := h.start(t, nil, nil,
+		"serve",
+		"-bind", "127.0.0.1:0",
+		"-config", rulesFile,
+		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
+		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"))
+	h.waitForServer(t, server)
+
+	adminToken := issuer.rawTokenWithClaims(t, "admin", map[string]any{
+		"groups": []string{"group@example.com"},
+	})
+	deniedToken := issuer.rawTokenWithClaims(t, "developer", map[string]any{
+		"groups": []string{"other@example.com"},
+	})
+
+	h.runWithEnv(nil, []string{"YAT_TOKEN=" + adminToken},
+		h.clientArgs("pub", "cli/expr", "-empty")...).mustSucceed(t)
+
+	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
+		h.clientArgs("pub", "cli/expr", "-empty")...).mustFail(t).
+		stderrContains(t, "permission denied")
+}
+
 type cliHarness struct {
 	dir        string
 	seedDir    string
@@ -948,13 +989,19 @@ func newCLITestAuthIssuer(t *testing.T) *cliTestAuthIssuer {
 func (i *cliTestAuthIssuer) rawToken(t *testing.T, subject string) string {
 	t.Helper()
 
+	return i.rawTokenWithClaims(t, subject, nil)
+}
+
+func (i *cliTestAuthIssuer) rawTokenWithClaims(t *testing.T, subject string, claims map[string]any) string {
+	t.Helper()
+
 	raw, err := jwt.Signed(i.signer).Claims(jwt.Claims{
 		Issuer:   i.url,
 		Subject:  subject,
 		Audience: jwt.Audience{"yat-client"},
 		Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		IssuedAt: jwt.NewNumericDate(time.Now()),
-	}).Serialize()
+	}).Claims(claims).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}

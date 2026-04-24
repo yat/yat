@@ -94,7 +94,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(ctx)
 	}
 
-	var handle func(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error
+	var handle func(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error
 
 	switch r.URL.Path {
 	case msgv1.MsgService_Pub_FullMethodName:
@@ -134,6 +134,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller.Claims = claims
 	}
 
+	largs := []any{
+		"remote", r.RemoteAddr,
+	}
+
+	if caller.Cert != nil {
+		largs = append(largs,
+			"cert.iss", caller.Cert.Issuer.CommonName,
+			"cert.sub", caller.Cert.Subject,
+			"cert.uris", caller.Cert.URIs,
+		)
+	}
+
+	if caller.Claims != nil {
+		largs = append(largs,
+			"claims.iss", caller.Claims.claims["iss"],
+			"claims.sub", caller.Claims.claims["sub"])
+	}
+
+	logger := s.config.Logger.With("remote", r.RemoteAddr)
+	logger.DebugContext(r.Context(), "caller identified", largs...)
+
 	w.Header().Set("content-type",
 		"application/grpc")
 
@@ -143,12 +164,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	allow, err := s.config.Rules.Compile(caller)
 
 	if err != nil {
-		s.config.Logger.ErrorContext(r.Context(), "rule compilation failed", "error", err)
+		logger.ErrorContext(r.Context(), "rule compilation failed", "error", err)
 		err = status.Error(codes.Internal, "malformed rule set")
 	}
 
+	if logger.Enabled(r.Context(), slog.LevelDebug) {
+		wrapped := allow
+		allow = func(p Path, a Action) bool {
+			ok := wrapped(p, a)
+			if !ok {
+				logger.DebugContext(r.Context(),
+					"not allowed", "path", p, "action", a)
+			}
+
+			return ok
+		}
+	}
+
 	if err == nil {
-		err = handle(allow, w, r)
+		err = handle(logger, allow, w, r)
 	}
 
 	if he, ok := err.(httpError); ok {
@@ -171,7 +205,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleMsgPub(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
+func (s *Server) handleMsgPub(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	_, frm, err := readMsgPubFrm(r.Body)
 	if err != nil {
 		return err
@@ -206,7 +240,7 @@ func (s *Server) handleMsgPub(allow func(Path, Action) bool, w http.ResponseWrit
 	return err
 }
 
-func (s *Server) handleMsgMpub(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
+func (s *Server) handleMsgMpub(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	flusher := w.(http.Flusher)
 
 	for {
@@ -257,7 +291,7 @@ func (s *Server) handleMsgMpub(allow func(Path, Action) bool, w http.ResponseWri
 	}
 }
 
-func (s *Server) handleMsgEmit(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
+func (s *Server) handleMsgEmit(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	for {
 		_, frm, err := readMsgPubFrm(r.Body)
 		if err == io.EOF {
@@ -301,7 +335,7 @@ func (s *Server) deliver(m Msg, frm []byte) {
 	}
 }
 
-func (s *Server) handleMsgPost(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
+func (s *Server) handleMsgPost(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	_, frm, err := readMsgPubFrm(r.Body)
 	if err != nil {
 		return err
@@ -382,7 +416,7 @@ func (s *Server) addPostboxField(frm []byte) (inbox Path, ext []byte) {
 	return inbox, frm
 }
 
-func (s *Server) handleMsgSub(allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
+func (s *Server) handleMsgSub(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	hdr, err := readGRPCFrmHdr(r.Body)
 	if err != nil {
 		return err
