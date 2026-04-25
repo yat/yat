@@ -448,6 +448,40 @@ func TestCLIDurationsAndErrors(t *testing.T) {
 		stderrContains(t, "no handler for post")
 }
 
+func TestCLIServeRoot(t *testing.T) {
+	h := newCLIHarness(t)
+	h.startServer(t)
+
+	tcfg, _, err := (cmd.TLSFiles{
+		CertFile: filepath.Join(h.seedDir, "tls.crt"),
+		KeyFile:  filepath.Join(h.seedDir, "tls.key"),
+		CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
+	}).ClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tcfg,
+	}
+	defer transport.CloseIdleConnections()
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   cliTestTimeout,
+	}
+
+	res, err := client.Get("https://" + h.server + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+}
+
 func TestCLITokenSources(t *testing.T) {
 	h := newCLIHarness(t)
 	h.seed(t)
