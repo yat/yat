@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
+	"yat.io/yat/internal/grpcutil"
 	msgv1 "yat.io/yat/internal/wire/msg/v1"
 )
 
@@ -65,7 +66,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Header.Get("content-type") != "application/grpc" {
+	if !grpcutil.IsGRPCRequest(r) {
 		http.Error(w, "unsupported content-type",
 			http.StatusUnsupportedMediaType)
 
