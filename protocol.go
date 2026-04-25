@@ -36,7 +36,7 @@ const (
 // uuidFieldLen is the length in bytes of a server-appended uuid field.
 const uuidFieldLen = 18
 
-// postboxFieldMaxLen is maximum length in bytes of a server-appended
+// postboxFieldLen is maximum length in bytes of a server-appended
 // path field containing a router postbox.
 const postboxFieldLen = 69
 
