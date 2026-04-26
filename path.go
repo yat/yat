@@ -56,15 +56,17 @@ func (p Path) Match(o Path) bool {
 
 		switch ps.String() {
 		case "*":
-			continue
+			if os.s != "**" {
+				continue
+			}
 
 		case "**":
 			return true
 
-		default:
-			if !os.Equal(ps) {
-				return false
-			}
+		}
+
+		if !os.Equal(ps) {
+			return false
 		}
 	}
 }
