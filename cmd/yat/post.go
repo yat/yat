@@ -41,7 +41,12 @@ func (cmd *PostCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 		}
 	}
 
-	m, err := readMsg(args[0], "", cmd.File, cmd.Empty)
+	path, err := yat.ParsePath(args[0])
+	if err != nil {
+		return err
+	}
+
+	data, err := loadData(cmd.File, cmd.Empty)
 	if err != nil {
 		return err
 	}
@@ -91,8 +96,8 @@ func (cmd *PostCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 	defer yc.Close()
 
 	req := yat.Req{
-		Path:  m.Path,
-		Data:  m.Data,
+		Path:  path,
+		Data:  data,
 		Limit: cmd.Limit,
 	}
 

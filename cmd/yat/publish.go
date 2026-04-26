@@ -33,9 +33,28 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		}
 	}
 
-	msg, err := readMsg(args[0], cmd.Inbox, cmd.File, cmd.Empty)
+	path, err := yat.ParsePath(args[0])
 	if err != nil {
 		return err
+	}
+
+	data, err := loadData(cmd.File, cmd.Empty)
+	if err != nil {
+		return err
+	}
+
+	var inbox yat.Path
+	if cmd.Inbox != "" {
+		inbox, err = yat.ParsePath(cmd.Inbox)
+		if err != nil {
+			return err
+		}
+	}
+
+	m := yat.Msg{
+		Path:  path,
+		Data:  data,
+		Inbox: inbox,
 	}
 
 	yc, err := cmd.NewClient(ctx, logger)
@@ -45,28 +64,18 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 
 	defer yc.Close()
 
-	return yc.Publish(ctx, msg)
+	return yc.Publish(ctx, m)
 }
 
-func readMsg(path, inbox string, file string, empty bool) (m yat.Msg, err error) {
-	m.Path, err = yat.ParsePath(path)
-	if err != nil {
+func loadData(file string, empty bool) (data []byte, err error) {
+	switch {
+	case empty:
 		return
-	}
 
-	if inbox != "" {
-		if m.Inbox, err = yat.ParsePath(inbox); err != nil {
-			return
-		}
-	}
+	case file == "-" || file == "/dev/stdin":
+		return io.ReadAll(os.Stdin)
 
-	if !empty {
-		if file == "-" || file == "/dev/stdin" {
-			m.Data, err = io.ReadAll(os.Stdin)
-		} else {
-			m.Data, err = os.ReadFile(file)
-		}
+	default:
+		return os.ReadFile(file)
 	}
-
-	return
 }

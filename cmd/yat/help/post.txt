@@ -19,7 +19,7 @@ Flags:
   -limit, -n 1
       Stop after n responses.
 
-  -duration -d 0s
+  -duration, -d 0s
       Succeed after some amount of time.
 
   -timeout, -t 0s
