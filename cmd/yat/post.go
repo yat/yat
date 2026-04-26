@@ -46,6 +46,18 @@ func (cmd *PostCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 		return err
 	}
 
+	if cmd.Limit < 0 {
+		return errNegLimit
+	}
+
+	if cmd.Duration < 0 {
+		return errNegDuration
+	}
+
+	if cmd.Timeout < 0 {
+		return errNegTimeout
+	}
+
 	errDuration := errors.New("duration elapsed")
 	if cmd.Timeout > 0 && cmd.Duration > cmd.Timeout {
 		return errors.New("duration exceeds timeout")

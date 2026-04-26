@@ -213,8 +213,22 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 		{
 			name: "post_negative_limit",
 			args: []string{"post", "topic", "-empty", "-limit", "-1"},
-			env:  []string{"YAT_SERVER=localhost:1"},
 			want: "negative limit",
+		},
+		{
+			name: "post_negative_duration",
+			args: []string{"post", "topic", "-empty", "-duration", "-1s"},
+			want: "negative duration",
+		},
+		{
+			name: "post_negative_timeout",
+			args: []string{"post", "topic", "-empty", "-timeout", "-1s"},
+			want: "negative timeout",
+		},
+		{
+			name: "post_duration_exceeds_timeout",
+			args: []string{"post", "topic", "-empty", "-duration", "2s", "-timeout", "1s"},
+			want: "duration exceeds timeout",
 		},
 		{
 			name: "post_server_not_configured",
@@ -244,6 +258,18 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 			want: "invalid postbox",
 		},
 		{
+			name: "subscribe_negative_limit",
+			args: []string{"subscribe", "topic", "-limit", "-1"},
+			env:  []string{"YAT_SERVER=localhost:1"},
+			want: "negative limit",
+		},
+		{
+			name: "subscribe_negative_duration",
+			args: []string{"subscribe", "topic", "-duration", "-1s"},
+			env:  []string{"YAT_SERVER=localhost:1"},
+			want: "negative duration",
+		},
+		{
 			name: "subscribe_server_not_configured",
 			args: []string{"subscribe", "topic"},
 			want: "server is not configured",
@@ -268,6 +294,16 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 			args: []string{"handle", "@postbox", "-empty"},
 			env:  []string{"YAT_SERVER=localhost:1"},
 			want: "invalid postbox",
+		},
+		{
+			name: "handle_negative_limit",
+			args: []string{"handle", "topic", "-empty", "-limit", "-1"},
+			want: "negative limit",
+		},
+		{
+			name: "handle_negative_duration",
+			args: []string{"handle", "topic", "-empty", "-duration", "-1s"},
+			want: "negative duration",
 		},
 		{
 			name: "handle_server_not_configured",

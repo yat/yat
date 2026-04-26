@@ -41,6 +41,14 @@ func (cmd *HandleCmd) Run(ctx context.Context, logger *slog.Logger, args []strin
 		return err
 	}
 
+	if cmd.Limit < 0 {
+		return errNegLimit
+	}
+
+	if cmd.Duration < 0 {
+		return errNegDuration
+	}
+
 	var data []byte
 	if !cmd.Empty {
 		if cmd.File == "-" || cmd.File == "/dev/stdin" {
