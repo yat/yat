@@ -77,7 +77,7 @@ func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client
 	}
 
 	if c.Token != "" || c.TokenFile != "" {
-		cfg.TokenSource = oauth2.ReuseTokenSource(nil, c.TokenSource())
+		cfg.TokenSource = c.TokenSource()
 	}
 
 	return yat.NewClient(c.Server, cfg)
@@ -111,7 +111,8 @@ func (c Config) ReadToken() (access *oauth2.Token, err error) {
 		return
 	}
 
-	jt, err := jwt.ParseSigned(string(raw), []jose.SignatureAlgorithm{jose.ES256, jose.PS256, jose.RS256})
+	trim := strings.TrimSpace(string(raw))
+	jt, err := jwt.ParseSigned(trim, []jose.SignatureAlgorithm{jose.ES256, jose.PS256, jose.RS256})
 	if err != nil {
 		return
 	}
@@ -122,7 +123,7 @@ func (c Config) ReadToken() (access *oauth2.Token, err error) {
 	}
 
 	access = &oauth2.Token{
-		AccessToken: string(raw),
+		AccessToken: trim,
 		TokenType:   "Bearer",
 		Expiry:      claims.Expiry.Time(),
 	}

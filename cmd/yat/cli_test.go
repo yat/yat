@@ -546,13 +546,16 @@ rules:
 
 	writerToken := issuer.rawToken(t, "writer")
 	deniedToken := issuer.rawToken(t, "denied")
-	writerTokenFile := h.writeFile(t, "writer.jwt", writerToken)
+	writerTokenFile := h.writeFile(t, "writer.jwt", "\n\t"+writerToken+"\n")
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + writerToken},
 		h.clientArgs("pub", "cli/token", "-empty")...).mustSucceed(t)
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
 		h.clientArgs("pub", "cli/token", "-empty", "-token-file", writerTokenFile)...).mustSucceed(t)
+
+	h.runWithEnv(nil, []string{"YAT_TOKEN=\n\t" + writerToken + "\n"},
+		h.clientArgs("pub", "cli/token", "-empty")...).mustSucceed(t)
 }
 
 func TestCLIRuleSetScalarExpr(t *testing.T) {
