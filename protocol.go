@@ -470,6 +470,10 @@ func validateOutboundSel(s Sel) error {
 		return errPostbox
 	}
 
+	if s.Limit < 0 {
+		return errNegLimit
+	}
+
 	return nil
 }
 

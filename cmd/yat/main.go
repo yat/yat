@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,6 +24,12 @@ type usageError struct {
 var errNoCommand = usageError{
 	Usage: "yat [flags] COMMAND [args]",
 }
+
+var (
+	errNegDuration = errors.New("negative duration")
+	errNegLimit    = errors.New("negative limit")
+	errNegTimeout  = errors.New("negative timeout")
+)
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {

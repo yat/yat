@@ -34,13 +34,6 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		}
 	}
 
-	yc, err := cmd.NewClient(ctx, logger)
-	if err != nil {
-		return err
-	}
-
-	defer yc.Close()
-
 	cb := func(_ context.Context, m yat.Msg) {
 		var err error
 		if cmd.Raw {
@@ -59,6 +52,14 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		return err
 	}
 
+	if cmd.Limit < 0 {
+		return errNegLimit
+	}
+
+	if cmd.Duration < 0 {
+		return errNegDuration
+	}
+
 	sel := yat.Sel{
 		Path:  path,
 		Limit: cmd.Limit,
@@ -69,6 +70,13 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		ctx, cancel = context.WithTimeout(ctx, cmd.Duration)
 		defer cancel()
 	}
+
+	yc, err := cmd.NewClient(ctx, logger)
+	if err != nil {
+		return err
+	}
+
+	defer yc.Close()
 
 	sub, err := yc.Subscribe(ctx, sel, cb)
 	if err != nil {
