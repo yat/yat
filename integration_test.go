@@ -1287,6 +1287,102 @@ func TestGenClientServer(t *testing.T) {
 	})
 }
 
+func TestGenAuthGrantPathMatching(t *testing.T) {
+	rules := []yat.Rule{{
+		Grants: []yat.Grant{
+			{
+				Paths: []string{
+					"match/exact",
+					"match/elem/*",
+					"match/suffix/**",
+					"match/short/one/two",
+				},
+				Actions: []yat.Action{yat.ActionPub},
+			},
+			{
+				Paths:   []string{"match/**"},
+				Actions: []yat.Action{yat.ActionSub},
+			},
+		},
+	}}
+
+	endpoint := startTLSEndpoint(t, mustRuleSet(t, context.Background(), rules))
+	defer endpoint.Close()
+
+	publisher := newTLSClient(t, endpoint)
+	subscriber := newTLSClient(t, endpoint)
+	defer closeClient(t, publisher)
+	defer closeClient(t, subscriber)
+
+	probe := newSubProbe(t, subscriber, yat.Sel{Path: yat.NewPath("match/**")})
+	defer probe.Cancel(t)
+
+	allowed := []struct {
+		path yat.Path
+		data []byte
+	}{
+		{path: yat.NewPath("match/exact"), data: []byte("exact")},
+		{path: yat.NewPath("match/elem/leaf"), data: []byte("elem")},
+		{path: yat.NewPath("match/suffix/deep/leaf"), data: []byte("suffix")},
+	}
+
+	for _, msg := range allowed {
+		if err := publisher.Publish(context.Background(), yat.Msg{
+			Path: msg.path,
+			Data: msg.data,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := receiveMsgs(t, probe.msgs, len(allowed))
+	for _, msg := range allowed {
+		got = assertContainsMsg(t, got, msg.path, yat.Path{}, msg.data)
+	}
+	if len(got) != 0 {
+		t.Fatalf("unexpected extra messages: %+v", got)
+	}
+
+	denied := []yat.Path{
+		yat.NewPath("match/elem/leaf/extra"),
+		yat.NewPath("match/short/one"),
+		yat.NewPath("match/other"),
+	}
+
+	for _, path := range denied {
+		assertStatusCode(t, publisher.Publish(context.Background(), yat.Msg{
+			Path: path,
+			Data: []byte("denied"),
+		}), codes.PermissionDenied)
+	}
+}
+
+func TestGenAuthWildcardGrantDoesNotMatchWildcardSelector(t *testing.T) {
+	rules := []yat.Rule{{
+		Grants: []yat.Grant{{
+			Paths:   []string{"test/*"},
+			Actions: []yat.Action{yat.ActionSub},
+		}},
+	}}
+
+	endpoint := startTLSEndpoint(t, mustRuleSet(t, context.Background(), rules))
+	defer endpoint.Close()
+
+	client := newTLSClient(t, endpoint)
+	defer closeClient(t, client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sub, err := client.Subscribe(ctx, yat.Sel{Path: yat.NewPath("test/**")}, func(context.Context, yat.Msg) {})
+	if err == nil {
+		cancelSub(t, cancel, sub)
+		t.Fatal(`"test/*" grant allowed "test/**" selector`)
+	}
+
+	assertStatusCode(t, err, codes.PermissionDenied)
+}
+
 func TestGenAuthJWT(t *testing.T) {
 	issuer := newAuthIssuer(t)
 	path := yat.NewPath("auth/topic")
