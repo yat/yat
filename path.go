@@ -39,6 +39,10 @@ func (p Path) Match(o Path) bool {
 		return false
 	}
 
+	if p.IsPostbox() || o.IsPostbox() {
+		return o.Equal(p)
+	}
+
 	// head segments
 	var ps, os Path
 

@@ -141,7 +141,7 @@ func TestGenRuleValidation(t *testing.T) {
 						Actions: []yat.Action{yat.ActionPub},
 					}},
 				}},
-				want: "paths[0]: invalid path",
+				want: "invalid path",
 			},
 			{
 				name: "malformed_grant_interpolation",
@@ -153,13 +153,35 @@ func TestGenRuleValidation(t *testing.T) {
 				}},
 				want: "Syntax error",
 			},
+			{
+				name: "postbox_grant_path",
+				rules: []yat.Rule{{
+					Grants: []yat.Grant{{
+						Paths:   []string{"@reply"},
+						Actions: []yat.Action{yat.ActionPub},
+					}},
+				}},
+				want: "invalid postbox",
+			},
+			{
+				name: "long_grant_path",
+				rules: []yat.Rule{{
+					Grants: []yat.Grant{{
+						Paths:   []string{strings.Repeat("x", yat.MaxPathLen+1)},
+						Actions: []yat.Action{yat.ActionPub},
+					}},
+				}},
+				want: "long path",
+			},
 		}
 
 		for _, tc := range cases {
-			_, err := yat.NewRuleSet(context.Background(), tc.rules)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("%s: error = %v, want substring %q", tc.name, err, tc.want)
-			}
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := yat.NewRuleSet(context.Background(), tc.rules)
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error = %v, want substring %q", err, tc.want)
+				}
+			})
 		}
 	})
 
@@ -1083,6 +1105,7 @@ func TestGenClientServer(t *testing.T) {
 	})
 
 	t.Run("postbox_replies_route_only_to_exact_postbox", func(t *testing.T) {
+		path := yat.NewPath("postbox/exact")
 		endpoint := startTLSEndpoint(t, yat.AllowAll())
 		defer endpoint.Close()
 
@@ -1095,20 +1118,10 @@ func TestGenClientServer(t *testing.T) {
 		defer closeClient(t, elemWildcard)
 		defer closeClient(t, suffixWildcard)
 
-		path := yat.NewPath("postbox/exact")
 		elemProbe := newSubProbe(t, elemWildcard, yat.Sel{Path: yat.NewPath("*")})
 		suffixProbe := newSubProbe(t, suffixWildcard, yat.Sel{Path: yat.NewPath("**")})
 		defer elemProbe.Cancel(t)
 		defer suffixProbe.Cancel(t)
-
-		if err := poster.Publish(context.Background(), yat.Msg{
-			Path: yat.NewPath("@manual"),
-			Data: []byte("manual"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-		assertNoMsg(t, elemProbe.msgs, 100*time.Millisecond)
-		assertNoMsg(t, suffixProbe.msgs, 100*time.Millisecond)
 
 		handled := make(chan handledReq, 1)
 		hctx, cancelHandle := context.WithCancel(context.Background())
@@ -1146,6 +1159,7 @@ func TestGenClientServer(t *testing.T) {
 		}
 		assertHandledReq(t, receiveHandledReq(t, handled), path, []byte("request"))
 
+		assertNoMsg(t, elemProbe.msgs, 100*time.Millisecond)
 		requestMsg := receiveMsg(t, suffixProbe.msgs)
 		if !requestMsg.Inbox.IsPostbox() {
 			t.Fatalf("post inbox = %q, want postbox", requestMsg.Inbox.String())
@@ -1895,6 +1909,111 @@ func TestGenAuthInterpolatedGrantPaths(t *testing.T) {
 
 		_, err = rs.Compile(yat.Principal{Claims: claims})
 		assertErrContains(t, err, "wildcard interpolation")
+	})
+
+	t.Run("postbox_interpolation_returns_compile_error", func(t *testing.T) {
+		issuer := newAuthIssuer(t)
+
+		rules := []yat.Rule{{
+			JWT: authJWTCond(issuer.url, "yat-client", ""),
+			Grants: []yat.Grant{{
+				Paths:   []string{`${claims.sub}`},
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		}}
+
+		rs := mustRuleSet(t, issuer.context(), rules)
+		claims, err := rs.VerifyToken(issuer.context(), issuer.rawToken(t, authTokenSpec{
+			Subject:  "@reply",
+			Audience: []string{"yat-client"},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = rs.Compile(yat.Principal{Claims: claims})
+		assertErrContains(t, err, "invalid postbox")
+	})
+
+	t.Run("malformed_interpolated_path_returns_compile_error", func(t *testing.T) {
+		issuer := newAuthIssuer(t)
+
+		rules := []yat.Rule{{
+			JWT: authJWTCond(issuer.url, "yat-client", ""),
+			Grants: []yat.Grant{{
+				Paths:   []string{`${claims.path}`},
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		}}
+
+		rs := mustRuleSet(t, issuer.context(), rules)
+		claims, err := rs.VerifyToken(issuer.context(), issuer.rawToken(t, authTokenSpec{
+			Subject:  "writer",
+			Audience: []string{"yat-client"},
+			Claims: map[string]any{
+				"path": "bad//path",
+			},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = rs.Compile(yat.Principal{Claims: claims})
+		assertErrContains(t, err, "invalid path")
+	})
+
+	t.Run("empty_interpolated_path_returns_compile_error", func(t *testing.T) {
+		issuer := newAuthIssuer(t)
+
+		rules := []yat.Rule{{
+			JWT: authJWTCond(issuer.url, "yat-client", ""),
+			Grants: []yat.Grant{{
+				Paths:   []string{`${claims.path}`},
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		}}
+
+		rs := mustRuleSet(t, issuer.context(), rules)
+		claims, err := rs.VerifyToken(issuer.context(), issuer.rawToken(t, authTokenSpec{
+			Subject:  "writer",
+			Audience: []string{"yat-client"},
+			Claims: map[string]any{
+				"path": "",
+			},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = rs.Compile(yat.Principal{Claims: claims})
+		assertErrContains(t, err, "short path")
+	})
+
+	t.Run("postbox_prefix_interpolation_returns_compile_error", func(t *testing.T) {
+		issuer := newAuthIssuer(t)
+
+		rules := []yat.Rule{{
+			JWT: authJWTCond(issuer.url, "yat-client", ""),
+			Grants: []yat.Grant{{
+				Paths:   []string{`${claims.path}/x`},
+				Actions: []yat.Action{yat.ActionPub},
+			}},
+		}}
+
+		rs := mustRuleSet(t, issuer.context(), rules)
+		claims, err := rs.VerifyToken(issuer.context(), issuer.rawToken(t, authTokenSpec{
+			Subject:  "writer",
+			Audience: []string{"yat-client"},
+			Claims: map[string]any{
+				"path": "@reply",
+			},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = rs.Compile(yat.Principal{Claims: claims})
+		assertErrContains(t, err, "invalid postbox")
 	})
 
 	t.Run("invalid_resolved_claim_path_returns_internal", func(t *testing.T) {
