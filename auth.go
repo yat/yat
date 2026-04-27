@@ -265,22 +265,8 @@ func (r Rule) validate() error {
 	}
 
 	for i, g := range r.Grants {
-		for j, p := range g.Paths {
-			if !strings.Contains(p, "${") {
-				if _, err := ParsePath(p); err != nil {
-					return fmt.Errorf("grants[%d].paths[%d]: %v", i, j, err)
-				}
-			}
-		}
-
-		if len(g.Actions) == 0 {
-			return fmt.Errorf("grants[%d]: empty actions", i)
-		}
-
-		for _, a := range g.Actions {
-			if a != ActionPub && a != ActionSub {
-				return fmt.Errorf("grants[%d]: invalid action: %s", i, a)
-			}
+		if err := g.validate(); err != nil {
+			return fmt.Errorf("grants[%d]: %v", i, err)
 		}
 	}
 
@@ -434,6 +420,28 @@ func (g Grant) compile(p Principal) (AllowFunc, error) {
 				return pat.Match(p)
 			})
 	}, nil
+}
+
+func (g Grant) validate() error {
+	for i, p := range g.Paths {
+		eg, err := interpol.Replace(rulesEnv, p, "eg")
+		if err != nil {
+			return fmt.Errorf("paths[%d]: %v", i, err)
+		}
+
+		_, err = ParsePath(eg)
+		if err != nil {
+			return fmt.Errorf("paths[%d]: %v", i, err)
+		}
+	}
+
+	for _, a := range g.Actions {
+		if a != ActionPub && a != ActionSub {
+			return fmt.Errorf("invalid action: %s", a)
+		}
+	}
+
+	return nil
 }
 
 func compilePath(s string, p Principal) (Path, error) {

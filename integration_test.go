@@ -134,13 +134,24 @@ func TestGenRuleValidation(t *testing.T) {
 				want: "invalid path",
 			},
 			{
-				name: "empty_actions",
+				name: "malformed_grant_path",
 				rules: []yat.Rule{{
 					Grants: []yat.Grant{{
-						Paths: []string{"auth/topic"},
+						Paths:   []string{"auth//topic"},
+						Actions: []yat.Action{yat.ActionPub},
 					}},
 				}},
-				want: "empty actions",
+				want: "paths[0]: invalid path",
+			},
+			{
+				name: "malformed_grant_interpolation",
+				rules: []yat.Rule{{
+					Grants: []yat.Grant{{
+						Paths:   []string{"auth/${claims.sub ==}/topic"},
+						Actions: []yat.Action{yat.ActionPub},
+					}},
+				}},
+				want: "Syntax error",
 			},
 		}
 
@@ -149,6 +160,18 @@ func TestGenRuleValidation(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("%s: error = %v, want substring %q", tc.name, err, tc.want)
 			}
+		}
+	})
+
+	t.Run("noop_grants_are_allowed", func(t *testing.T) {
+		_, err := yat.NewRuleSet(context.Background(), []yat.Rule{{
+			Grants: []yat.Grant{
+				{Actions: []yat.Action{yat.ActionPub}},
+				{Paths: []string{"auth/topic"}},
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
 		}
 	})
 }
