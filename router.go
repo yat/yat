@@ -68,10 +68,6 @@ func NewRouter() *Router {
 }
 
 func (rr *Router) route(m Msg) []*rent {
-	if m.Path.IsZero() {
-		return nil
-	}
-
 	rr.mu.RLock()
 	defer rr.mu.RUnlock()
 	return slices.DeleteFunc(rr.rn.Match(m.Path), func(e *rent) bool {
@@ -200,6 +196,10 @@ func (n *rnode) Ins(sub rsub, f func(rmsg, bool)) *rent {
 
 // Match returns the entries with patterns matching p.
 func (n *rnode) Match(p Path) []*rent {
+	if p.IsZero() {
+		return nil
+	}
+
 	var ee []*rent
 	n.match(&ee, p, p.IsPostbox())
 	return ee
@@ -303,7 +303,20 @@ func (n *rnode) match(ee *[]*rent, p Path, exact bool) {
 		c.match(ee, cdr, exact)
 	}
 
-	if !exact {
+	if exact {
+		return
+	}
+
+	switch car.String() {
+	case "**":
+		return
+
+	case "*":
+		if n.wildSuffix != nil {
+			n.wildSuffix.match(ee, Path{}, false)
+		}
+
+	default:
 		if n.wildSuffix != nil {
 			n.wildSuffix.match(ee, Path{}, false)
 		}

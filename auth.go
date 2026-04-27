@@ -429,9 +429,13 @@ func (g Grant) validate() error {
 			return fmt.Errorf("paths[%d]: %v", i, err)
 		}
 
-		_, err = ParsePath(eg)
+		p, err := ParsePath(eg)
 		if err != nil {
 			return fmt.Errorf("paths[%d]: %v", i, err)
+		}
+
+		if p.IsPostbox() {
+			return fmt.Errorf("paths[%d]: invalid postbox", i)
 		}
 	}
 
@@ -458,7 +462,14 @@ func compilePath(s string, p Principal) (Path, error) {
 		s = v.Value().(string)
 	}
 
-	return ParsePath(s)
+	path, err := ParsePath(s)
+	if err != nil {
+		return Path{}, err
+	}
+	if path.IsPostbox() {
+		return Path{}, errors.New("invalid postbox")
+	}
+	return path, nil
 }
 
 // smatch returns true if the string matches the pattern.

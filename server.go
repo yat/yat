@@ -226,7 +226,7 @@ func (s *Server) handleMsgPub(logger *slog.Logger, allow func(Path, Action) bool
 		return err
 	}
 
-	if !s.router.validPostbox(m.Path) && !allow(m.Path, ActionPub) {
+	if ok := s.router.validPostbox(m.Path) || allow(m.Path, ActionPub); !ok {
 		return rpcErrPerms
 	}
 
