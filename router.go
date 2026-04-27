@@ -201,7 +201,7 @@ func (n *rnode) Ins(sub rsub, f func(rmsg, bool)) *rent {
 // Match returns the entries with patterns matching p.
 func (n *rnode) Match(p Path) []*rent {
 	var ee []*rent
-	n.match(&ee, p)
+	n.match(&ee, p, p.IsPostbox())
 	return ee
 }
 
@@ -292,7 +292,7 @@ func (n *rnode) leaf(p Path, createMissing bool) *rnode {
 	return c.leaf(cdr, true)
 }
 
-func (n *rnode) match(ee *[]*rent, p Path) {
+func (n *rnode) match(ee *[]*rent, p Path, exact bool) {
 	if p.IsZero() {
 		*ee = append(*ee, n.ee...)
 		return
@@ -300,15 +300,17 @@ func (n *rnode) match(ee *[]*rent, p Path) {
 
 	car, cdr := p.cut()
 	if c, ok := n.dn[car.String()]; ok {
-		c.match(ee, cdr)
+		c.match(ee, cdr, exact)
 	}
 
-	if n.wildSuffix != nil {
-		n.wildSuffix.match(ee, Path{})
-	}
+	if !exact {
+		if n.wildSuffix != nil {
+			n.wildSuffix.match(ee, Path{}, false)
+		}
 
-	if n.wildElem != nil {
-		n.wildElem.match(ee, cdr)
+		if n.wildElem != nil {
+			n.wildElem.match(ee, cdr, false)
+		}
 	}
 }
 

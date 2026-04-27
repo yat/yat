@@ -211,6 +211,12 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 			want: "wild path",
 		},
 		{
+			name: "post_postbox_path",
+			args: []string{"post", "@postbox", "-empty"},
+			env:  []string{"YAT_SERVER=localhost:1"},
+			want: "invalid postbox",
+		},
+		{
 			name: "post_negative_limit",
 			args: []string{"post", "topic", "-empty", "-limit", "-1"},
 			want: "negative limit",
