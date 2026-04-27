@@ -1,3 +1,5 @@
+//go:build !human
+
 package interpol_test
 
 import (
@@ -158,6 +160,62 @@ func TestCompileNonStringableInterpolation(t *testing.T) {
 
 	if _, err := interpol.Compile(ce, `${xs}`); err == nil {
 		t.Fatal("no error")
+	}
+}
+
+func TestReplaceNoInterpolation(t *testing.T) {
+	env := env(t)
+
+	got, err := interpol.Replace(env, "plain/path", "eg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "plain/path" {
+		t.Fatalf("Replace() = %q, want %q", got, "plain/path")
+	}
+}
+
+func TestReplaceInterpolations(t *testing.T) {
+	env := env(t,
+		cel.Variable("s", cel.StringType),
+		cel.Variable("i", cel.IntType),
+	)
+
+	got, err := interpol.Replace(env, "a${s}b${i}", "eg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aegbeg" {
+		t.Fatalf("Replace() = %q, want %q", got, "aegbeg")
+	}
+}
+
+func TestReplaceIgnoresInterpolFunction(t *testing.T) {
+	env := env(t,
+		cel.Function("interpol",
+			cel.Overload("test_interpol_string", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(arg ref.Val) ref.Val {
+					return types.String("<" + string(arg.(types.String)) + ">")
+				}),
+			),
+		),
+	)
+
+	got, err := interpol.Replace(env, "a${'x'}b", "eg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aegb" {
+		t.Fatalf("Replace() = %q, want %q", got, "aegb")
+	}
+}
+
+func TestReplaceBadInterpolation(t *testing.T) {
+	env := env(t)
+
+	_, err := interpol.Replace(env, "x\n${1 + }", "eg")
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 

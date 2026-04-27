@@ -33,38 +33,60 @@ import (
 // To transform or validate the result of interpolation,
 // add your own interpol function to the given CEL env.
 func Compile(env *cel.Env, s string) (cel.Program, error) {
-	if !strings.Contains(s, "${") {
+	env, ast, err := compile(env, s)
+	if err != nil {
+		return nil, err
+	}
+
+	if ast == nil {
 		return nil, nil
-	}
-	if env == nil {
-		return nil, errors.New("nil env")
-	}
-
-	env, err := env.Extend(cel.ClearMacros())
-	if err != nil {
-		return nil, err
-	}
-
-	if !env.HasFunction("interpol") {
-		env, err = env.Extend(cel.Function("interpol",
-			cel.Overload("interpol", []*cel.Type{cel.StringType}, cel.StringType,
-				cel.UnaryBinding(func(arg ref.Val) ref.Val {
-					return arg
-				}),
-			),
-		))
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	ast, err := compile(env, s)
-	if err != nil {
-		return nil, err
 	}
 
 	return env.Program(ast)
+}
+
+// Replace, like [Compile], parses and compiles an interpolated string.
+// But instead of a program, Replace returns a copy of the string
+// with every ${...} replaced by the given replacement.
+func Replace(env *cel.Env, src string, replace string) (eg string, err error) {
+	env, checked, err := compile(env, src)
+	if err != nil {
+		return
+	}
+
+	if checked == nil {
+		return src, nil
+	}
+
+	native := checked.NativeRep()
+	fac := ast.NewExprFactory()
+
+	ast.PostOrderVisit(native.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
+		if e.Kind() != ast.CallKind {
+			return
+		}
+
+		call := e.AsCall()
+		if call.FunctionName() != "interpol" || call.IsMemberFunction() {
+			return
+		}
+
+		e.SetKindCase(fac.NewLiteral(e.ID(), types.String(replace)))
+		delete(native.ReferenceMap(), e.ID())
+	}))
+
+	prg, err := env.Program(checked)
+	if err != nil {
+		return "", err
+	}
+
+	val, _, err := prg.Eval(map[string]any{})
+	if err != nil {
+		return "", err
+	}
+
+	out, _ := val.Value().(string)
+	return out, nil
 }
 
 type seg struct {
@@ -95,11 +117,38 @@ type part struct {
 	span ast.OffsetRange
 }
 
-func compile(env *cel.Env, s string) (*cel.Ast, error) {
+func compile(env *cel.Env, s string) (*cel.Env, *cel.Ast, error) {
+	if !strings.Contains(s, "${") {
+		return nil, nil, nil
+	}
+
+	if env == nil {
+		return nil, nil, errors.New("nil env")
+	}
+
+	env, err := env.Extend(cel.ClearMacros())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if !env.HasFunction("interpol") {
+		env, err = env.Extend(cel.Function("interpol",
+			cel.Overload("interpol", []*cel.Type{cel.StringType}, cel.StringType,
+				cel.UnaryBinding(func(arg ref.Val) ref.Val {
+					return arg
+				}),
+			),
+		))
+
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	src := common.NewTextSource(s)
 	segs, err := scan(src, s)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	fac := ast.NewExprFactory()
@@ -132,7 +181,7 @@ func compile(env *cel.Env, s string) (*cel.Ast, error) {
 
 		parsed, issues := env.ParseSource(rel)
 		if err := issues.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		child := merge(fac, info, parsed.NativeRep(), &nextID)
@@ -147,7 +196,7 @@ func compile(env *cel.Env, s string) (*cel.Ast, error) {
 	}
 
 	if len(parts) == 0 {
-		return nil, errors.New("no parts")
+		return nil, nil, errors.New("no parts")
 	}
 
 	root := parts[0].expr
@@ -163,12 +212,12 @@ func compile(env *cel.Env, s string) (*cel.Ast, error) {
 
 	expr, err := ast.ExprToProto(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sourceInfo, err := ast.SourceInfoToProto(info)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	parsed := cel.ParsedExprToAstWithSource(&exprpb.ParsedExpr{
@@ -178,14 +227,14 @@ func compile(env *cel.Env, s string) (*cel.Ast, error) {
 
 	checked, issues := env.Check(parsed)
 	if err := issues.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if checked.OutputType() != cel.StringType {
-		return nil, fmt.Errorf("expr is %s, not string", cel.FormatCELType(checked.OutputType()))
+		return nil, nil, fmt.Errorf("expr is %s, not string", cel.FormatCELType(checked.OutputType()))
 	}
 
-	return checked, nil
+	return env, checked, nil
 }
 
 func merge(fac ast.ExprFactory, dst *ast.SourceInfo, parsed *ast.AST, nextID *int64) ast.Expr {
