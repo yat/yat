@@ -260,6 +260,7 @@ func TestGenServerProtocol(t *testing.T) {
 			{name: "truncated", body: appendGRPCHdr(nil, 1, false), want: codes.Unknown},
 			{name: "bad_proto", body: appendGRPCFrame(nil, []byte{0xff}), want: codes.Unknown},
 			{name: "invalid_path", body: appendGRPCFrame(nil, badSub), want: codes.InvalidArgument},
+			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.SubRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
 		}
 
 		for _, tc := range subCases {
@@ -279,6 +280,7 @@ func TestGenServerProtocol(t *testing.T) {
 			{name: "truncated", body: appendGRPCHdr(nil, 1, false), want: codes.Unknown},
 			{name: "bad_path_wire_type", body: appendGRPCFrame(nil, []byte{0x10, 0x00}), want: codes.Unknown},
 			{name: "invalid_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{Path: []byte("/")})), want: codes.InvalidArgument},
+			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
 			{name: "negative_limit", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{
 				Path:  []byte("topic"),
 				Limit: &negativeLimit,
@@ -1057,6 +1059,78 @@ func TestGenClientServer(t *testing.T) {
 		}
 	})
 
+	t.Run("postbox_replies_route_only_to_exact_postbox", func(t *testing.T) {
+		endpoint := startTLSEndpoint(t, yat.AllowAll())
+		defer endpoint.Close()
+
+		poster := newTLSClient(t, endpoint)
+		handler := newTLSClient(t, endpoint)
+		elemWildcard := newTLSClient(t, endpoint)
+		suffixWildcard := newTLSClient(t, endpoint)
+		defer closeClient(t, poster)
+		defer closeClient(t, handler)
+		defer closeClient(t, elemWildcard)
+		defer closeClient(t, suffixWildcard)
+
+		path := yat.NewPath("postbox/exact")
+		elemProbe := newSubProbe(t, elemWildcard, yat.Sel{Path: yat.NewPath("*")})
+		suffixProbe := newSubProbe(t, suffixWildcard, yat.Sel{Path: yat.NewPath("**")})
+		defer elemProbe.Cancel(t)
+		defer suffixProbe.Cancel(t)
+
+		if err := poster.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("@manual"),
+			Data: []byte("manual"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		assertNoMsg(t, elemProbe.msgs, 100*time.Millisecond)
+		assertNoMsg(t, suffixProbe.msgs, 100*time.Millisecond)
+
+		handled := make(chan handledReq, 1)
+		hctx, cancelHandle := context.WithCancel(context.Background())
+		hsub, err := handler.Handle(hctx, yat.Sel{Path: path}, func(ctx context.Context, gotPath yat.Path, in []byte) []byte {
+			handled <- handledReq{
+				path: gotPath,
+				data: bytes.Clone(in),
+				err:  ctx.Err(),
+			}
+			return append([]byte("reply:"), in...)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cancelSub(t, cancelHandle, hsub)
+
+		var got []yat.Res
+		if err := poster.Post(context.Background(), yat.Req{
+			Path:  path,
+			Data:  []byte("request"),
+			Limit: 1,
+		}, func(res yat.Res) error {
+			got = append(got, res)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(got) != 1 {
+			t.Fatalf("len(post responses) = %d", len(got))
+		}
+		got = assertContainsRes(t, got, yat.Path{}, []byte("reply:request"))
+		if len(got) != 0 {
+			t.Fatalf("unexpected extra responses: %+v", got)
+		}
+		assertHandledReq(t, receiveHandledReq(t, handled), path, []byte("request"))
+
+		requestMsg := receiveMsg(t, suffixProbe.msgs)
+		if !requestMsg.Inbox.IsPostbox() {
+			t.Fatalf("post inbox = %q, want postbox", requestMsg.Inbox.String())
+		}
+		assertMsg(t, requestMsg, path, requestMsg.Inbox, []byte("request"))
+		assertNoMsg(t, suffixProbe.msgs, 100*time.Millisecond)
+	})
+
 	t.Run("handle_wildcard_replies_to_publish_inbox_and_post", func(t *testing.T) {
 		endpoint := startTLSEndpoint(t, yat.AllowAll())
 		defer endpoint.Close()
@@ -1229,6 +1303,11 @@ func TestGenClientServer(t *testing.T) {
 			return err
 		}(), "invalid postbox")
 
+		assertErrContains(t, func() error {
+			_, err := client.Handle(context.Background(), yat.Sel{Path: yat.NewPath("@reply")}, func(context.Context, yat.Path, []byte) []byte { return nil })
+			return err
+		}(), "invalid postbox")
+
 		_, err := client.Subscribe(context.Background(), yat.Sel{Path: path}, nil)
 		assertErrContains(t, err, "nil func")
 
@@ -1244,6 +1323,7 @@ func TestGenClientServer(t *testing.T) {
 		}{
 			{name: "empty_path", req: yat.Req{}, want: "empty path"},
 			{name: "wild_path", req: yat.Req{Path: yat.NewPath("*")}, want: "wild path"},
+			{name: "postbox_path", req: yat.Req{Path: yat.NewPath("@reply")}, want: "invalid postbox"},
 			{name: "long_data", req: yat.Req{Path: path, Data: make([]byte, yat.MaxDataLen+1)}, want: "long data"},
 			{name: "negative_limit", req: yat.Req{Path: path, Limit: -1}, want: "negative limit"},
 		}
@@ -2251,6 +2331,16 @@ func receiveMsgs(tb testing.TB, ch <-chan yat.Msg, n int) []yat.Msg {
 	}
 
 	return msgs
+}
+
+func assertNoMsg(tb testing.TB, ch <-chan yat.Msg, d time.Duration) {
+	tb.Helper()
+
+	select {
+	case msg := <-ch:
+		tb.Fatalf("unexpected message path=%q inbox=%q data=%q", msg.Path.String(), msg.Inbox.String(), msg.Data)
+	case <-time.After(d):
+	}
 }
 
 type handledReq struct {

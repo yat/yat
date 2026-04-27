@@ -169,6 +169,10 @@ func parseSelPath(raw []byte) (Path, error) {
 		return Path{}, invalid(err)
 	}
 
+	if path.IsPostbox() {
+		return Path{}, rpcErrPostbox
+	}
+
 	return path, nil
 }
 
@@ -413,6 +417,11 @@ func (f msgPostFields) Parse() (path Path, data []byte, err error) {
 		return
 	}
 
+	if path.IsPostbox() {
+		err = rpcErrPostbox
+		return
+	}
+
 	if len(f.Data) > MaxDataLen {
 		err = invalid(errLongData)
 		return
@@ -485,6 +494,10 @@ func validateOutboundReq(r Req) error {
 
 	if r.Path.IsWild() {
 		return errWildPath
+	}
+
+	if r.Path.IsPostbox() {
+		return errPostbox
 	}
 
 	if len(r.Data) > MaxDataLen {
