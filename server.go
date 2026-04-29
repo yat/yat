@@ -135,9 +135,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller.Claims = claims
 	}
 
-	largs := []any{
-		"remote", r.RemoteAddr,
-	}
+	var largs []any
 
 	if caller.Cert != nil {
 		largs = append(largs,
