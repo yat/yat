@@ -1675,6 +1675,62 @@ func TestGenAuthJWT(t *testing.T) {
 		assertMsg(t, receiveMsg(t, probe.msgs), altPath, yat.Path{}, []byte("jwt-alt"))
 	})
 
+	t.Run("subject_wildcards_match_at_any_position", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			pattern string
+			subject string
+			path    yat.Path
+		}{
+			{name: "leading", pattern: "*-writer", subject: "team-writer", path: yat.NewPath("auth/wild/leading")},
+			{name: "middle", pattern: "writer-*-admin", subject: "writer-east-admin", path: yat.NewPath("auth/wild/middle")},
+			{name: "multiple", pattern: "org-*-team-*", subject: "org-alpha-team-beta", path: yat.NewPath("auth/wild/multiple")},
+			{name: "empty_run", pattern: "writer*admin", subject: "writeradmin", path: yat.NewPath("auth/wild/empty")},
+			{name: "star", pattern: "*", subject: "any-subject", path: yat.NewPath("auth/wild/star")},
+		}
+
+		var rules []yat.Rule
+		for _, tc := range cases {
+			rules = append(rules, yat.Rule{
+				JWT: authJWTCond(issuer.url, "yat-client", tc.pattern),
+				Grants: []yat.Grant{{
+					Paths:   []string{tc.path.String()},
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			})
+		}
+
+		endpoint := startTLSEndpoint(t, mustRuleSet(t, issuer.context(), rules))
+		defer endpoint.Close()
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				client := newAuthClient(t, endpoint, issuer.token(t, authTokenSpec{
+					Subject:  tc.subject,
+					Audience: []string{"yat-client"},
+				}))
+				defer closeClient(t, client)
+
+				if err := client.Publish(context.Background(), yat.Msg{
+					Path: tc.path,
+					Data: []byte(tc.name),
+				}); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+
+		denied := newAuthClient(t, endpoint, issuer.token(t, authTokenSpec{
+			Subject:  "writer-east-reader",
+			Audience: []string{"yat-client"},
+		}))
+		defer closeClient(t, denied)
+		assertStatusCode(t, denied.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("auth/wild/middle"),
+			Data: []byte("denied"),
+		}), codes.PermissionDenied)
+	})
+
 	t.Run("permission_denials_surface_consistently", func(t *testing.T) {
 		anonymous := newTLSClient(t, endpoint)
 		defer closeClient(t, anonymous)
@@ -2162,6 +2218,56 @@ func TestGenAuthMTLS(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertMsg(t, receiveMsg(t, probe.msgs), path, reply, []byte("multi-uri"))
+	})
+
+	t.Run("san_uri_wildcards_match_at_any_position", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			pattern string
+			uri     string
+			path    yat.Path
+		}{
+			{name: "leading", pattern: "*:example:client:alpha", uri: "urn:example:client:alpha", path: yat.NewPath("mtls/wild/leading")},
+			{name: "middle", pattern: "urn:example:*:beta", uri: "urn:example:client:beta", path: yat.NewPath("mtls/wild/middle")},
+			{name: "multiple", pattern: "urn:*:client:*", uri: "urn:example:client:gamma", path: yat.NewPath("mtls/wild/multiple")},
+			{name: "empty_run", pattern: "urn:example:client:pre*post", uri: "urn:example:client:prepost", path: yat.NewPath("mtls/wild/empty")},
+			{name: "star", pattern: "*", uri: "urn:example:client:any", path: yat.NewPath("mtls/wild/star")},
+		}
+
+		var uriRules []yat.Rule
+		for _, tc := range cases {
+			uriRules = append(uriRules, yat.Rule{
+				TLS: authTLSCond(tc.pattern),
+				Grants: []yat.Grant{{
+					Paths:   []string{tc.path.String()},
+					Actions: []yat.Action{yat.ActionPub},
+				}},
+			})
+		}
+
+		endpoint := startMTLSEndpoint(t, mustRuleSet(t, context.Background(), uriRules), ca)
+		defer endpoint.Close()
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				client := newAuthClient(t, endpoint, nil, ca.clientCert(t, tc.uri))
+				defer closeClient(t, client)
+
+				if err := client.Publish(context.Background(), yat.Msg{
+					Path: tc.path,
+					Data: []byte(tc.name),
+				}); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+
+		denied := newAuthClient(t, endpoint, nil, ca.clientCert(t, "urn:example:client:delta"))
+		defer closeClient(t, denied)
+		assertStatusCode(t, denied.Publish(context.Background(), yat.Msg{
+			Path: yat.NewPath("mtls/wild/middle"),
+			Data: []byte("denied"),
+		}), codes.PermissionDenied)
 	})
 
 	t.Run("presented_but_unverified_cert_is_ignored", func(t *testing.T) {

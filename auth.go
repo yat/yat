@@ -473,10 +473,29 @@ func compilePath(s string, p Principal) (Path, error) {
 }
 
 // smatch returns true if the string matches the pattern.
-// A * at the end of the pattern matches any suffix.
+// The pattern may include * wildcards to match a run of 0 or more characters.
 func smatch(pat string, str string) bool {
-	if p, ok := strings.CutSuffix(pat, "*"); ok {
-		return strings.HasPrefix(str, p)
+	pp := strings.Split(pat, "*")
+	if len(pp) == 1 {
+		return str == pat
 	}
-	return str == pat
+
+	// beginning
+	str, ok := strings.CutPrefix(str, pp[0])
+	if !ok {
+		return false
+	}
+
+	// middle
+	for _, p := range pp[1 : len(pp)-1] {
+		i := strings.Index(str, p)
+		if i == -1 {
+			return false
+		}
+
+		str = str[i+len(p):]
+	}
+
+	// end
+	return strings.HasSuffix(str, pp[len(pp)-1])
 }
