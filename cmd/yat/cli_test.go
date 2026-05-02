@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -35,7 +36,9 @@ func TestCLIHelpUsageAndSeed(t *testing.T) {
 	h.run("help").mustSucceed(t).stdoutContains(t, "Yat is a message bus.")
 	h.run("help", "req").mustSucceed(t).stdoutContains(t, "yat post PATH")
 	h.run("help", "post", "-log-level", "debug").mustSucceed(t).stdoutContains(t, "yat post PATH")
-	h.run("help", "serve").mustSucceed(t).stdoutContains(t, "The server requires a TLS certificate and key.")
+	h.run("help", "serve").mustSucceed(t).
+		stdoutContains(t, "-tls-require-client-cert true").
+		stdoutContains(t, "The server requires a TLS certificate and key to be configured.")
 	h.run().mustFail(t).stderrContains(t, "usage: yat [flags] COMMAND [args]")
 	h.run("bogus").mustFail(t).stderrContains(t, "yat bogus: unknown command")
 
@@ -494,34 +497,47 @@ func TestCLIServeRoot(t *testing.T) {
 	h := newCLIHarness(t)
 	h.startServer(t)
 
-	tcfg, _, err := (cmd.TLSFiles{
-		CertFile: filepath.Join(h.seedDir, "tls.crt"),
-		KeyFile:  filepath.Join(h.seedDir, "tls.key"),
-		CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
-	}).ClientConfig()
+	status, err := h.getRootStatus(t, h.clientTLSConfig(t, true))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: tcfg,
+	if status != http.StatusOK {
+		t.Fatalf("GET / status = %d, want %d", status, http.StatusOK)
 	}
-	defer transport.CloseIdleConnections()
+}
 
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   cliTestTimeout,
-	}
+func TestCLIServeClientCertPolicy(t *testing.T) {
+	t.Run("default_requires_client_cert", func(t *testing.T) {
+		h := newCLIHarness(t)
+		h.startTLSServer(t, "-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
 
-	res, err := client.Get("https://" + h.server + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
+		if _, err := h.getRootStatus(t, h.clientTLSConfig(t, false)); err == nil {
+			t.Fatal("GET / without client cert succeeded")
+		}
+	})
 
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET / status = %d, want %d", res.StatusCode, http.StatusOK)
-	}
+	t.Run("flag_false_allows_missing_client_cert", func(t *testing.T) {
+		h := newCLIHarness(t)
+		h.startTLSServer(t, "-tls-require-client-cert=false")
+
+		status, err := h.getRootStatus(t, h.clientTLSConfig(t, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status != http.StatusOK {
+			t.Fatalf("GET / status = %d, want %d", status, http.StatusOK)
+		}
+	})
+
+	t.Run("flag_false_rejects_unverifiable_client_cert", func(t *testing.T) {
+		h := newCLIHarness(t)
+		h.startTLSServer(t, "-tls-require-client-cert=false")
+
+		if _, err := h.getRootStatus(t, h.clientTLSConfig(t, true)); err == nil {
+			t.Fatal("GET / with unverifiable client cert succeeded")
+		}
+	})
 }
 
 func TestCLITokenSources(t *testing.T) {
@@ -547,7 +563,8 @@ rules:
 		"-bind", "127.0.0.1:0",
 		"-config", rulesFile,
 		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"))
+		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
+		"-tls-require-client-cert=false")
 	h.waitForServer(t, server)
 
 	writerToken := issuer.rawToken(t, "writer")
@@ -555,13 +572,13 @@ rules:
 	writerTokenFile := h.writeFile(t, "writer.jwt", "\n\t"+writerToken+"\n")
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + writerToken},
-		h.clientArgs("pub", "cli/token", "-empty")...).mustSucceed(t)
+		h.clientArgsNoCert("pub", "cli/token", "-empty")...).mustSucceed(t)
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
-		h.clientArgs("pub", "cli/token", "-empty", "-token-file", writerTokenFile)...).mustSucceed(t)
+		h.clientArgsNoCert("pub", "cli/token", "-empty", "-token-file", writerTokenFile)...).mustSucceed(t)
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=\n\t" + writerToken + "\n"},
-		h.clientArgs("pub", "cli/token", "-empty")...).mustSucceed(t)
+		h.clientArgsNoCert("pub", "cli/token", "-empty")...).mustSucceed(t)
 }
 
 func TestCLIRuleSetScalarExpr(t *testing.T) {
@@ -587,7 +604,8 @@ rules:
 		"-bind", "127.0.0.1:0",
 		"-config", rulesFile,
 		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"))
+		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
+		"-tls-require-client-cert=false")
 	h.waitForServer(t, server)
 
 	adminToken := issuer.rawTokenWithClaims(t, "admin", map[string]any{
@@ -598,10 +616,10 @@ rules:
 	})
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + adminToken},
-		h.clientArgs("pub", "cli/expr", "-empty")...).mustSucceed(t)
+		h.clientArgsNoCert("pub", "cli/expr", "-empty")...).mustSucceed(t)
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
-		h.clientArgs("pub", "cli/expr", "-empty")...).mustFail(t).
+		h.clientArgsNoCert("pub", "cli/expr", "-empty")...).mustFail(t).
 		stderrContains(t, "permission denied")
 }
 
@@ -719,13 +737,27 @@ func (h *cliHarness) startServer(t *testing.T) {
 
 	h.seed(t)
 
-	server := h.start(t, nil, nil,
+	h.startTLSServer(t,
+		"-config", filepath.Join(h.seedDir, "rules.yaml"),
+		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
+}
+
+func (h *cliHarness) startTLSServer(t *testing.T, flags ...string) {
+	t.Helper()
+
+	if _, err := os.Stat(h.seedDir); err != nil {
+		h.seed(t)
+	}
+
+	args := []string{
 		"serve",
 		"-bind", "127.0.0.1:0",
-		"-config", filepath.Join(h.seedDir, "rules.yaml"),
 		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
 		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
-		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
+	}
+	args = append(args, flags...)
+
+	server := h.start(t, nil, nil, args...)
 
 	h.waitForServer(t, server)
 }
@@ -786,6 +818,58 @@ func (h *cliHarness) clientArgs(args ...string) []string {
 	}
 
 	return append(prefix, args...)
+}
+
+func (h *cliHarness) clientArgsNoCert(args ...string) []string {
+	prefix := []string{
+		"-log-level", "error",
+		"-server", h.server,
+		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"),
+	}
+
+	return append(prefix, args...)
+}
+
+func (h *cliHarness) clientTLSConfig(t *testing.T, clientCert bool) *tls.Config {
+	t.Helper()
+
+	files := cmd.TLSFiles{
+		CAFiles: []string{filepath.Join(h.seedDir, "ca.crt")},
+	}
+
+	if clientCert {
+		files.CertFile = filepath.Join(h.seedDir, "tls.crt")
+		files.KeyFile = filepath.Join(h.seedDir, "tls.key")
+	}
+
+	tcfg, _, err := files.ClientConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return tcfg
+}
+
+func (h *cliHarness) getRootStatus(t *testing.T, tcfg *tls.Config) (int, error) {
+	t.Helper()
+
+	transport := &http.Transport{
+		TLSClientConfig: tcfg,
+	}
+	defer transport.CloseIdleConnections()
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   cliTestTimeout,
+	}
+
+	res, err := client.Get("https://" + h.server + "/")
+	if err != nil {
+		return 0, err
+	}
+	defer res.Body.Close()
+
+	return res.StatusCode, nil
 }
 
 func (h *cliHarness) newClient(t *testing.T) *yat.Client {

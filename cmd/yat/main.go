@@ -108,8 +108,9 @@ func run(ctx context.Context, args []string) error {
 
 	case "serve", "server":
 		cmd = &ServeCmd{
-			Config:   &cfg,
-			BindAddr: "localhost:25120",
+			Config:      &cfg,
+			BindAddr:    "localhost:25120",
+			RequireCert: true,
 		}
 
 	case "subscribe", "sub":
