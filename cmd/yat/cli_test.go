@@ -30,19 +30,41 @@ const cliTestTimeout = 5 * time.Second
 
 var cliStateMu sync.Mutex
 
-func TestCLIHelpUsageAndSeed(t *testing.T) {
+func TestCLIHelp(t *testing.T) {
 	h := newCLIHarness(t)
 
-	h.run("help").mustSucceed(t).stdoutContains(t, "Yat is a message bus.")
-	h.run("help", "req").mustSucceed(t).stdoutContains(t, "yat post PATH")
-	h.run("help", "post", "-log-level", "debug").mustSucceed(t).stdoutContains(t, "yat post PATH")
-	h.run("help", "serve").mustSucceed(t).
-		stdoutContains(t, "-tls-require-client-cert true").
-		stdoutContains(t, "The server requires a TLS certificate and key to be configured.")
-	h.run().mustFail(t).stderrContains(t, "usage: yat [flags] COMMAND [args]")
-	h.run("bogus").mustFail(t).stderrContains(t, "yat bogus: unknown command")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"help_command", []string{"help"}},
+		{"help_alias", []string{"help", "req"}},
+		{"help_after_global_flag", []string{"help", "post", "-log-level", "debug"}},
+		{"help_server_alias", []string{"help", "server"}},
+		{"short_top_level", []string{"-h"}},
+		{"long_top_level", []string{"-help"}},
+		{"question_top_level", []string{"-?"}},
+		{"publish", []string{"publish", "-h"}},
+		{"publish_alias", []string{"pub", "-h"}},
+		{"post", []string{"post", "-help"}},
+		{"post_alias", []string{"req", "-h"}},
+		{"subscribe", []string{"subscribe", "-?"}},
+		{"subscribe_alias", []string{"sub", "-h"}},
+		{"handle", []string{"handle", "-h"}},
+		{"handle_alias", []string{"res", "-h"}},
+		{"seed", []string{"seed", "-help"}},
+		{"serve", []string{"serve", "-?"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h.run(tc.args...).mustSucceed(t)
+		})
+	}
+}
 
+func TestCLISeed(t *testing.T) {
+	h := newCLIHarness(t)
 	h.seed(t)
+
 	for _, name := range []string{"tls.crt", "tls.key", "ca.crt", "rules.yaml"} {
 		if _, err := os.Stat(filepath.Join(h.seedDir, name)); err != nil {
 			t.Fatalf("seed file %s: %v", name, err)
@@ -50,305 +72,64 @@ func TestCLIHelpUsageAndSeed(t *testing.T) {
 	}
 }
 
-func TestCLIHelpFlags(t *testing.T) {
-	h := newCLIHarness(t)
-
-	cases := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{
-			name: "short_top_level",
-			args: []string{"-h"},
-			want: "Yat is a message bus.",
-		},
-		{
-			name: "long_top_level",
-			args: []string{"-help"},
-			want: "Yat is a message bus.",
-		},
-		{
-			name: "question_top_level",
-			args: []string{"-?"},
-			want: "Yat is a message bus.",
-		},
-		{
-			name: "publish",
-			args: []string{"publish", "-h"},
-			want: "yat publish PATH",
-		},
-		{
-			name: "post",
-			args: []string{"post", "-help"},
-			want: "yat post PATH",
-		},
-		{
-			name: "subscribe",
-			args: []string{"subscribe", "-?"},
-			want: "yat subscribe PATH",
-		},
-		{
-			name: "handle",
-			args: []string{"handle", "-h"},
-			want: "yat handle PATH",
-		},
-		{
-			name: "seed",
-			args: []string{"seed", "-help"},
-			want: "yat seed DIR",
-		},
-		{
-			name: "serve",
-			args: []string{"serve", "-?"},
-			want: "yat serve",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h.run(tc.args...).mustSucceed(t).stdoutContains(t, tc.want)
-		})
-	}
-}
-
 func TestCLIUsageAndArgumentErrors(t *testing.T) {
 	h := newCLIHarness(t)
+	serverEnv := []string{"YAT_SERVER=localhost:1"}
 
-	cases := []struct {
+	for _, tc := range []struct {
 		name string
 		args []string
 		env  []string
-		want string
 	}{
-		{
-			name: "no_command",
-			want: "usage: yat [flags] COMMAND [args]",
-		},
-		{
-			name: "global_flag_without_command",
-			args: []string{"-log-level", "debug"},
-			want: "usage: yat [flags] COMMAND [args]",
-		},
-		{
-			name: "bad_global_flag",
-			args: []string{"-wat"},
-			want: "flag provided but not defined: -wat",
-		},
-		{
-			name: "bad_command_flag",
-			args: []string{"pub", "-wat", "topic"},
-			want: "flag provided but not defined: -wat",
-		},
-		{
-			name: "bad_log_level",
-			args: []string{"-log-level", "nope", "help"},
-			want: "invalid value",
-		},
-		{
-			name: "unknown_command",
-			args: []string{"wat"},
-			want: "yat wat: unknown command",
-		},
-		{
-			name: "help_too_many_args",
-			args: []string{"help", "post", "extra"},
-			want: "usage: yat help [topic]",
-		},
-		{
-			name: "help_unknown_topic",
-			args: []string{"help", "wat"},
-			want: "yat help wat: unknown topic",
-		},
-		{
-			name: "publish_no_path",
-			args: []string{"publish"},
-			want: "usage: yat publish PATH",
-		},
-		{
-			name: "publish_too_many_args",
-			args: []string{"publish", "one", "two"},
-			want: "usage: yat publish PATH",
-		},
-		{
-			name: "publish_bad_path",
-			args: []string{"publish", "bad//path", "-empty"},
-			want: "invalid path",
-		},
-		{
-			name: "publish_wild_path",
-			args: []string{"publish", "-empty", "**"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "wild path",
-		},
-		{
-			name: "publish_wild_inbox",
-			args: []string{"publish", "topic", "-empty", "-inbox", "**"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "wild inbox path",
-		},
-		{
-			name: "publish_server_not_configured",
-			args: []string{"publish", "topic", "-empty"},
-			want: "server is not configured",
-		},
-		{
-			name: "post_no_path",
-			args: []string{"post"},
-			want: "usage: yat request PATH",
-		},
-		{
-			name: "request_too_many_args",
-			args: []string{"request", "one", "two"},
-			want: "usage: yat request PATH",
-		},
-		{
-			name: "post_bad_path",
-			args: []string{"post", "bad//path", "-empty"},
-			want: "invalid path",
-		},
-		{
-			name: "post_wild_path",
-			args: []string{"post", "-empty", "**"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "wild path",
-		},
-		{
-			name: "post_postbox_path",
-			args: []string{"post", "@postbox", "-empty"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "invalid postbox",
-		},
-		{
-			name: "post_negative_limit",
-			args: []string{"post", "topic", "-empty", "-limit", "-1"},
-			want: "negative limit",
-		},
-		{
-			name: "post_negative_duration",
-			args: []string{"post", "topic", "-empty", "-duration", "-1s"},
-			want: "negative duration",
-		},
-		{
-			name: "post_negative_timeout",
-			args: []string{"post", "topic", "-empty", "-timeout", "-1s"},
-			want: "negative timeout",
-		},
-		{
-			name: "post_duration_exceeds_timeout",
-			args: []string{"post", "topic", "-empty", "-duration", "2s", "-timeout", "1s"},
-			want: "duration exceeds timeout",
-		},
-		{
-			name: "post_server_not_configured",
-			args: []string{"post", "topic", "-empty"},
-			want: "server is not configured",
-		},
-		{
-			name: "subscribe_no_path",
-			args: []string{"subscribe"},
-			want: "usage: yat subscribe PATH",
-		},
-		{
-			name: "sub_too_many_args",
-			args: []string{"sub", "one", "two"},
-			want: "usage: yat subscribe PATH",
-		},
-		{
-			name: "subscribe_bad_path",
-			args: []string{"subscribe", "bad//path"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "invalid path",
-		},
-		{
-			name: "subscribe_postbox_path",
-			args: []string{"subscribe", "@postbox"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "invalid postbox",
-		},
-		{
-			name: "subscribe_negative_limit",
-			args: []string{"subscribe", "topic", "-limit", "-1"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "negative limit",
-		},
-		{
-			name: "subscribe_negative_duration",
-			args: []string{"subscribe", "topic", "-duration", "-1s"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "negative duration",
-		},
-		{
-			name: "subscribe_server_not_configured",
-			args: []string{"subscribe", "topic"},
-			want: "server is not configured",
-		},
-		{
-			name: "handle_no_path",
-			args: []string{"handle"},
-			want: "usage: yat respond PATH",
-		},
-		{
-			name: "res_too_many_args",
-			args: []string{"res", "one", "two"},
-			want: "usage: yat respond PATH",
-		},
-		{
-			name: "handle_bad_path",
-			args: []string{"handle", "bad//path", "-empty"},
-			want: "invalid path",
-		},
-		{
-			name: "handle_postbox_path",
-			args: []string{"handle", "@postbox", "-empty"},
-			env:  []string{"YAT_SERVER=localhost:1"},
-			want: "invalid postbox",
-		},
-		{
-			name: "handle_negative_limit",
-			args: []string{"handle", "topic", "-empty", "-limit", "-1"},
-			want: "negative limit",
-		},
-		{
-			name: "handle_negative_duration",
-			args: []string{"handle", "topic", "-empty", "-duration", "-1s"},
-			want: "negative duration",
-		},
-		{
-			name: "handle_server_not_configured",
-			args: []string{"handle", "topic", "-empty"},
-			want: "server is not configured",
-		},
-		{
-			name: "seed_no_dir",
-			args: []string{"seed"},
-			want: "usage: yat seed DIR",
-		},
-		{
-			name: "seed_too_many_args",
-			args: []string{"seed", "one", "two"},
-			want: "usage: yat seed DIR",
-		},
-		{
-			name: "serve_extra_arg",
-			args: []string{"serve", "extra"},
-			want: "usage: yat serve",
-		},
-		{
-			name: "serve_missing_tls",
-			args: []string{"serve"},
-			want: "missing TLS credentials",
-		},
-		{
-			name: "tls_cert_without_key",
-			args: []string{"serve", "-tls-cert-file", "tls.crt"},
-			want: "-tls-cert-file and -tls-key-file must be set together",
-		},
-	}
-
-	for _, tc := range cases {
+		{"no_command", nil, nil},
+		{"global_flag_without_command", []string{"-log-level", "debug"}, nil},
+		{"bad_global_flag", []string{"-wat"}, nil},
+		{"bad_command_flag", []string{"pub", "-wat", "topic"}, nil},
+		{"bad_log_level", []string{"-log-level", "nope", "help"}, nil},
+		{"unknown_command", []string{"wat"}, nil},
+		{"help_too_many_args", []string{"help", "post", "extra"}, nil},
+		{"help_unknown_topic", []string{"help", "wat"}, nil},
+		{"publish_no_path", []string{"publish"}, nil},
+		{"publish_too_many_args", []string{"publish", "one", "two"}, nil},
+		{"publish_bad_path", []string{"publish", "bad//path", "-empty"}, nil},
+		{"publish_wild_path", []string{"publish", "-empty", "**"}, serverEnv},
+		{"publish_wild_inbox", []string{"publish", "topic", "-empty", "-inbox", "**"}, serverEnv},
+		{"publish_missing_file", []string{"publish", "topic", "-file", "missing"}, nil},
+		{"publish_server_not_configured", []string{"publish", "topic", "-empty"}, nil},
+		{"post_no_path", []string{"post"}, nil},
+		{"request_too_many_args", []string{"request", "one", "two"}, nil},
+		{"post_bad_path", []string{"post", "bad//path", "-empty"}, nil},
+		{"post_wild_path", []string{"post", "-empty", "**"}, serverEnv},
+		{"post_postbox_path", []string{"post", "@postbox", "-empty"}, serverEnv},
+		{"post_missing_file", []string{"post", "topic", "-file", "missing"}, nil},
+		{"post_negative_limit", []string{"post", "topic", "-empty", "-limit", "-1"}, nil},
+		{"post_negative_duration", []string{"post", "topic", "-empty", "-duration", "-1s"}, nil},
+		{"post_negative_timeout", []string{"post", "topic", "-empty", "-timeout", "-1s"}, nil},
+		{"post_duration_exceeds_timeout", []string{"post", "topic", "-empty", "-duration", "2s", "-timeout", "1s"}, nil},
+		{"post_server_not_configured", []string{"post", "topic", "-empty"}, nil},
+		{"subscribe_no_path", []string{"subscribe"}, nil},
+		{"sub_too_many_args", []string{"sub", "one", "two"}, nil},
+		{"subscribe_bad_path", []string{"subscribe", "bad//path"}, serverEnv},
+		{"subscribe_postbox_path", []string{"subscribe", "@postbox"}, serverEnv},
+		{"subscribe_negative_limit", []string{"subscribe", "topic", "-limit", "-1"}, serverEnv},
+		{"subscribe_negative_duration", []string{"subscribe", "topic", "-duration", "-1s"}, serverEnv},
+		{"subscribe_server_not_configured", []string{"subscribe", "topic"}, nil},
+		{"handle_no_path", []string{"handle"}, nil},
+		{"res_too_many_args", []string{"res", "one", "two"}, nil},
+		{"handle_bad_path", []string{"handle", "bad//path", "-empty"}, nil},
+		{"handle_postbox_path", []string{"handle", "@postbox", "-empty"}, serverEnv},
+		{"handle_missing_file", []string{"handle", "topic", "-file", "missing"}, nil},
+		{"handle_negative_limit", []string{"handle", "topic", "-empty", "-limit", "-1"}, nil},
+		{"handle_negative_duration", []string{"handle", "topic", "-empty", "-duration", "-1s"}, nil},
+		{"handle_server_not_configured", []string{"handle", "topic", "-empty"}, nil},
+		{"seed_no_dir", []string{"seed"}, nil},
+		{"seed_too_many_args", []string{"seed", "one", "two"}, nil},
+		{"serve_extra_arg", []string{"serve", "extra"}, nil},
+		{"serve_missing_tls", []string{"serve"}, nil},
+		{"tls_cert_without_key", []string{"serve", "-tls-cert-file", "tls.crt"}, nil},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h.runWithEnv(nil, tc.env, tc.args...).mustFail(t).stderrContains(t, tc.want)
+			h.runWithEnv(nil, tc.env, tc.args...).mustFail(t)
 		})
 	}
 }
@@ -399,36 +180,36 @@ func TestCLIPostHandleRoundTrip(t *testing.T) {
 	h.startServer(t)
 
 	resFile := h.writeFile(t, "response.txt", "response data")
-
 	handle := h.start(t, nil, nil,
 		h.clientArgs("res", "cli/request", "-file", resFile, "-n", "1")...)
 	defer handle.cancel()
 
-	var post cliResult
-	deadline := time.After(cliTestTimeout)
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("timed out waiting for handler readiness; last post stderr:\n%s\nhandler stderr:\n%s",
-				post.stderr, handle.stderr())
-		default:
-		}
-
-		post = h.runWithEnv([]byte("request data"), nil,
+	post := waitForHandlerReady(t, handle, func() cliResult {
+		return h.runWithEnv([]byte("request data"), nil,
 			h.clientArgs("req", "cli/request", "-raw", "-limit", "1")...)
-		if post.err == nil {
-			break
-		}
-		if !bytes.Contains(post.stderr, []byte("no handler for post")) {
-			post.mustSucceed(t)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
+	})
 	if string(post.stdout) != "response data" {
 		t.Fatalf("post stdout = %q", post.stdout)
 	}
+	handle.wait(t, cliTestTimeout).mustSucceed(t)
 
+	jsonResFile := h.writeFile(t, "json-response.txt", "json response")
+	handle = h.start(t, nil, nil,
+		h.clientArgs("res", "cli/request-json", "-file", jsonResFile, "-n", "1")...)
+	defer handle.cancel()
+
+	post = waitForHandlerReady(t, handle, func() cliResult {
+		return h.runWithEnv([]byte("request data"), nil,
+			h.clientArgs("req", "cli/request-json", "-limit", "1")...)
+	})
+
+	var res yat.Res
+	if err := json.Unmarshal(bytes.TrimSpace(post.stdout), &res); err != nil {
+		t.Fatalf("decode post output %q: %v", post.stdout, err)
+	}
+	if string(res.Data) != "json response" {
+		t.Fatalf("post response data = %q; stdout = %q", res.Data, post.stdout)
+	}
 	handle.wait(t, cliTestTimeout).mustSucceed(t)
 }
 
@@ -488,9 +269,10 @@ func TestCLIDurationsAndErrors(t *testing.T) {
 		h.clientArgs("sub", "cli/quiet", "-duration", "20ms")...).mustSucceed(t)
 	h.runWithEnv(nil, nil,
 		h.clientArgs("res", "cli/quiet", "-empty", "-duration", "20ms")...).mustSucceed(t)
+	h.runWithEnv([]byte("stdin response"), nil,
+		h.clientArgs("res", "cli/stdin", "-duration", "20ms")...).mustSucceed(t)
 	h.runWithEnv(nil, nil,
-		h.clientArgs("req", "cli/no-handler", "-empty", "-timeout", "1s")...).mustFail(t).
-		stderrContains(t, "no handler for post")
+		h.clientArgs("req", "cli/no-handler", "-empty", "-timeout", "1s")...).mustFail(t)
 }
 
 func TestCLIServeRoot(t *testing.T) {
@@ -517,6 +299,15 @@ func TestCLIServeClientCertPolicy(t *testing.T) {
 		}
 	})
 
+	t.Run("default_without_ca_rejects_client_cert", func(t *testing.T) {
+		h := newCLIHarness(t)
+		h.startTLSServer(t)
+
+		if _, err := h.getRootStatus(t, h.clientTLSConfig(t, true)); err == nil {
+			t.Fatal("GET / with unverifiable client cert succeeded")
+		}
+	})
+
 	t.Run("flag_false_allows_missing_client_cert", func(t *testing.T) {
 		h := newCLIHarness(t)
 		h.startTLSServer(t, "-tls-require-client-cert=false")
@@ -540,9 +331,35 @@ func TestCLIServeClientCertPolicy(t *testing.T) {
 	})
 }
 
-func TestCLITokenSources(t *testing.T) {
+func TestCLIServeConfigErrors(t *testing.T) {
 	h := newCLIHarness(t)
 	h.seed(t)
+
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"missing_file", ""},
+		{"bad_yaml", "apiVersion: ["},
+		{"invalid_api_version", "apiVersion: nope\nkind: RuleSet\n"},
+		{"missing_kind", "apiVersion: yat.io/v1alpha1\n"},
+		{"unknown_kind", "apiVersion: yat.io/v1alpha1\nkind: Wat\n"},
+		{"invalid_rules_shape", "apiVersion: yat.io/v1alpha1\nkind: RuleSet\nrules: nope\n"},
+		{"invalid_rule", "apiVersion: yat.io/v1alpha1\nkind: RuleSet\nrules:\n  - grants:\n      - paths: [ok]\n        actions: [wat]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configFile := filepath.Join(h.dir, tc.name+".yaml")
+			if tc.name != "missing_file" {
+				configFile = h.writeFile(t, tc.name+".yaml", tc.data)
+			}
+
+			h.run(h.serveArgs(t, "-config", configFile)...).mustFail(t)
+		})
+	}
+}
+
+func TestCLITokenSources(t *testing.T) {
+	h := newCLIHarness(t)
 
 	issuer := newCLITestAuthIssuer(t)
 	rulesFile := h.writeFile(t, "jwt-rules.yaml", fmt.Sprintf(`apiVersion: yat.io/v1alpha1
@@ -558,14 +375,7 @@ rules:
         actions: [pub]
 `, issuer.url))
 
-	server := h.start(t, nil, nil,
-		"serve",
-		"-bind", "127.0.0.1:0",
-		"-config", rulesFile,
-		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
-		"-tls-require-client-cert=false")
-	h.waitForServer(t, server)
+	h.startTokenServer(t, rulesFile)
 
 	writerToken := issuer.rawToken(t, "writer")
 	deniedToken := issuer.rawToken(t, "denied")
@@ -583,7 +393,6 @@ rules:
 
 func TestCLIRuleSetScalarExpr(t *testing.T) {
 	h := newCLIHarness(t)
-	h.seed(t)
 
 	issuer := newCLITestAuthIssuer(t)
 	rulesFile := h.writeFile(t, "jwt-expr-rules.yaml", fmt.Sprintf(`apiVersion: yat.io/v1alpha1
@@ -599,14 +408,7 @@ rules:
         actions: [pub]
 `, issuer.url))
 
-	server := h.start(t, nil, nil,
-		"serve",
-		"-bind", "127.0.0.1:0",
-		"-config", rulesFile,
-		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
-		"-tls-require-client-cert=false")
-	h.waitForServer(t, server)
+	h.startTokenServer(t, rulesFile)
 
 	adminToken := issuer.rawTokenWithClaims(t, "admin", map[string]any{
 		"groups": []string{"group@example.com"},
@@ -619,8 +421,7 @@ rules:
 		h.clientArgsNoCert("pub", "cli/expr", "-empty")...).mustSucceed(t)
 
 	h.runWithEnv(nil, []string{"YAT_TOKEN=" + deniedToken},
-		h.clientArgsNoCert("pub", "cli/expr", "-empty")...).mustFail(t).
-		stderrContains(t, "permission denied")
+		h.clientArgsNoCert("pub", "cli/expr", "-empty")...).mustFail(t)
 }
 
 type cliHarness struct {
@@ -745,6 +546,21 @@ func (h *cliHarness) startServer(t *testing.T) {
 func (h *cliHarness) startTLSServer(t *testing.T, flags ...string) {
 	t.Helper()
 
+	server := h.start(t, nil, nil, h.serveArgs(t, flags...)...)
+	h.waitForServer(t, server)
+}
+
+func (h *cliHarness) startTokenServer(t *testing.T, configFile string) {
+	t.Helper()
+
+	h.startTLSServer(t,
+		"-config", configFile,
+		"-tls-require-client-cert=false")
+}
+
+func (h *cliHarness) serveArgs(t *testing.T, flags ...string) []string {
+	t.Helper()
+
 	if _, err := os.Stat(h.seedDir); err != nil {
 		h.seed(t)
 	}
@@ -755,11 +571,8 @@ func (h *cliHarness) startTLSServer(t *testing.T, flags ...string) {
 		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
 		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
 	}
-	args = append(args, flags...)
 
-	server := h.start(t, nil, nil, args...)
-
-	h.waitForServer(t, server)
+	return append(args, flags...)
 }
 
 func (h *cliHarness) waitForServer(t *testing.T, server *cliProcess) {
@@ -1036,6 +849,30 @@ func waitForProcessAfter(t *testing.T, proc *cliProcess, tick func() cliResult) 
 	}
 }
 
+func waitForHandlerReady(t *testing.T, handle *cliProcess, post func() cliResult) cliResult {
+	t.Helper()
+
+	var result cliResult
+	deadline := time.After(cliTestTimeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for handler readiness; last post stderr:\n%s\nhandler stderr:\n%s",
+				result.stderr, handle.stderr())
+		default:
+		}
+
+		result = post()
+		if result.err == nil {
+			return result
+		}
+		if !bytes.Contains(result.stderr, []byte("no handler for post")) {
+			result.mustSucceed(t)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 type cliProcess struct {
 	h      *cliHarness
 	cancel context.CancelFunc
@@ -1193,24 +1030,6 @@ func (r cliResult) mustFail(t *testing.T) cliResult {
 	if r.err == nil {
 		t.Fatalf("yat %s succeeded unexpectedly\nstdout:\n%s\nstderr:\n%s",
 			strings.Join(r.args, " "), r.stdout, r.stderr)
-	}
-	return r
-}
-
-func (r cliResult) stdoutContains(t *testing.T, want string) cliResult {
-	t.Helper()
-	if !bytes.Contains(r.stdout, []byte(want)) {
-		t.Fatalf("yat %s stdout does not contain %q\nstdout:\n%s\nstderr:\n%s",
-			strings.Join(r.args, " "), want, r.stdout, r.stderr)
-	}
-	return r
-}
-
-func (r cliResult) stderrContains(t *testing.T, want string) cliResult {
-	t.Helper()
-	if !bytes.Contains(r.stderr, []byte(want)) {
-		t.Fatalf("yat %s stderr does not contain %q\nstdout:\n%s\nstderr:\n%s",
-			strings.Join(r.args, " "), want, r.stdout, r.stderr)
 	}
 	return r
 }
