@@ -22,6 +22,7 @@ type ServeCmd struct {
 
 	BindAddr    string
 	ConfigFiles []string
+	RequireCert bool
 }
 
 type serverConfig struct {
@@ -41,6 +42,7 @@ type serverConfigRuleSet struct {
 func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
 	flags.Strings(&cmd.ConfigFiles, "config")
+	flags.Bool(&cmd.RequireCert, "tls-require-client-cert")
 }
 
 func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
@@ -51,10 +53,15 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
-	tcfg, watch, err := cmd.TLSFiles.ServerConfig()
+	if len(cmd.TLSFiles.CAFiles) == 0 && cmd.RequireCert {
+		logger.WarnContext(ctx, "no trust roots: all client connections will fail")
+	}
+
+	tcfg, watch, err := cmd.TLSFiles.ServerConfig(cmd.RequireCert)
 	if err != nil {
 		return err
 	}
+
 	go watch(ctx, logger)
 
 	var cfg serverConfig
