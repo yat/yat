@@ -123,10 +123,10 @@ func (tf TLSFiles) ClientConfig() (*tls.Config, TLSWatchFunc, error) {
 	return cfg, watch(load), nil
 }
 
-func (tf TLSFiles) ServerConfig() (*tls.Config, TLSWatchFunc, error) {
+func (tf TLSFiles) ServerConfig(requireClientCert bool) (*tls.Config, TLSWatchFunc, error) {
 	var mu sync.Mutex
 	var chains []tls.Certificate
-	var roots *x509.CertPool
+	roots := x509.NewCertPool()
 
 	load := func() error {
 		cc, rr, err := tf.Load()
@@ -140,7 +140,12 @@ func (tf TLSFiles) ServerConfig() (*tls.Config, TLSWatchFunc, error) {
 
 		mu.Lock()
 		defer mu.Unlock()
-		chains, roots = cc, rr
+
+		chains = cc
+		if rr != nil {
+			roots = rr
+		}
+
 		return nil
 	}
 
@@ -165,9 +170,11 @@ func (tf TLSFiles) ServerConfig() (*tls.Config, TLSWatchFunc, error) {
 				NextProtos:   []string{"h2", "http/1.1"},
 			}
 
-			if roots != nil {
+			cfg.ClientAuth = tls.VerifyClientCertIfGiven
+			cfg.ClientCAs = roots
+
+			if requireClientCert {
 				cfg.ClientAuth = tls.RequireAndVerifyClientCert
-				cfg.ClientCAs = roots
 			}
 
 			return cfg, nil

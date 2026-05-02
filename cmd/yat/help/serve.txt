@@ -13,4 +13,8 @@ Flags:
       Path to a JSON or YAML configuration file.
       This flag can be set more than once.
 
-The server requires a TLS certificate and key.
+  -tls-require-client-cert true
+      If the value of this flag is true (the default),
+      clients must present a verifiable certificate.
+
+The server requires a TLS certificate and key to be configured.

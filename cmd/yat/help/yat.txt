@@ -49,5 +49,4 @@ Shared Flags:
   but it will use them if they are set.
 
   The server requires -tls-cert-file and -tls-key-file.
-  If -tls-ca-file is set at least once, the server
-  requires clients to present a valid certificate.
+  See "yat help serve" for details.
