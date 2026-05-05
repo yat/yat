@@ -3,7 +3,6 @@ package yat
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -24,25 +23,31 @@ import (
 )
 
 type Server struct {
-	router *Router
-	config ServerConfig
+	cfg ServerConfig
 }
 
 type ServerConfig struct {
+	// Logger is where the server writes logs.
+	// Server logs are discarded by default.
 	Logger *slog.Logger
-	Rules  *RuleSet
+
+	// Router is how the server delivers messages.
+	// An internal router is created by default.
+	Router *Router
+
+	// Rules decide which client operations are allowed.
+	// All operations are denied by default.
+	Rules *RuleSet
 }
 
-func NewServer(router *Router, config ServerConfig) (*Server, error) {
-	config = config.withDefaults()
-
-	if router == nil {
-		return nil, errors.New("nil router")
+func NewServer(cfg ServerConfig) (*Server, error) {
+	cfg, err := cfg.validate()
+	if err != nil {
+		return nil, err
 	}
 
 	s := &Server{
-		router: router,
-		config: config,
+		cfg: cfg,
 	}
 
 	return s, nil
@@ -126,7 +131,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if token, ok := strings.CutPrefix(r.Header.Get("authorization"), "Bearer "); ok {
-		claims, err := s.config.Rules.VerifyToken(r.Context(), token)
+		claims, err := s.cfg.Rules.VerifyToken(r.Context(), token)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -151,7 +156,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"claims.sub", caller.Claims.claims["sub"])
 	}
 
-	logger := s.config.Logger.With("remote", r.RemoteAddr)
+	logger := s.cfg.Logger.With("remote", r.RemoteAddr)
 	logger.DebugContext(r.Context(), "caller identified", largs...)
 
 	w.Header().Set("content-type",
@@ -160,7 +165,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("trailer",
 		"grpc-status,grpc-message")
 
-	allow, err := s.config.Rules.Compile(caller)
+	allow, err := s.cfg.Rules.Compile(caller)
 
 	if err != nil {
 		logger.ErrorContext(r.Context(), "rule compilation failed", "error", err)
@@ -204,6 +209,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Config returns the server configuration, including default values.
+func (s *Server) Config() ServerConfig {
+	return s.cfg
+}
+
 func (s *Server) handleMsgPub(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
 	_, frm, err := readMsgPubFrm(r.Body)
 	if err != nil {
@@ -224,7 +234,7 @@ func (s *Server) handleMsgPub(logger *slog.Logger, allow func(Path, Action) bool
 		return err
 	}
 
-	if ok := s.router.validPostbox(m.Path) || allow(m.Path, ActionPub); !ok {
+	if ok := s.cfg.Router.validPostbox(m.Path) || allow(m.Path, ActionPub); !ok {
 		return rpcErrPerms
 	}
 
@@ -258,7 +268,7 @@ func (s *Server) handleMsgMpub(logger *slog.Logger, allow func(Path, Action) boo
 		}
 
 		m, err := fields.Parse()
-		if err == nil && !s.router.validPostbox(m.Path) && !allow(m.Path, ActionPub) {
+		if err == nil && !s.cfg.Router.validPostbox(m.Path) && !allow(m.Path, ActionPub) {
 			err = rpcErrPerms
 		}
 
@@ -313,7 +323,7 @@ func (s *Server) handleMsgEmit(logger *slog.Logger, allow func(Path, Action) boo
 			return err
 		}
 
-		if !s.router.validPostbox(m.Path) && !allow(m.Path, ActionPub) {
+		if !s.cfg.Router.validPostbox(m.Path) && !allow(m.Path, ActionPub) {
 			return rpcErrPerms
 		}
 
@@ -328,9 +338,9 @@ func (s *Server) handleMsgEmit(logger *slog.Logger, allow func(Path, Action) boo
 // deliver prepares and delivers a message and its backing frame.
 // A uuid field is generated for m and append to frm before delivery.
 func (s *Server) deliver(m Msg, frm []byte) {
-	if ee := s.router.route(m); len(ee) > 0 {
+	if ee := s.cfg.Router.route(m); len(ee) > 0 {
 		m.uuid, frm = addUUIDField(frm)
-		s.router.deliver(ee, rmsg{m, frm})
+		s.cfg.Router.deliver(ee, rmsg{m, frm})
 	}
 }
 
@@ -370,7 +380,7 @@ func (s *Server) handleMsgPost(logger *slog.Logger, allow func(Path, Action) boo
 
 	m.Inbox, frm = s.addPostboxField(frm)
 
-	ee := s.router.route(m)
+	ee := s.cfg.Router.route(m)
 	hnd := slices.ContainsFunc(ee, (*rent).IsHandler)
 
 	if len(ee) == 0 || !hnd {
@@ -394,11 +404,11 @@ func (s *Server) handleMsgPost(logger *slog.Logger, allow func(Path, Action) boo
 	}
 
 	// subscribe to the postbox
-	e := s.router.ins(rs, sb.Deliver)
-	defer s.router.del(e)
+	e := s.cfg.Router.ins(rs, sb.Deliver)
+	defer s.cfg.Router.del(e)
 
 	// publish the post
-	s.router.deliver(ee, rmsg{m, frm})
+	s.cfg.Router.deliver(ee, rmsg{m, frm})
 
 	// and stream responses
 	return sb.Flush(w, r)
@@ -408,7 +418,7 @@ func (s *Server) handleMsgPost(logger *slog.Logger, allow func(Path, Action) boo
 // If frm doesn't have capacity for the new field, addPostboxField panics.
 func (s *Server) addPostboxField(frm []byte) (inbox Path, ext []byte) {
 	_ = frm[:len(frm)+postboxFieldLen]
-	inbox = s.router.newPostbox()
+	inbox = s.cfg.Router.newPostbox()
 	frm = protowire.AppendTag(frm, inboxField, protowire.BytesType)
 	frm = protowire.AppendString(frm, inbox.s)
 	binary.BigEndian.PutUint32(frm[1:], uint32(len(frm)-grpcFrmHdrLen))
@@ -464,21 +474,26 @@ func (s *Server) handleMsgSub(logger *slog.Logger, allow func(Path, Action) bool
 		Flags: req.GetFlags(),
 	}
 
-	e := s.router.ins(rs, sb.Deliver)
-	defer s.router.del(e)
+	e := s.cfg.Router.ins(rs, sb.Deliver)
+	defer s.cfg.Router.del(e)
 	return sb.Flush(w, r)
 }
 
-func (c ServerConfig) withDefaults() ServerConfig {
+// validate checks the config after setting default values.
+func (c ServerConfig) validate() (valid ServerConfig, err error) {
 	if c.Logger == nil {
 		c.Logger = slog.New(slog.DiscardHandler)
+	}
+
+	if c.Router == nil {
+		c.Router = NewRouter()
 	}
 
 	if c.Rules == nil {
 		c.Rules = &RuleSet{}
 	}
 
-	return c
+	return c, nil
 }
 
 // sbuf is a subscription delivery buffer.

@@ -25,7 +25,7 @@ func TestIndex(t *testing.T) {
 }
 
 func TestGRPCRequestsReachAPI(t *testing.T) {
-	api, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{Rules: yat.AllowAll()})
+	api, err := yat.NewServer(yat.ServerConfig{Rules: yat.AllowAll()})
 	if err != nil {
 		t.Fatal(err)
 	}

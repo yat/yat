@@ -120,7 +120,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		return err
 	}
 
-	ys, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{
+	ys, err := yat.NewServer(yat.ServerConfig{
 		Logger: logger,
 		Rules:  rules,
 	})
