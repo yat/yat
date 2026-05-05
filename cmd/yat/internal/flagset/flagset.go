@@ -6,6 +6,7 @@ import (
 	"encoding"
 	"flag"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -86,6 +87,12 @@ func (fs *Set) Text(p TextValue, names ...string) {
 	}
 }
 
+func (fs *Set) URL(u *url.URL, names ...string) {
+	for _, name := range names {
+		fs.set.Var(&urlValue{u}, name, "")
+	}
+}
+
 func (fs *Set) Value(p flag.Value, names ...string) {
 	for _, name := range names {
 		fs.set.Var(p, name, "")
@@ -108,5 +115,27 @@ func (ss *stringsValue) String() string {
 
 func (ss *stringsValue) Set(value string) error {
 	*ss = append(*ss, value)
+	return nil
+}
+
+type urlValue struct {
+	url *url.URL
+}
+
+func (uv *urlValue) String() string {
+	if uv.url != nil {
+		return uv.url.String()
+	}
+
+	return ""
+}
+
+func (uv *urlValue) Set(value string) error {
+	u, err := url.Parse(value)
+	if err != nil {
+		return err
+	}
+
+	*uv.url = *u
 	return nil
 }
