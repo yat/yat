@@ -103,9 +103,6 @@ func run(ctx context.Context, args []string) error {
 			File:   "/dev/stdin",
 		}
 
-	case "seed":
-		cmd = &SeedCmd{}
-
 	case "serve", "server":
 		cmd = &ServeCmd{
 			Config:      &cfg,

@@ -21,7 +21,8 @@ echo hi | bin/yat pub greetings
 
 ### Occasional Tools
 
-- `buf` is required to run `cd api && buf build`, which generates `internal/wire`
+- `buf` is required to run `(cd api && buf build)`, which generates `internal/wire`
+- `mkcert` is required to run `bin/setup`, which generates local TLS credentials
 - `ragel` is required to run `go generate .`, which compiles `path.rl`
 
 ### jq for output parsing

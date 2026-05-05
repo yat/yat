@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,9 +25,22 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"yat.io/yat"
 	"yat.io/yat/cmd"
+	"yat.io/yat/pkigen"
 )
 
 const cliTestTimeout = 5 * time.Second
+
+const cliTestRulesYAML = `apiVersion: yat.io/v1alpha1
+kind: RuleSet
+
+rules:
+  - tls:
+      san:
+        uri: "spiffe://local/*"
+    grants:
+      - paths: ["**"]
+        actions: [pub, sub]
+`
 
 var cliStateMu sync.Mutex
 
@@ -52,23 +66,11 @@ func TestCLIHelp(t *testing.T) {
 		{"subscribe_alias", []string{"sub", "-h"}},
 		{"handle", []string{"handle", "-h"}},
 		{"handle_alias", []string{"res", "-h"}},
-		{"seed", []string{"seed", "-help"}},
 		{"serve", []string{"serve", "-?"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h.run(tc.args...).mustSucceed(t)
 		})
-	}
-}
-
-func TestCLISeed(t *testing.T) {
-	h := newCLIHarness(t)
-	h.seed(t)
-
-	for _, name := range []string{"tls.crt", "tls.key", "ca.crt", "rules.yaml"} {
-		if _, err := os.Stat(filepath.Join(h.seedDir, name)); err != nil {
-			t.Fatalf("seed file %s: %v", name, err)
-		}
 	}
 }
 
@@ -122,8 +124,6 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 		{"handle_negative_limit", []string{"handle", "topic", "-empty", "-limit", "-1"}, nil},
 		{"handle_negative_duration", []string{"handle", "topic", "-empty", "-duration", "-1s"}, nil},
 		{"handle_server_not_configured", []string{"handle", "topic", "-empty"}, nil},
-		{"seed_no_dir", []string{"seed"}, nil},
-		{"seed_too_many_args", []string{"seed", "one", "two"}, nil},
 		{"serve_extra_arg", []string{"serve", "extra"}, nil},
 		{"serve_missing_tls", []string{"serve"}, nil},
 		{"tls_cert_without_key", []string{"serve", "-tls-cert-file", "tls.crt"}, nil},
@@ -292,7 +292,7 @@ func TestCLIServeRoot(t *testing.T) {
 func TestCLIServeClientCertPolicy(t *testing.T) {
 	t.Run("default_requires_client_cert", func(t *testing.T) {
 		h := newCLIHarness(t)
-		h.startTLSServer(t, "-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
+		h.startTLSServer(t, "-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"))
 
 		if _, err := h.getRootStatus(t, h.clientTLSConfig(t, false)); err == nil {
 			t.Fatal("GET / without client cert succeeded")
@@ -333,7 +333,7 @@ func TestCLIServeClientCertPolicy(t *testing.T) {
 
 func TestCLIServeConfigErrors(t *testing.T) {
 	h := newCLIHarness(t)
-	h.seed(t)
+	h.setupTLS(t)
 
 	for _, tc := range []struct {
 		name string
@@ -426,7 +426,7 @@ rules:
 
 type cliHarness struct {
 	dir        string
-	seedDir    string
+	tlsDir     string
 	server     string
 	stdout     *os.File
 	stderr     *os.File
@@ -491,7 +491,7 @@ func newCLIHarness(t *testing.T) *cliHarness {
 
 	return &cliHarness{
 		dir:        dir,
-		seedDir:    filepath.Join(dir, "seed"),
+		tlsDir:     filepath.Join(dir, "tls"),
 		stdout:     stdout,
 		stderr:     stderr,
 		stdoutPath: stdoutPath,
@@ -528,19 +528,56 @@ func clearYATEnvKeys() {
 	}
 }
 
-func (h *cliHarness) seed(t *testing.T) {
+func (h *cliHarness) setupTLS(t *testing.T) {
 	t.Helper()
-	h.run("seed", h.seedDir).mustSucceed(t)
+
+	if err := os.MkdirAll(h.tlsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	caCrt, caKey, err := pkigen.NewRoot(pkigen.URI("spiffe://local"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tlsCrt, tlsKey, err := pkigen.NewLeaf(caCrt, caKey,
+		pkigen.CN("yat dev"),
+		pkigen.DNS("localhost"),
+		pkigen.IP(net.IPv4(127, 0, 0, 1)),
+		pkigen.IP(net.IPv6loopback),
+		pkigen.URI("spiffe://local/dev"))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tlsKeyPEM, err := pkigen.EncodePrivateKey(tlsKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files := map[string][]byte{
+		"tls.crt":    pkigen.EncodeCerts(tlsCrt),
+		"tls.key":    tlsKeyPEM,
+		"ca.crt":     pkigen.EncodeCerts(caCrt),
+		"rules.yaml": []byte(cliTestRulesYAML),
+	}
+
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(h.tlsDir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func (h *cliHarness) startServer(t *testing.T) {
 	t.Helper()
 
-	h.seed(t)
+	h.setupTLS(t)
 
 	h.startTLSServer(t,
-		"-config", filepath.Join(h.seedDir, "rules.yaml"),
-		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"))
+		"-config", filepath.Join(h.tlsDir, "rules.yaml"),
+		"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"))
 }
 
 func (h *cliHarness) startTLSServer(t *testing.T, flags ...string) {
@@ -561,15 +598,15 @@ func (h *cliHarness) startTokenServer(t *testing.T, configFile string) {
 func (h *cliHarness) serveArgs(t *testing.T, flags ...string) []string {
 	t.Helper()
 
-	if _, err := os.Stat(h.seedDir); err != nil {
-		h.seed(t)
+	if _, err := os.Stat(h.tlsDir); err != nil {
+		h.setupTLS(t)
 	}
 
 	args := []string{
 		"serve",
 		"-bind", "127.0.0.1:0",
-		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
+		"-tls-cert-file", filepath.Join(h.tlsDir, "tls.crt"),
+		"-tls-key-file", filepath.Join(h.tlsDir, "tls.key"),
 	}
 
 	return append(args, flags...)
@@ -625,9 +662,9 @@ func (h *cliHarness) clientArgs(args ...string) []string {
 	prefix := []string{
 		"-log-level", "error",
 		"-server", h.server,
-		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"),
-		"-tls-cert-file", filepath.Join(h.seedDir, "tls.crt"),
-		"-tls-key-file", filepath.Join(h.seedDir, "tls.key"),
+		"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
+		"-tls-cert-file", filepath.Join(h.tlsDir, "tls.crt"),
+		"-tls-key-file", filepath.Join(h.tlsDir, "tls.key"),
 	}
 
 	return append(prefix, args...)
@@ -637,7 +674,7 @@ func (h *cliHarness) clientArgsNoCert(args ...string) []string {
 	prefix := []string{
 		"-log-level", "error",
 		"-server", h.server,
-		"-tls-ca-file", filepath.Join(h.seedDir, "ca.crt"),
+		"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
 	}
 
 	return append(prefix, args...)
@@ -647,12 +684,12 @@ func (h *cliHarness) clientTLSConfig(t *testing.T, clientCert bool) *tls.Config 
 	t.Helper()
 
 	files := cmd.TLSFiles{
-		CAFiles: []string{filepath.Join(h.seedDir, "ca.crt")},
+		CAFiles: []string{filepath.Join(h.tlsDir, "ca.crt")},
 	}
 
 	if clientCert {
-		files.CertFile = filepath.Join(h.seedDir, "tls.crt")
-		files.KeyFile = filepath.Join(h.seedDir, "tls.key")
+		files.CertFile = filepath.Join(h.tlsDir, "tls.crt")
+		files.KeyFile = filepath.Join(h.tlsDir, "tls.key")
 	}
 
 	tcfg, _, err := files.ClientConfig()
@@ -690,9 +727,9 @@ func (h *cliHarness) newClient(t *testing.T) *yat.Client {
 
 	cfg := cmd.Config{
 		TLSFiles: cmd.TLSFiles{
-			CertFile: filepath.Join(h.seedDir, "tls.crt"),
-			KeyFile:  filepath.Join(h.seedDir, "tls.key"),
-			CAFiles:  []string{filepath.Join(h.seedDir, "ca.crt")},
+			CertFile: filepath.Join(h.tlsDir, "tls.crt"),
+			KeyFile:  filepath.Join(h.tlsDir, "tls.key"),
+			CAFiles:  []string{filepath.Join(h.tlsDir, "ca.crt")},
 		},
 		Server: h.server,
 	}

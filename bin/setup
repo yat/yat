@@ -3,4 +3,14 @@
 
 set -eux
 
-bin/yat seed tmp/seed
+rm -rf tmp/tls
+mkdir -p tmp/tls
+
+mkcert -install
+
+mkcert -client -ecdsa \
+  -cert-file tmp/tls/tls.crt \
+  -key-file tmp/tls/tls.key \
+  localhost 127.0.0.1 ::1 spiffe://local/dev
+
+cp "$(mkcert -CAROOT)/rootCA.pem" tmp/tls/ca.crt
