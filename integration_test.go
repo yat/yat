@@ -199,12 +199,6 @@ func TestGenRuleValidation(t *testing.T) {
 }
 
 func TestGenServerProtocol(t *testing.T) {
-	t.Run("new_server_requires_router", func(t *testing.T) {
-		if _, err := yat.NewServer(nil, yat.ServerConfig{}); err == nil || !strings.Contains(err.Error(), "nil router") {
-			t.Fatalf("NewServer(nil) error = %v", err)
-		}
-	})
-
 	t.Run("servehttp_preconditions", func(t *testing.T) {
 		server := newTestServer(t, yat.AllowAll())
 
@@ -2402,7 +2396,7 @@ func waitSubDone(tb testing.TB, sub yat.Sub) {
 func newTestServer(tb testing.TB, rules *yat.RuleSet) *yat.Server {
 	tb.Helper()
 
-	server, err := yat.NewServer(yat.NewRouter(), yat.ServerConfig{Rules: rules})
+	server, err := yat.NewServer(yat.ServerConfig{Rules: rules})
 	if err != nil {
 		tb.Fatal(err)
 	}
