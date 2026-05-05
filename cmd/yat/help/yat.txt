@@ -10,11 +10,7 @@ Client Commands:
   subscribe   print selected messages
   post        publish a request and wait
   handle      handle posted requests
-
-Other Commands:
-
   serve       run a Yat server
-  seed        generate local config
 
 Client Flags:
 

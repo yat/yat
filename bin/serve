@@ -3,7 +3,8 @@
 
 exec go tool logfmt ./yat serve \
   -log-level debug \
-  -tls-cert-file tmp/seed/tls.crt \
-  -tls-key-file tmp/seed/tls.key \
-  -tls-ca-file tmp/seed/ca.crt \
-  -config tmp/seed/rules.yaml
+  -tls-cert-file tmp/tls/tls.crt \
+  -tls-key-file tmp/tls/tls.key \
+  -tls-ca-file tmp/tls/ca.crt \
+  -tls-require-client-cert=false \
+  -config etc/dev/rules.yaml
