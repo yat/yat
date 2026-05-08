@@ -26,8 +26,6 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -862,30 +860,6 @@ func TestGenClientServer(t *testing.T) {
 		}
 	})
 
-	t.Run("insecure_h2c_roundtrip", func(t *testing.T) {
-		target, cleanup := startH2CEndpoint(t, yat.AllowAll())
-		defer cleanup()
-
-		pub := newInsecureClient(t, target)
-		subc := newInsecureClient(t, target)
-		defer closeClient(t, pub)
-		defer closeClient(t, subc)
-
-		path := yat.NewPath("insecure/topic")
-		probe := newSubProbe(t, subc, yat.Sel{Path: path})
-		defer probe.Cancel(t)
-
-		if err := pub.Publish(context.Background(), yat.Msg{
-			Path:  path,
-			Inbox: yat.NewPath("reply/insecure"),
-			Data:  []byte("hello"),
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		assertMsg(t, receiveMsg(t, probe.msgs), path, yat.NewPath("reply/insecure"), []byte("hello"))
-	})
-
 	t.Run("post_handle_roundtrip_limits_and_errors", func(t *testing.T) {
 		endpoint := startTLSEndpoint(t, yat.AllowAll())
 		defer endpoint.Close()
@@ -1368,14 +1342,13 @@ func TestGenClientServer(t *testing.T) {
 			return err
 		}(), "empty path")
 
-		if _, err := yat.NewClient("example.test:443", yat.ClientConfig{
-			TokenSource: oauth2.StaticTokenSource(&oauth2.Token{
-				AccessToken: "token",
-				TokenType:   "Bearer",
-			}),
-		}); err == nil || !strings.Contains(err.Error(), "token source requires tls") {
-			t.Fatalf("NewClient(token-without-tls) = %v", err)
+		tokenClient, err := yat.NewClient("example.test:443", yat.ClientConfig{
+			GetCreds: yat.BearerToken("token"),
+		})
+		if err != nil {
+			t.Fatalf("NewClient(token-with-default-tls) = %v", err)
 		}
+		defer closeClient(t, tokenClient)
 
 		publisher := mustNewPublisher(t, client, context.Background())
 		pubCtx, cancelPub := context.WithCancel(context.Background())
@@ -2460,44 +2433,10 @@ func startHTTP2TLSEndpoint(tb testing.TB, rules *yat.RuleSet, ca *testCA, requir
 	}
 }
 
-func startH2CEndpoint(tb testing.TB, rules *yat.RuleSet) (string, func()) {
-	tb.Helper()
-
-	server := newTestServer(tb, rules)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	httpServer := &http.Server{
-		Handler: h2c.NewHandler(server, &http2.Server{}),
-	}
-
-	go func() {
-		_ = httpServer.Serve(ln)
-	}()
-
-	return ln.Addr().String(), func() {
-		_ = httpServer.Close()
-		_ = ln.Close()
-	}
-}
-
 func newTLSClient(tb testing.TB, endpoint *tlsEndpoint) *yat.Client {
 	tb.Helper()
 
 	return newClient(tb, endpoint.target, endpoint.clientTLSConfig(), nil)
-}
-
-func newInsecureClient(tb testing.TB, target string) *yat.Client {
-	tb.Helper()
-
-	client, err := yat.NewClient(target, yat.ClientConfig{})
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	return client
 }
 
 func newAuthClient(tb testing.TB, endpoint *tlsEndpoint, token *oauth2.Token, certificates ...tls.Certificate) *yat.Client {
@@ -2511,7 +2450,7 @@ func newClient(tb testing.TB, target string, tlsConfig *tls.Config, token *oauth
 
 	cfg := yat.ClientConfig{TLSConfig: tlsConfig}
 	if token != nil {
-		cfg.TokenSource = staticTokenSource{token: token}
+		cfg.GetCreds = yat.BearerToken(token.AccessToken)
 	}
 
 	client, err := yat.NewClient(target, cfg)
@@ -2884,10 +2823,6 @@ type authTokenSpec struct {
 	TokenType string
 }
 
-type staticTokenSource struct {
-	token *oauth2.Token
-}
-
 func newAuthIssuer(tb testing.TB) *authIssuer {
 	tb.Helper()
 
@@ -2984,11 +2919,6 @@ func (i *authIssuer) rawToken(tb testing.TB, spec authTokenSpec) string {
 	}
 
 	return raw
-}
-
-func (s staticTokenSource) Token() (*oauth2.Token, error) {
-	clone := *s.token
-	return &clone, nil
 }
 
 type testCA struct {

@@ -7,9 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
-	"golang.org/x/oauth2"
 	"yat.io/yat"
 )
 
@@ -76,61 +73,14 @@ func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client
 		TLSConfig: tcfg,
 	}
 
-	if c.Token != "" || c.TokenFile != "" {
-		cfg.TokenSource = c.TokenSource()
+	switch {
+	case c.Token != "":
+		token := strings.TrimSpace(c.Token)
+		cfg.GetCreds = yat.BearerToken(token)
+
+	case c.TokenFile != "":
+		cfg.GetCreds = yat.TokenFile(c.TokenFile)
 	}
 
 	return yat.NewClient(c.Server, cfg)
 }
-
-// TokenSource returns an oauth2 token source backed by ReadToken,
-// or nil if no token or token file is configured.
-func (c Config) TokenSource() oauth2.TokenSource {
-	if c.Token == "" && c.TokenFile == "" {
-		return nil
-	}
-	return tokenSourceFunc(c.ReadToken)
-}
-
-// ReadToken reads an oauth2 token from the configuration.
-func (c Config) ReadToken() (access *oauth2.Token, err error) {
-	var raw []byte
-
-	switch {
-	case c.Token != "":
-		raw = []byte(c.Token)
-
-	case c.TokenFile != "":
-		raw, err = os.ReadFile(c.TokenFile)
-
-	default:
-		err = errors.New("no token")
-	}
-
-	if err != nil {
-		return
-	}
-
-	trim := strings.TrimSpace(string(raw))
-	jt, err := jwt.ParseSigned(trim, []jose.SignatureAlgorithm{jose.ES256, jose.PS256, jose.RS256})
-	if err != nil {
-		return
-	}
-
-	var claims jwt.Claims
-	if err := jt.UnsafeClaimsWithoutVerification(&claims); err != nil {
-		return nil, err
-	}
-
-	access = &oauth2.Token{
-		AccessToken: trim,
-		TokenType:   "Bearer",
-		Expiry:      claims.Expiry.Time(),
-	}
-
-	return
-}
-
-type tokenSourceFunc func() (*oauth2.Token, error)
-
-func (f tokenSourceFunc) Token() (*oauth2.Token, error) { return f() }

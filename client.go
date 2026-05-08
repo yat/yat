@@ -10,13 +10,11 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/credentials/oauth"
+	"google.golang.org/grpc/credentials/jwt"
 
 	msgv1 "yat.io/yat/internal/wire/msg/v1"
 )
@@ -28,39 +26,35 @@ type Client struct {
 }
 
 type ClientConfig struct {
+	// Logger is where the client writes logs.
+	// Client logs are discarded by default.
 	Logger *slog.Logger
 
 	// TLSConfig configures the client's transport credentials.
-	// If it is nil, transport security is disabled.
+	// If it is nil, the client uses a default TLS configuration.
 	TLSConfig *tls.Config
 
-	// TokenSource, if set, is called by the client to produce
-	// bearer tokens for each outbound operation.
-	TokenSource oauth2.TokenSource
+	// GetCreds, if set, is called for each request.
+	// The returned map is added to the request metadata.
+	GetCreds CredsFunc
 }
+
+// A CredsFunc is called by the client to produce per-request credentials.
+type CredsFunc func(ctx context.Context, requestURI ...string) (map[string]string, error)
 
 // NewClient returns a new client for the given server and configuration.
 // The client connects lazily and redials if the connection is broken.
 func NewClient(server string, config ClientConfig) (*Client, error) {
 	config = config.withDefaults()
-	creds := insecure.NewCredentials()
-
-	if config.TLSConfig == nil && config.TokenSource != nil {
-		return nil, errors.New("token source requires tls")
-	}
-
-	if config.TLSConfig != nil {
-		creds = credentials.NewTLS(config.TLSConfig)
-	}
+	creds := credentials.NewTLS(config.TLSConfig)
 
 	opts := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithTransportCredentials(creds),
 	}
 
-	if config.TLSConfig != nil && config.TokenSource != nil {
-		opts = append(opts, grpc.WithPerRPCCredentials(
-			oauth.TokenSource{TokenSource: config.TokenSource}))
+	if config.GetCreds != nil {
+		opts = append(opts, grpc.WithPerRPCCredentials(credsFunc(config.GetCreds)))
 	}
 
 	conn, err := grpc.NewClient(server, opts...)
@@ -373,6 +367,28 @@ func (c *Client) isShutdown() bool {
 	return c.conn.GetState() == connectivity.Shutdown
 }
 
+// BearerToken returns a generator that adds an authorization header containing the given JWT.
+func BearerToken(token string) CredsFunc {
+	return func(context.Context, ...string) (map[string]string, error) {
+		return map[string]string{
+			"authorization": "Bearer " + token,
+		}, nil
+	}
+}
+
+// TokenFile returns a generator backed by the named file,
+// which must contain a signed JWT with an "exp" claim.
+func TokenFile(name string) CredsFunc {
+	if name == "" {
+		return func(ctx context.Context, uri ...string) (map[string]string, error) {
+			return nil, errors.New("empty token file path")
+		}
+	}
+
+	creds, _ := jwt.NewTokenFileCallCredentials(name)
+	return creds.GetRequestMetadata
+}
+
 // A PublishStream efficiently publishes a stream of messages.
 // It is not safe for concurrent use.
 type PublishStream struct {
@@ -530,6 +546,12 @@ func (c ClientConfig) withDefaults() ClientConfig {
 		c.Logger = slog.New(slog.DiscardHandler)
 	}
 
+	if c.TLSConfig == nil {
+		c.TLSConfig = &tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}
+	}
+
 	return c
 }
 
@@ -541,6 +563,19 @@ type csub struct {
 
 func (s csub) Done() <-chan struct{} {
 	return s.C
+}
+
+// credsFunc implements [credentials.PerRPCCredentials] in terms of CredsFunc
+// to avoid exporting those methods as part of the yat API.
+// Also because we always require transport security.
+type credsFunc CredsFunc
+
+func (f credsFunc) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
+	return f(ctx, uri...)
+}
+
+func (f credsFunc) RequireTransportSecurity() bool {
+	return true
 }
 
 // ctxWithCancelCause silences a (usually useful) Go warning about not calling cancel.
