@@ -1,6 +1,9 @@
 #!/bin/sh
 # run the local dev server
 
+bin/build
+bin/setup
+
 exec go tool logfmt ./yat serve \
   -log-level debug \
   -tls-cert-file tmp/tls/tls.crt \
