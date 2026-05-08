@@ -6,7 +6,6 @@
 ## Development
 
 ```
-bin/setup
 bin/dev # for hot reloads 
 # or run bin/serve directly
 ```
@@ -19,11 +18,14 @@ bin/yat sub greetings
 echo hi | bin/yat pub greetings
 ```
 
+### Required Tools
+
+- `mkcert` is called by various dev scripts in [`bin/`](bin) to generate local credentials
+
 ### Occasional Tools
 
-- `buf` is required to run `(cd api && buf build)`, which generates `internal/wire`
-- `mkcert` is required to run `bin/setup`, which generates local TLS credentials
-- `ragel` is required to run `go generate .`, which compiles `path.rl`
+- `buf` is required to run `(cd api && buf build)`, which generates [`internal/wire`](internal/wire)
+- `ragel` is required to run `go generate .`, which compiles [`path.rl`](path.rl)
 
 ### jq for output parsing
 

@@ -1,7 +1,14 @@
 #!/bin/sh
 # generate local dev creds
 
-set -eux
+set -eu
+
+if [ -f tmp/tls/tls.crt ]  && [ -f tmp/tls/tls.key ]  && [ -f tmp/tls/ca.crt ]; then
+  exit
+fi
+
+set -x
+: bin/setup
 
 rm -rf tmp/tls
 mkdir -p tmp/tls
