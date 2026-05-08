@@ -10,7 +10,6 @@ require (
 	github.com/google/cel-go v0.28.0
 	github.com/google/uuid v1.6.0
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260413170323-a8e9237a216b
-	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260420184626-e10c466a9529
 	google.golang.org/grpc v1.80.0
@@ -19,7 +18,6 @@ require (
 
 require (
 	cel.dev/expr v0.25.1 // indirect
-	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/air-verse/air v1.65.1 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
@@ -44,6 +42,7 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/tdewolff/parse/v2 v2.8.12 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
+	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260420184626-e10c466a9529 // indirect
