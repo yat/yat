@@ -6,8 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -21,6 +25,7 @@ type ServeCmd struct {
 	*cmd.Config
 
 	BindAddr    string
+	EndpointURL url.URL
 	ConfigFiles []string
 	RequireCert bool
 }
@@ -41,6 +46,7 @@ type serverConfigRuleSet struct {
 
 func (cmd *ServeCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.BindAddr, "bind")
+	flags.URL(&cmd.EndpointURL, "url")
 	flags.Strings(&cmd.ConfigFiles, "config")
 	flags.Bool(&cmd.RequireCert, "tls-require-client-cert")
 }
@@ -53,6 +59,11 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		}
 	}
 
+	// check basic validity
+	if _, _, err := net.SplitHostPort(cmd.BindAddr); err != nil {
+		return fmt.Errorf("bind %s: %v", cmd.BindAddr, err)
+	}
+
 	if len(cmd.TLSFiles.CAFiles) == 0 && cmd.RequireCert {
 		logger.WarnContext(ctx, "no trust roots: all client connections will fail")
 	}
@@ -63,6 +74,34 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	}
 
 	go watch(ctx, logger)
+
+	lis, err := tls.Listen("tcp", cmd.BindAddr, tcfg)
+	if err != nil {
+		return err
+	}
+
+	defer lis.Close()
+
+	if cmd.EndpointURL == (url.URL{}) {
+		host, _, _ := net.SplitHostPort(cmd.BindAddr)
+		_, port, _ := net.SplitHostPort(lis.Addr().String())
+		if a, _ := netip.ParseAddr(host); a.IsUnspecified() {
+			return errors.New("this -bind requires a -url")
+		}
+
+		cmd.EndpointURL = url.URL{
+			Scheme: "https",
+			Host:   host,
+		}
+
+		switch {
+		case port != "443":
+			cmd.EndpointURL.Host = net.JoinHostPort(host, port)
+
+		case strings.Contains(host, ":"):
+			cmd.EndpointURL.Host = "[" + host + "]"
+		}
+	}
 
 	var cfg serverConfig
 	for _, name := range cmd.ConfigFiles {
@@ -94,22 +133,18 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 		Logger: logger,
 	})
 
-	l, err := tls.Listen("tcp", cmd.BindAddr, tcfg)
-	if err != nil {
-		return err
-	}
-
 	hs := &http.Server{
 		Handler: ws,
 	}
 
 	logger.InfoContext(ctx, "serve",
-		"addr", l.Addr().String(),
+		"addr", lis.Addr().String(),
+		"url", cmd.EndpointURL.String(),
 		"rules", len(cfg.Rules))
 
 	srvC := make(chan error, 1)
 	go func() {
-		err := hs.Serve(l)
+		err := hs.Serve(lis)
 		if err == http.ErrServerClosed {
 			err = nil
 		}
