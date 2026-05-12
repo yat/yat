@@ -3,10 +3,14 @@ package yat
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,13 +21,14 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"yat.io/yat/internal/web"
 
-	"yat.io/yat/internal/grpcutil"
 	msgv1 "yat.io/yat/internal/wire/msg/v1"
 )
 
 type Server struct {
 	cfg ServerConfig
+	mux *http.ServeMux
 }
 
 type ServerConfig struct {
@@ -38,6 +43,10 @@ type ServerConfig struct {
 	// Rules decide which client operations are allowed.
 	// All operations are denied by default.
 	Rules *RuleSet
+
+	// URL is the server's https address.
+	// If it is nil, only RPC routes are enabled.
+	URL *url.URL
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -46,16 +55,52 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	mux := http.NewServeMux()
+
 	s := &Server{
 		cfg: cfg,
+		mux: mux,
+	}
+
+	if cfg.URL != nil {
+		static, _ := fs.Sub(web.FS, "static")
+		mux.Handle("/", http.FileServerFS(static))
 	}
 
 	return s, nil
 }
 
-// ServeHTTP serves (barely) gRPC-compatible API endpoints.
-// It requires all requests to be HTTP/2 POSTs with the application/grpc content-type.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case msgv1.MsgService_Pub_FullMethodName:
+		s.serveGRPC(w, r, s.handleMsgPub)
+
+	case msgv1.MsgService_Mpub_FullMethodName:
+		s.serveGRPC(w, r, s.handleMsgMpub)
+
+	case msgv1.MsgService_Emit_FullMethodName:
+		s.serveGRPC(w, r, s.handleMsgEmit)
+
+	case msgv1.MsgService_Post_FullMethodName:
+		s.serveGRPC(w, r, s.handleMsgPost)
+
+	case msgv1.MsgService_Sub_FullMethodName:
+		s.serveGRPC(w, r, s.handleMsgSub)
+
+	default:
+		s.mux.ServeHTTP(w, r)
+	}
+}
+
+// Config returns the server configuration, including default values.
+func (s *Server) Config() ServerConfig {
+	return s.cfg
+}
+
+type grpcHandlerFunc func(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error
+
+// serveGRPC serves (barely) gRPC-compatible responses.
+func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, handle grpcHandlerFunc) {
 	if r.ProtoMajor != 2 {
 		http.Error(w, "http/2 is required",
 			http.StatusHTTPVersionNotSupported)
@@ -71,7 +116,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !grpcutil.IsGRPCRequest(r) {
+	if !isGRPC(r) {
 		http.Error(w, "unsupported content-type",
 			http.StatusUnsupportedMediaType)
 
@@ -100,29 +145,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(ctx)
 	}
 
-	var handle func(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error
-
-	switch r.URL.Path {
-	case msgv1.MsgService_Pub_FullMethodName:
-		handle = s.handleMsgPub
-
-	case msgv1.MsgService_Mpub_FullMethodName:
-		handle = s.handleMsgMpub
-
-	case msgv1.MsgService_Emit_FullMethodName:
-		handle = s.handleMsgEmit
-
-	case msgv1.MsgService_Post_FullMethodName:
-		handle = s.handleMsgPost
-
-	case msgv1.MsgService_Sub_FullMethodName:
-		handle = s.handleMsgSub
-
-	default:
-		http.NotFound(w, r)
-		return
-	}
-
 	var caller Principal
 	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 {
 		if chain := r.TLS.VerifiedChains[0]; len(chain) > 0 {
@@ -145,9 +167,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if caller.Cert != nil {
 		largs = append(largs,
 			"cert.iss", caller.Cert.Issuer.CommonName,
-			"cert.sub", caller.Cert.Subject,
-			"cert.uris", caller.Cert.URIs,
+			"cert.sub", caller.Cert.Subject.String(),
 		)
+
+		if len(caller.Cert.URIs) > 0 {
+			var uris []string
+			for _, u := range caller.Cert.URIs {
+				uris = append(uris, u.String())
+			}
+
+			largs = append(largs, "cert.uris", uris)
+		}
 	}
 
 	if caller.Claims != nil {
@@ -207,11 +237,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if msg := st.Message(); msg != "" {
 		w.Header().Set("grpc-message", msg)
 	}
-}
-
-// Config returns the server configuration, including default values.
-func (s *Server) Config() ServerConfig {
-	return s.cfg
 }
 
 func (s *Server) handleMsgPub(logger *slog.Logger, allow func(Path, Action) bool, w http.ResponseWriter, r *http.Request) error {
@@ -493,6 +518,10 @@ func (c ServerConfig) validate() (valid ServerConfig, err error) {
 		c.Rules = &RuleSet{}
 	}
 
+	if c.URL != nil && c.URL.Scheme != "https" {
+		return ServerConfig{}, fmt.Errorf("server URL scheme (%s) is not https", c.URL.Scheme)
+	}
+
 	return c, nil
 }
 
@@ -576,6 +605,17 @@ func (sb *sbuf) Flush(w io.Writer, r *http.Request) error {
 			return nil
 		}
 	}
+}
+
+func isGRPC(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("content-type"))
+	if err != nil {
+		return false
+	}
+
+	mt = strings.ToLower(mt)
+	return mt == "application/grpc" ||
+		strings.HasPrefix(mt, "application/grpc+proto")
 }
 
 // addUUIDField adds a uuid proto field containing a raw UUIDv7 to the frame.
