@@ -1,6 +1,6 @@
 edition = "2023";
 
-package msg.v1;
+package yat.v1;
 
 service MsgService {
   // Pub publishes a message.

@@ -23,7 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"yat.io/yat/internal/web"
 
-	msgv1 "yat.io/yat/internal/wire/msg/v1"
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
 
 type Server struct {
@@ -72,19 +72,19 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case msgv1.MsgService_Pub_FullMethodName:
+	case yatv1.MsgService_Pub_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgPub)
 
-	case msgv1.MsgService_Mpub_FullMethodName:
+	case yatv1.MsgService_Mpub_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgMpub)
 
-	case msgv1.MsgService_Emit_FullMethodName:
+	case yatv1.MsgService_Emit_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgEmit)
 
-	case msgv1.MsgService_Post_FullMethodName:
+	case yatv1.MsgService_Post_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgPost)
 
-	case msgv1.MsgService_Sub_FullMethodName:
+	case yatv1.MsgService_Sub_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgSub)
 
 	default:
@@ -465,7 +465,7 @@ func (s *Server) handleMsgSub(logger *slog.Logger, allow func(Path, Action) bool
 		return err
 	}
 
-	var req msgv1.SubRequest
+	var req yatv1.SubRequest
 	if err := proto.Unmarshal(frm[grpcFrmHdrLen:], &req); err != nil {
 		return err
 	}

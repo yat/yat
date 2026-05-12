@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: msg/v1/msg.proto
+// source: yat/v1/msg.proto
 
-package msgv1
+package yatv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -51,11 +51,11 @@ func (x SubFlags) String() string {
 }
 
 func (SubFlags) Descriptor() protoreflect.EnumDescriptor {
-	return file_msg_v1_msg_proto_enumTypes[0].Descriptor()
+	return file_yat_v1_msg_proto_enumTypes[0].Descriptor()
 }
 
 func (SubFlags) Type() protoreflect.EnumType {
-	return &file_msg_v1_msg_proto_enumTypes[0]
+	return &file_yat_v1_msg_proto_enumTypes[0]
 }
 
 func (x SubFlags) Number() protoreflect.EnumNumber {
@@ -64,7 +64,7 @@ func (x SubFlags) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SubFlags.Descriptor instead.
 func (SubFlags) EnumDescriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{0}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{0}
 }
 
 type PubRequest struct {
@@ -78,7 +78,7 @@ type PubRequest struct {
 
 func (x *PubRequest) Reset() {
 	*x = PubRequest{}
-	mi := &file_msg_v1_msg_proto_msgTypes[0]
+	mi := &file_yat_v1_msg_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -90,7 +90,7 @@ func (x *PubRequest) String() string {
 func (*PubRequest) ProtoMessage() {}
 
 func (x *PubRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[0]
+	mi := &file_yat_v1_msg_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -103,7 +103,7 @@ func (x *PubRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PubRequest.ProtoReflect.Descriptor instead.
 func (*PubRequest) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{0}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *PubRequest) GetPath() []byte {
@@ -135,7 +135,7 @@ type PubResponse struct {
 
 func (x *PubResponse) Reset() {
 	*x = PubResponse{}
-	mi := &file_msg_v1_msg_proto_msgTypes[1]
+	mi := &file_yat_v1_msg_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -147,7 +147,7 @@ func (x *PubResponse) String() string {
 func (*PubResponse) ProtoMessage() {}
 
 func (x *PubResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[1]
+	mi := &file_yat_v1_msg_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -160,7 +160,7 @@ func (x *PubResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PubResponse.ProtoReflect.Descriptor instead.
 func (*PubResponse) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{1}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{1}
 }
 
 type MpubRequest struct {
@@ -175,7 +175,7 @@ type MpubRequest struct {
 
 func (x *MpubRequest) Reset() {
 	*x = MpubRequest{}
-	mi := &file_msg_v1_msg_proto_msgTypes[2]
+	mi := &file_yat_v1_msg_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -187,7 +187,7 @@ func (x *MpubRequest) String() string {
 func (*MpubRequest) ProtoMessage() {}
 
 func (x *MpubRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[2]
+	mi := &file_yat_v1_msg_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -200,7 +200,7 @@ func (x *MpubRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MpubRequest.ProtoReflect.Descriptor instead.
 func (*MpubRequest) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{2}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *MpubRequest) GetAck() int64 {
@@ -241,7 +241,7 @@ type MpubResponse struct {
 
 func (x *MpubResponse) Reset() {
 	*x = MpubResponse{}
-	mi := &file_msg_v1_msg_proto_msgTypes[3]
+	mi := &file_yat_v1_msg_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -253,7 +253,7 @@ func (x *MpubResponse) String() string {
 func (*MpubResponse) ProtoMessage() {}
 
 func (x *MpubResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[3]
+	mi := &file_yat_v1_msg_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -266,7 +266,7 @@ func (x *MpubResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MpubResponse.ProtoReflect.Descriptor instead.
 func (*MpubResponse) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{3}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *MpubResponse) GetAck() int64 {
@@ -294,7 +294,7 @@ type EmitRequest struct {
 
 func (x *EmitRequest) Reset() {
 	*x = EmitRequest{}
-	mi := &file_msg_v1_msg_proto_msgTypes[4]
+	mi := &file_yat_v1_msg_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -306,7 +306,7 @@ func (x *EmitRequest) String() string {
 func (*EmitRequest) ProtoMessage() {}
 
 func (x *EmitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[4]
+	mi := &file_yat_v1_msg_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -319,7 +319,7 @@ func (x *EmitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmitRequest.ProtoReflect.Descriptor instead.
 func (*EmitRequest) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{4}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *EmitRequest) GetPath() []byte {
@@ -351,7 +351,7 @@ type EmitResponse struct {
 
 func (x *EmitResponse) Reset() {
 	*x = EmitResponse{}
-	mi := &file_msg_v1_msg_proto_msgTypes[5]
+	mi := &file_yat_v1_msg_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -363,7 +363,7 @@ func (x *EmitResponse) String() string {
 func (*EmitResponse) ProtoMessage() {}
 
 func (x *EmitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[5]
+	mi := &file_yat_v1_msg_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -376,7 +376,7 @@ func (x *EmitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EmitResponse.ProtoReflect.Descriptor instead.
 func (*EmitResponse) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{5}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{5}
 }
 
 type PostRequest struct {
@@ -390,7 +390,7 @@ type PostRequest struct {
 
 func (x *PostRequest) Reset() {
 	*x = PostRequest{}
-	mi := &file_msg_v1_msg_proto_msgTypes[6]
+	mi := &file_yat_v1_msg_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -402,7 +402,7 @@ func (x *PostRequest) String() string {
 func (*PostRequest) ProtoMessage() {}
 
 func (x *PostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[6]
+	mi := &file_yat_v1_msg_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -415,7 +415,7 @@ func (x *PostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostRequest.ProtoReflect.Descriptor instead.
 func (*PostRequest) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{6}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PostRequest) GetPath() []byte {
@@ -449,7 +449,7 @@ type PostResponse struct {
 
 func (x *PostResponse) Reset() {
 	*x = PostResponse{}
-	mi := &file_msg_v1_msg_proto_msgTypes[7]
+	mi := &file_yat_v1_msg_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -461,7 +461,7 @@ func (x *PostResponse) String() string {
 func (*PostResponse) ProtoMessage() {}
 
 func (x *PostResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[7]
+	mi := &file_yat_v1_msg_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -474,7 +474,7 @@ func (x *PostResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PostResponse.ProtoReflect.Descriptor instead.
 func (*PostResponse) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{7}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PostResponse) GetInbox() []byte {
@@ -495,14 +495,14 @@ type SubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          []byte                 `protobuf:"bytes,2,opt,name=path" json:"path,omitempty"`
 	Limit         *int64                 `protobuf:"varint,6,opt,name=limit" json:"limit,omitempty"`
-	Flags         *SubFlags              `protobuf:"varint,8,opt,name=flags,enum=msg.v1.SubFlags" json:"flags,omitempty"`
+	Flags         *SubFlags              `protobuf:"varint,8,opt,name=flags,enum=yat.v1.SubFlags" json:"flags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SubRequest) Reset() {
 	*x = SubRequest{}
-	mi := &file_msg_v1_msg_proto_msgTypes[8]
+	mi := &file_yat_v1_msg_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -514,7 +514,7 @@ func (x *SubRequest) String() string {
 func (*SubRequest) ProtoMessage() {}
 
 func (x *SubRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[8]
+	mi := &file_yat_v1_msg_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -527,7 +527,7 @@ func (x *SubRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubRequest.ProtoReflect.Descriptor instead.
 func (*SubRequest) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{8}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SubRequest) GetPath() []byte {
@@ -563,7 +563,7 @@ type SubResponse struct {
 
 func (x *SubResponse) Reset() {
 	*x = SubResponse{}
-	mi := &file_msg_v1_msg_proto_msgTypes[9]
+	mi := &file_yat_v1_msg_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +575,7 @@ func (x *SubResponse) String() string {
 func (*SubResponse) ProtoMessage() {}
 
 func (x *SubResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_msg_v1_msg_proto_msgTypes[9]
+	mi := &file_yat_v1_msg_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +588,7 @@ func (x *SubResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubResponse.ProtoReflect.Descriptor instead.
 func (*SubResponse) Descriptor() ([]byte, []int) {
-	return file_msg_v1_msg_proto_rawDescGZIP(), []int{9}
+	return file_yat_v1_msg_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SubResponse) GetPath() []byte {
@@ -619,11 +619,11 @@ func (x *SubResponse) GetUuid() []byte {
 	return nil
 }
 
-var File_msg_v1_msg_proto protoreflect.FileDescriptor
+var File_yat_v1_msg_proto protoreflect.FileDescriptor
 
-const file_msg_v1_msg_proto_rawDesc = "" +
+const file_yat_v1_msg_proto_rawDesc = "" +
 	"\n" +
-	"\x10msg/v1/msg.proto\x12\x06msg.v1\"J\n" +
+	"\x10yat/v1/msg.proto\x12\x06yat.v1\"J\n" +
 	"\n" +
 	"PubRequest\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
@@ -654,7 +654,7 @@ const file_msg_v1_msg_proto_rawDesc = "" +
 	"SubRequest\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
 	"\x05limit\x18\x06 \x01(\x03R\x05limit\x12&\n" +
-	"\x05flags\x18\b \x01(\x0e2\x10.msg.v1.SubFlagsR\x05flags\"_\n" +
+	"\x05flags\x18\b \x01(\x0e2\x10.yat.v1.SubFlagsR\x05flags\"_\n" +
 	"\vSubResponse\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\fR\x04path\x12\x14\n" +
 	"\x05inbox\x18\x03 \x01(\fR\x05inbox\x12\x12\n" +
@@ -665,53 +665,53 @@ const file_msg_v1_msg_proto_rawDesc = "" +
 	"\x11SUB_FLAGS_HANDLER\x10\x012\x99\x02\n" +
 	"\n" +
 	"MsgService\x120\n" +
-	"\x03Pub\x12\x12.msg.v1.PubRequest\x1a\x13.msg.v1.PubResponse\"\x00\x127\n" +
-	"\x04Mpub\x12\x13.msg.v1.MpubRequest\x1a\x14.msg.v1.MpubResponse\"\x00(\x010\x01\x125\n" +
-	"\x04Emit\x12\x13.msg.v1.EmitRequest\x1a\x14.msg.v1.EmitResponse\"\x00(\x01\x125\n" +
-	"\x04Post\x12\x13.msg.v1.PostRequest\x1a\x14.msg.v1.PostResponse\"\x000\x01\x122\n" +
-	"\x03Sub\x12\x12.msg.v1.SubRequest\x1a\x13.msg.v1.SubResponse\"\x000\x01Bv\n" +
+	"\x03Pub\x12\x12.yat.v1.PubRequest\x1a\x13.yat.v1.PubResponse\"\x00\x127\n" +
+	"\x04Mpub\x12\x13.yat.v1.MpubRequest\x1a\x14.yat.v1.MpubResponse\"\x00(\x010\x01\x125\n" +
+	"\x04Emit\x12\x13.yat.v1.EmitRequest\x1a\x14.yat.v1.EmitResponse\"\x00(\x01\x125\n" +
+	"\x04Post\x12\x13.yat.v1.PostRequest\x1a\x14.yat.v1.PostResponse\"\x000\x01\x122\n" +
+	"\x03Sub\x12\x12.yat.v1.SubRequest\x1a\x13.yat.v1.SubResponse\"\x000\x01Bv\n" +
 	"\n" +
-	"com.msg.v1B\bMsgProtoP\x01Z%yat.io/yat/internal/wire/msg/v1;msgv1\xa2\x02\x03MXX\xaa\x02\x06Msg.V1\xca\x02\x06Msg\\V1\xe2\x02\x12Msg\\V1\\GPBMetadata\xea\x02\aMsg::V1b\beditionsp\xe8\a"
+	"com.yat.v1B\bMsgProtoP\x01Z%yat.io/yat/internal/wire/yat/v1;yatv1\xa2\x02\x03YXX\xaa\x02\x06Yat.V1\xca\x02\x06Yat\\V1\xe2\x02\x12Yat\\V1\\GPBMetadata\xea\x02\aYat::V1b\beditionsp\xe8\a"
 
 var (
-	file_msg_v1_msg_proto_rawDescOnce sync.Once
-	file_msg_v1_msg_proto_rawDescData []byte
+	file_yat_v1_msg_proto_rawDescOnce sync.Once
+	file_yat_v1_msg_proto_rawDescData []byte
 )
 
-func file_msg_v1_msg_proto_rawDescGZIP() []byte {
-	file_msg_v1_msg_proto_rawDescOnce.Do(func() {
-		file_msg_v1_msg_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_msg_v1_msg_proto_rawDesc), len(file_msg_v1_msg_proto_rawDesc)))
+func file_yat_v1_msg_proto_rawDescGZIP() []byte {
+	file_yat_v1_msg_proto_rawDescOnce.Do(func() {
+		file_yat_v1_msg_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_yat_v1_msg_proto_rawDesc), len(file_yat_v1_msg_proto_rawDesc)))
 	})
-	return file_msg_v1_msg_proto_rawDescData
+	return file_yat_v1_msg_proto_rawDescData
 }
 
-var file_msg_v1_msg_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_msg_v1_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
-var file_msg_v1_msg_proto_goTypes = []any{
-	(SubFlags)(0),        // 0: msg.v1.SubFlags
-	(*PubRequest)(nil),   // 1: msg.v1.PubRequest
-	(*PubResponse)(nil),  // 2: msg.v1.PubResponse
-	(*MpubRequest)(nil),  // 3: msg.v1.MpubRequest
-	(*MpubResponse)(nil), // 4: msg.v1.MpubResponse
-	(*EmitRequest)(nil),  // 5: msg.v1.EmitRequest
-	(*EmitResponse)(nil), // 6: msg.v1.EmitResponse
-	(*PostRequest)(nil),  // 7: msg.v1.PostRequest
-	(*PostResponse)(nil), // 8: msg.v1.PostResponse
-	(*SubRequest)(nil),   // 9: msg.v1.SubRequest
-	(*SubResponse)(nil),  // 10: msg.v1.SubResponse
+var file_yat_v1_msg_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_yat_v1_msg_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_yat_v1_msg_proto_goTypes = []any{
+	(SubFlags)(0),        // 0: yat.v1.SubFlags
+	(*PubRequest)(nil),   // 1: yat.v1.PubRequest
+	(*PubResponse)(nil),  // 2: yat.v1.PubResponse
+	(*MpubRequest)(nil),  // 3: yat.v1.MpubRequest
+	(*MpubResponse)(nil), // 4: yat.v1.MpubResponse
+	(*EmitRequest)(nil),  // 5: yat.v1.EmitRequest
+	(*EmitResponse)(nil), // 6: yat.v1.EmitResponse
+	(*PostRequest)(nil),  // 7: yat.v1.PostRequest
+	(*PostResponse)(nil), // 8: yat.v1.PostResponse
+	(*SubRequest)(nil),   // 9: yat.v1.SubRequest
+	(*SubResponse)(nil),  // 10: yat.v1.SubResponse
 }
-var file_msg_v1_msg_proto_depIdxs = []int32{
-	0,  // 0: msg.v1.SubRequest.flags:type_name -> msg.v1.SubFlags
-	1,  // 1: msg.v1.MsgService.Pub:input_type -> msg.v1.PubRequest
-	3,  // 2: msg.v1.MsgService.Mpub:input_type -> msg.v1.MpubRequest
-	5,  // 3: msg.v1.MsgService.Emit:input_type -> msg.v1.EmitRequest
-	7,  // 4: msg.v1.MsgService.Post:input_type -> msg.v1.PostRequest
-	9,  // 5: msg.v1.MsgService.Sub:input_type -> msg.v1.SubRequest
-	2,  // 6: msg.v1.MsgService.Pub:output_type -> msg.v1.PubResponse
-	4,  // 7: msg.v1.MsgService.Mpub:output_type -> msg.v1.MpubResponse
-	6,  // 8: msg.v1.MsgService.Emit:output_type -> msg.v1.EmitResponse
-	8,  // 9: msg.v1.MsgService.Post:output_type -> msg.v1.PostResponse
-	10, // 10: msg.v1.MsgService.Sub:output_type -> msg.v1.SubResponse
+var file_yat_v1_msg_proto_depIdxs = []int32{
+	0,  // 0: yat.v1.SubRequest.flags:type_name -> yat.v1.SubFlags
+	1,  // 1: yat.v1.MsgService.Pub:input_type -> yat.v1.PubRequest
+	3,  // 2: yat.v1.MsgService.Mpub:input_type -> yat.v1.MpubRequest
+	5,  // 3: yat.v1.MsgService.Emit:input_type -> yat.v1.EmitRequest
+	7,  // 4: yat.v1.MsgService.Post:input_type -> yat.v1.PostRequest
+	9,  // 5: yat.v1.MsgService.Sub:input_type -> yat.v1.SubRequest
+	2,  // 6: yat.v1.MsgService.Pub:output_type -> yat.v1.PubResponse
+	4,  // 7: yat.v1.MsgService.Mpub:output_type -> yat.v1.MpubResponse
+	6,  // 8: yat.v1.MsgService.Emit:output_type -> yat.v1.EmitResponse
+	8,  // 9: yat.v1.MsgService.Post:output_type -> yat.v1.PostResponse
+	10, // 10: yat.v1.MsgService.Sub:output_type -> yat.v1.SubResponse
 	6,  // [6:11] is the sub-list for method output_type
 	1,  // [1:6] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
@@ -719,27 +719,27 @@ var file_msg_v1_msg_proto_depIdxs = []int32{
 	0,  // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_msg_v1_msg_proto_init() }
-func file_msg_v1_msg_proto_init() {
-	if File_msg_v1_msg_proto != nil {
+func init() { file_yat_v1_msg_proto_init() }
+func file_yat_v1_msg_proto_init() {
+	if File_yat_v1_msg_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_msg_v1_msg_proto_rawDesc), len(file_msg_v1_msg_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_yat_v1_msg_proto_rawDesc), len(file_yat_v1_msg_proto_rawDesc)),
 			NumEnums:      1,
 			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_msg_v1_msg_proto_goTypes,
-		DependencyIndexes: file_msg_v1_msg_proto_depIdxs,
-		EnumInfos:         file_msg_v1_msg_proto_enumTypes,
-		MessageInfos:      file_msg_v1_msg_proto_msgTypes,
+		GoTypes:           file_yat_v1_msg_proto_goTypes,
+		DependencyIndexes: file_yat_v1_msg_proto_depIdxs,
+		EnumInfos:         file_yat_v1_msg_proto_enumTypes,
+		MessageInfos:      file_yat_v1_msg_proto_msgTypes,
 	}.Build()
-	File_msg_v1_msg_proto = out.File
-	file_msg_v1_msg_proto_goTypes = nil
-	file_msg_v1_msg_proto_depIdxs = nil
+	File_yat_v1_msg_proto = out.File
+	file_yat_v1_msg_proto_goTypes = nil
+	file_yat_v1_msg_proto_depIdxs = nil
 }

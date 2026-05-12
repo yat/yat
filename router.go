@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	msgv1 "yat.io/yat/internal/wire/msg/v1"
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
 
 type Router struct {
@@ -37,7 +37,7 @@ type rnode struct {
 
 type rsub struct {
 	Sel
-	Flags msgv1.SubFlags
+	Flags yatv1.SubFlags
 }
 
 type rent struct {
@@ -328,5 +328,5 @@ func (n *rnode) match(ee *[]*rent, p Path, exact bool) {
 }
 
 func (e *rent) IsHandler() bool {
-	return e.Flags&msgv1.SubFlags_SUB_FLAGS_HANDLER > 0
+	return e.Flags&yatv1.SubFlags_SUB_FLAGS_HANDLER > 0
 }
