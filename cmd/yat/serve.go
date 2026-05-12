@@ -18,7 +18,6 @@ import (
 	"yat.io/yat"
 	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
-	"yat.io/yat/web"
 )
 
 type ServeCmd struct {
@@ -123,18 +122,15 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 	ys, err := yat.NewServer(yat.ServerConfig{
 		Logger: logger,
 		Rules:  rules,
+		URL:    &cmd.EndpointURL,
 	})
 
 	if err != nil {
 		return err
 	}
 
-	ws := web.NewServer(ys, web.ServerConfig{
-		Logger: logger,
-	})
-
 	hs := &http.Server{
-		Handler: ws,
+		Handler: ys,
 	}
 
 	logger.InfoContext(ctx, "serve",
