@@ -34,7 +34,7 @@ import (
 	"yat.io/yat"
 	"yat.io/yat/pkigen"
 
-	msgv1 "yat.io/yat/internal/wire/msg/v1"
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
 
 const (
@@ -200,13 +200,13 @@ func TestGenServerProtocol(t *testing.T) {
 	t.Run("servehttp_preconditions", func(t *testing.T) {
 		server := newTestServer(t, yat.AllowAll())
 
-		http1 := newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, nil)
+		http1 := newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, nil)
 		http1.Proto = "HTTP/1.1"
 		http1.ProtoMajor = 1
 		http1.ProtoMinor = 1
 
-		method := newGRPCRequest(http.MethodGet, msgv1.MsgService_Mpub_FullMethodName, nil)
-		contentType := newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, nil)
+		method := newGRPCRequest(http.MethodGet, yatv1.MsgService_Mpub_FullMethodName, nil)
+		contentType := newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, nil)
 		contentType.Header.Set("content-type", "application/json")
 		notFound := newGRPCRequest(http.MethodPost, "/yat.MsgService/Missing", nil)
 
@@ -230,7 +230,7 @@ func TestGenServerProtocol(t *testing.T) {
 		}
 
 		w := &testNoFlushWriter{header: make(http.Header)}
-		server.ServeHTTP(w, newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, nil))
+		server.ServeHTTP(w, newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, nil))
 		if w.code != http.StatusInternalServerError {
 			t.Fatalf("unflushable writer status = %d", w.code)
 		}
@@ -241,7 +241,7 @@ func TestGenServerProtocol(t *testing.T) {
 			t.Fatalf("allow = %q", got)
 		}
 
-		badTimeout := newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, nil)
+		badTimeout := newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, nil)
 		badTimeout.Header.Set("grpc-timeout", "tomorrow")
 
 		rr = httptest.NewRecorder()
@@ -251,8 +251,8 @@ func TestGenServerProtocol(t *testing.T) {
 
 	t.Run("grpc_timeout_maps_context_deadline_to_deadline_exceeded", func(t *testing.T) {
 		server := newTestServer(t, yat.AllowAll())
-		subBody := marshalProto(t, &msgv1.SubRequest{Path: []byte("timeout/topic")})
-		req := newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody))
+		subBody := marshalProto(t, &yatv1.SubRequest{Path: []byte("timeout/topic")})
+		req := newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody))
 		req.Header.Set("grpc-timeout", "0n")
 
 		rr := httptest.NewRecorder()
@@ -275,9 +275,9 @@ func TestGenServerProtocol(t *testing.T) {
 		}
 
 		for _, fullMethod := range []string{
-			msgv1.MsgService_Pub_FullMethodName,
-			msgv1.MsgService_Mpub_FullMethodName,
-			msgv1.MsgService_Emit_FullMethodName,
+			yatv1.MsgService_Pub_FullMethodName,
+			yatv1.MsgService_Mpub_FullMethodName,
+			yatv1.MsgService_Emit_FullMethodName,
 		} {
 			for _, tc := range malformedBodies {
 				rr := httptest.NewRecorder()
@@ -286,7 +286,7 @@ func TestGenServerProtocol(t *testing.T) {
 			}
 		}
 
-		badSub := marshalProto(t, &msgv1.SubRequest{Path: []byte("/")})
+		badSub := marshalProto(t, &yatv1.SubRequest{Path: []byte("/")})
 		subCases := []struct {
 			name string
 			body []byte
@@ -297,12 +297,12 @@ func TestGenServerProtocol(t *testing.T) {
 			{name: "truncated", body: appendGRPCHdr(nil, 1, false), want: codes.Unknown},
 			{name: "bad_proto", body: appendGRPCFrame(nil, []byte{0xff}), want: codes.Unknown},
 			{name: "invalid_path", body: appendGRPCFrame(nil, badSub), want: codes.InvalidArgument},
-			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.SubRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
+			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &yatv1.SubRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
 		}
 
 		for _, tc := range subCases {
 			rr := httptest.NewRecorder()
-			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, tc.body))
+			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, tc.body))
 			assertGRPCStatus(t, rr, tc.want)
 		}
 
@@ -316,9 +316,9 @@ func TestGenServerProtocol(t *testing.T) {
 			{name: "long", body: appendGRPCHdr(nil, 4<<20, false), want: codes.Unknown},
 			{name: "truncated", body: appendGRPCHdr(nil, 1, false), want: codes.Unknown},
 			{name: "bad_path_wire_type", body: appendGRPCFrame(nil, []byte{0x10, 0x00}), want: codes.Unknown},
-			{name: "invalid_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{Path: []byte("/")})), want: codes.InvalidArgument},
-			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
-			{name: "negative_limit", body: appendGRPCFrame(nil, marshalProto(t, &msgv1.PostRequest{
+			{name: "invalid_path", body: appendGRPCFrame(nil, marshalProto(t, &yatv1.PostRequest{Path: []byte("/")})), want: codes.InvalidArgument},
+			{name: "postbox_path", body: appendGRPCFrame(nil, marshalProto(t, &yatv1.PostRequest{Path: []byte("@postbox")})), want: codes.InvalidArgument},
+			{name: "negative_limit", body: appendGRPCFrame(nil, marshalProto(t, &yatv1.PostRequest{
 				Path:  []byte("topic"),
 				Limit: &negativeLimit,
 			})), want: codes.InvalidArgument},
@@ -326,23 +326,23 @@ func TestGenServerProtocol(t *testing.T) {
 
 		for _, tc := range postCases {
 			rr := httptest.NewRecorder()
-			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, msgv1.MsgService_Post_FullMethodName, tc.body))
+			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, yatv1.MsgService_Post_FullMethodName, tc.body))
 			assertGRPCStatus(t, rr, tc.want)
 		}
 
 		pubCases := []struct {
 			name string
-			req  *msgv1.PubRequest
+			req  *yatv1.PubRequest
 		}{
-			{name: "wild_path", req: &msgv1.PubRequest{Path: []byte("*")}},
-			{name: "invalid_inbox", req: &msgv1.PubRequest{Path: []byte("topic"), Inbox: []byte("/")}},
-			{name: "wild_inbox", req: &msgv1.PubRequest{Path: []byte("topic"), Inbox: []byte("*")}},
-			{name: "postbox_inbox", req: &msgv1.PubRequest{Path: []byte("topic"), Inbox: []byte("@reply")}},
+			{name: "wild_path", req: &yatv1.PubRequest{Path: []byte("*")}},
+			{name: "invalid_inbox", req: &yatv1.PubRequest{Path: []byte("topic"), Inbox: []byte("/")}},
+			{name: "wild_inbox", req: &yatv1.PubRequest{Path: []byte("topic"), Inbox: []byte("*")}},
+			{name: "postbox_inbox", req: &yatv1.PubRequest{Path: []byte("topic"), Inbox: []byte("@reply")}},
 		}
 
 		for _, tc := range pubCases {
 			rr := httptest.NewRecorder()
-			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, marshalProto(t, tc.req))))
+			server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, marshalProto(t, tc.req))))
 			assertGRPCStatus(t, rr, codes.InvalidArgument)
 		}
 	})
@@ -351,33 +351,33 @@ func TestGenServerProtocol(t *testing.T) {
 		server := newTestServer(t, yat.AllowAll())
 		data := bytes.Repeat([]byte{'x'}, yat.MaxDataLen+1)
 
-		pubBody := marshalProto(t, &msgv1.PubRequest{
+		pubBody := marshalProto(t, &yatv1.PubRequest{
 			Path: []byte("long/topic"),
 			Data: data,
 		})
 		pubRR := httptest.NewRecorder()
-		server.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, pubBody)))
+		server.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, pubBody)))
 		assertGRPCStatus(t, pubRR, codes.InvalidArgument)
 
-		emitBody := marshalProto(t, &msgv1.EmitRequest{
+		emitBody := marshalProto(t, &yatv1.EmitRequest{
 			Path: []byte("long/topic"),
 			Data: data,
 		})
 		emitRR := httptest.NewRecorder()
-		server.ServeHTTP(emitRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Emit_FullMethodName, appendGRPCFrame(nil, emitBody)))
+		server.ServeHTTP(emitRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Emit_FullMethodName, appendGRPCFrame(nil, emitBody)))
 		assertGRPCStatus(t, emitRR, codes.InvalidArgument)
 
 		ack := int64(1)
-		mpubBody := marshalProto(t, &msgv1.MpubRequest{
+		mpubBody := marshalProto(t, &yatv1.MpubRequest{
 			Ack:  &ack,
 			Path: []byte("long/topic"),
 			Data: data,
 		})
 		mpubRR := httptest.NewRecorder()
-		server.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, appendGRPCFrame(nil, mpubBody)))
+		server.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, appendGRPCFrame(nil, mpubBody)))
 		assertGRPCStatus(t, mpubRR, codes.OK)
 
-		var res msgv1.MpubResponse
+		var res yatv1.MpubResponse
 		bodies := grpcFrameBodies(t, mpubRR.Body.Bytes())
 		if len(bodies) != 1 {
 			t.Fatalf("len(mpub bodies) = %d", len(bodies))
@@ -389,12 +389,12 @@ func TestGenServerProtocol(t *testing.T) {
 			t.Fatalf("mpub status = %v", got)
 		}
 
-		postBody := marshalProto(t, &msgv1.PostRequest{
+		postBody := marshalProto(t, &yatv1.PostRequest{
 			Path: []byte("long/topic"),
 			Data: data,
 		})
 		postRR := httptest.NewRecorder()
-		server.ServeHTTP(postRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Post_FullMethodName, appendGRPCFrame(nil, postBody)))
+		server.ServeHTTP(postRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Post_FullMethodName, appendGRPCFrame(nil, postBody)))
 		assertGRPCStatus(t, postRR, codes.InvalidArgument)
 	})
 
@@ -402,13 +402,13 @@ func TestGenServerProtocol(t *testing.T) {
 		runSub := func(tb testing.TB, server *yat.Server, path []byte) (*blockingFlushWriter, context.CancelFunc, <-chan struct{}) {
 			tb.Helper()
 
-			subBody := marshalProto(tb, &msgv1.SubRequest{Path: path})
+			subBody := marshalProto(tb, &yatv1.SubRequest{Path: path})
 			ctx, cancel := context.WithCancel(context.Background())
 			writer := newBlockingFlushWriter()
 			done := make(chan struct{})
 
 			go func() {
-				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
+				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
 				close(done)
 			}()
 
@@ -423,12 +423,12 @@ func TestGenServerProtocol(t *testing.T) {
 				writer, cancel, done := runSub(t, server, path)
 
 				ack1, ack2 := int64(1), int64(2)
-				first := marshalProto(t, &msgv1.MpubRequest{
+				first := marshalProto(t, &yatv1.MpubRequest{
 					Ack:  &ack1,
 					Path: path,
 					Data: []byte("ok"),
 				})
-				second := marshalProto(t, &msgv1.MpubRequest{
+				second := marshalProto(t, &yatv1.MpubRequest{
 					Ack:  &ack2,
 					Data: []byte("missing"),
 				})
@@ -437,7 +437,7 @@ func TestGenServerProtocol(t *testing.T) {
 				body = appendGRPCFrame(body, second)
 
 				rr := httptest.NewRecorder()
-				server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, body))
+				server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, body))
 				assertGRPCStatus(t, rr, codes.OK)
 
 				resBodies := grpcFrameBodies(t, rr.Body.Bytes())
@@ -445,7 +445,7 @@ func TestGenServerProtocol(t *testing.T) {
 					t.Fatalf("len(mpub bodies) = %d", len(resBodies))
 				}
 
-				var res msgv1.MpubResponse
+				var res yatv1.MpubResponse
 				if err := proto.Unmarshal(resBodies[0], &res); err != nil {
 					t.Fatal(err)
 				}
@@ -478,7 +478,7 @@ func TestGenServerProtocol(t *testing.T) {
 					t.Fatalf("len(delivered bodies) = %d", len(delivered))
 				}
 
-				var got msgv1.SubResponse
+				var got yatv1.SubResponse
 				if err := proto.Unmarshal(delivered[0], &got); err != nil {
 					t.Fatal(err)
 				}
@@ -494,11 +494,11 @@ func TestGenServerProtocol(t *testing.T) {
 				path := []byte("required/emit")
 				writer, cancel, done := runSub(t, server, path)
 
-				first := marshalProto(t, &msgv1.EmitRequest{
+				first := marshalProto(t, &yatv1.EmitRequest{
 					Path: path,
 					Data: []byte("ok"),
 				})
-				second := marshalProto(t, &msgv1.EmitRequest{
+				second := marshalProto(t, &yatv1.EmitRequest{
 					Data: []byte("missing"),
 				})
 
@@ -506,7 +506,7 @@ func TestGenServerProtocol(t *testing.T) {
 				body = appendGRPCFrame(body, second)
 
 				rr := httptest.NewRecorder()
-				server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, msgv1.MsgService_Emit_FullMethodName, body))
+				server.ServeHTTP(rr, newGRPCRequest(http.MethodPost, yatv1.MsgService_Emit_FullMethodName, body))
 				assertGRPCStatus(t, rr, codes.InvalidArgument)
 
 				close(writer.release)
@@ -520,7 +520,7 @@ func TestGenServerProtocol(t *testing.T) {
 					t.Fatalf("len(delivered bodies) = %d", len(delivered))
 				}
 
-				var got msgv1.SubResponse
+				var got yatv1.SubResponse
 				if err := proto.Unmarshal(delivered[0], &got); err != nil {
 					t.Fatal(err)
 				}
@@ -534,67 +534,67 @@ func TestGenServerProtocol(t *testing.T) {
 	t.Run("multiple_messages_trailing_bytes_and_permissions", func(t *testing.T) {
 		allowAll := newTestServer(t, yat.AllowAll())
 
-		subReq := marshalProto(t, &msgv1.SubRequest{Path: []byte("topic")})
+		subReq := marshalProto(t, &yatv1.SubRequest{Path: []byte("topic")})
 		subBody := appendGRPCFrame(nil, subReq)
 		subBody = appendGRPCFrame(subBody, subReq)
 		subRR := httptest.NewRecorder()
-		allowAll.ServeHTTP(subRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, subBody))
+		allowAll.ServeHTTP(subRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, subBody))
 		assertGRPCStatus(t, subRR, codes.Unknown)
 
-		pubReq := marshalProto(t, &msgv1.PubRequest{Path: []byte("topic")})
+		pubReq := marshalProto(t, &yatv1.PubRequest{Path: []byte("topic")})
 		pubBody := appendGRPCFrame(nil, pubReq)
 		pubBody = appendGRPCFrame(pubBody, pubReq)
 		pubRR := httptest.NewRecorder()
-		allowAll.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, pubBody))
+		allowAll.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, pubBody))
 		assertGRPCStatus(t, pubRR, codes.Unknown)
 
-		postReq := marshalProto(t, &msgv1.PostRequest{Path: []byte("topic")})
+		postReq := marshalProto(t, &yatv1.PostRequest{Path: []byte("topic")})
 		postBody := appendGRPCFrame(nil, postReq)
 		postBody = appendGRPCFrame(postBody, postReq)
 		postRR := httptest.NewRecorder()
-		allowAll.ServeHTTP(postRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Post_FullMethodName, postBody))
+		allowAll.ServeHTTP(postRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Post_FullMethodName, postBody))
 		assertGRPCStatus(t, postRR, codes.Unknown)
 
 		negativeLimit := int64(-1)
-		negBody := marshalProto(t, &msgv1.SubRequest{
+		negBody := marshalProto(t, &yatv1.SubRequest{
 			Path:  []byte("topic"),
 			Limit: &negativeLimit,
 		})
 		negRR := httptest.NewRecorder()
-		allowAll.ServeHTTP(negRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, negBody)))
+		allowAll.ServeHTTP(negRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, negBody)))
 		assertGRPCStatus(t, negRR, codes.InvalidArgument)
 
 		denyAll := newTestServer(t, &yat.RuleSet{})
 
-		authPub := marshalProto(t, &msgv1.PubRequest{Path: []byte("auth/topic")})
+		authPub := marshalProto(t, &yatv1.PubRequest{Path: []byte("auth/topic")})
 		authPubRR := httptest.NewRecorder()
-		denyAll.ServeHTTP(authPubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, authPub)))
+		denyAll.ServeHTTP(authPubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, authPub)))
 		assertGRPCStatus(t, authPubRR, codes.PermissionDenied)
 		if authPubRR.Body.Len() != 0 {
 			t.Fatalf("pub permission body length = %d", authPubRR.Body.Len())
 		}
 
-		authSub := marshalProto(t, &msgv1.SubRequest{Path: []byte("auth/topic")})
+		authSub := marshalProto(t, &yatv1.SubRequest{Path: []byte("auth/topic")})
 		authSubRR := httptest.NewRecorder()
-		denyAll.ServeHTTP(authSubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, authSub)))
+		denyAll.ServeHTTP(authSubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, authSub)))
 		assertHTTPStatus(t, authSubRR, http.StatusForbidden)
 
-		badTokenReq := newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, authPub))
+		badTokenReq := newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, authPub))
 		badTokenReq.Header.Set("authorization", "Bearer not-a-jwt")
 		badTokenRR := httptest.NewRecorder()
 		denyAll.ServeHTTP(badTokenRR, badTokenReq)
 		assertHTTPStatus(t, badTokenRR, http.StatusUnauthorized)
 
 		ack := int64(1)
-		mpubReq := marshalProto(t, &msgv1.MpubRequest{
+		mpubReq := marshalProto(t, &yatv1.MpubRequest{
 			Ack:  &ack,
 			Path: []byte("auth/topic"),
 		})
 		mpubRR := httptest.NewRecorder()
-		denyAll.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, appendGRPCFrame(nil, mpubReq)))
+		denyAll.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, appendGRPCFrame(nil, mpubReq)))
 		assertGRPCStatus(t, mpubRR, codes.OK)
 
-		var mpubRes msgv1.MpubResponse
+		var mpubRes yatv1.MpubResponse
 		bodies := grpcFrameBodies(t, mpubRR.Body.Bytes())
 		if len(bodies) != 1 {
 			t.Fatalf("len(mpub bodies) = %d", len(bodies))
@@ -606,9 +606,9 @@ func TestGenServerProtocol(t *testing.T) {
 			t.Fatalf("mpub permission status = %v", got)
 		}
 
-		emitReq := marshalProto(t, &msgv1.EmitRequest{Path: []byte("auth/topic")})
+		emitReq := marshalProto(t, &yatv1.EmitRequest{Path: []byte("auth/topic")})
 		emitRR := httptest.NewRecorder()
-		denyAll.ServeHTTP(emitRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Emit_FullMethodName, appendGRPCFrame(nil, emitReq)))
+		denyAll.ServeHTTP(emitRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Emit_FullMethodName, appendGRPCFrame(nil, emitReq)))
 		assertGRPCStatus(t, emitRR, codes.PermissionDenied)
 		if emitRR.Body.Len() != 0 {
 			t.Fatalf("emit permission body length = %d", emitRR.Body.Len())
@@ -618,24 +618,24 @@ func TestGenServerProtocol(t *testing.T) {
 	t.Run("subscription_initial_flush_and_delivery_use_synctest", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			server := newTestServer(t, yat.AllowAll())
-			subBody := marshalProto(t, &msgv1.SubRequest{Path: []byte("ready/topic")})
+			subBody := marshalProto(t, &yatv1.SubRequest{Path: []byte("ready/topic")})
 
 			ctx, cancel := context.WithCancel(context.Background())
 			writer := newBlockingFlushWriter()
 			done := make(chan struct{})
 			go func() {
-				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
+				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
 				close(done)
 			}()
 
 			<-writer.first
 
-			pubBody := marshalProto(t, &msgv1.PubRequest{
+			pubBody := marshalProto(t, &yatv1.PubRequest{
 				Path: []byte("ready/topic"),
 				Data: []byte("first"),
 			})
 			pubRR := httptest.NewRecorder()
-			server.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, pubBody)))
+			server.ServeHTTP(pubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, pubBody)))
 			assertGRPCStatus(t, pubRR, codes.OK)
 
 			if writer.body.Len() != 0 {
@@ -650,7 +650,7 @@ func TestGenServerProtocol(t *testing.T) {
 				t.Fatalf("len(delivered bodies) = %d", len(bodies))
 			}
 
-			var got msgv1.SubResponse
+			var got yatv1.SubResponse
 			if err := proto.Unmarshal(bodies[0], &got); err != nil {
 				t.Fatal(err)
 			}
@@ -668,7 +668,7 @@ func TestGenServerProtocol(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			server := newTestServer(t, yat.AllowAll())
 			limit := int64(2)
-			subBody := marshalProto(t, &msgv1.SubRequest{
+			subBody := marshalProto(t, &yatv1.SubRequest{
 				Path:  []byte("limit/topic"),
 				Limit: &limit,
 			})
@@ -679,25 +679,25 @@ func TestGenServerProtocol(t *testing.T) {
 			writer := newBlockingFlushWriter()
 			done := make(chan struct{})
 			go func() {
-				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, msgv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
+				server.ServeHTTP(writer, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, subBody)).WithContext(ctx))
 				close(done)
 			}()
 
 			<-writer.first
 
 			dataLen := maxPayloadLen(t, yat.MaxDataLen, func(n int) bool {
-				req := &msgv1.MpubRequest{
+				req := &yatv1.MpubRequest{
 					Path: []byte("limit/topic"),
 					Data: make([]byte, n),
 				}
 				return proto.Size(req) <= maxPubFrameBodyLen
 			})
 
-			first := marshalProto(t, &msgv1.MpubRequest{
+			first := marshalProto(t, &yatv1.MpubRequest{
 				Path: []byte("limit/topic"),
 				Data: bytes.Repeat([]byte{0x11}, dataLen),
 			})
-			second := marshalProto(t, &msgv1.MpubRequest{
+			second := marshalProto(t, &yatv1.MpubRequest{
 				Path: []byte("limit/topic"),
 				Data: bytes.Repeat([]byte{0x22}, dataLen),
 			})
@@ -706,7 +706,7 @@ func TestGenServerProtocol(t *testing.T) {
 			mpubBody = appendGRPCFrame(mpubBody, second)
 
 			mpubRR := httptest.NewRecorder()
-			server.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, msgv1.MsgService_Mpub_FullMethodName, mpubBody))
+			server.ServeHTTP(mpubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Mpub_FullMethodName, mpubBody))
 			assertGRPCStatus(t, mpubRR, codes.OK)
 
 			close(writer.release)
@@ -719,7 +719,7 @@ func TestGenServerProtocol(t *testing.T) {
 				t.Fatalf("len(delivered bodies) = %d", len(bodies))
 			}
 
-			var got msgv1.SubResponse
+			var got yatv1.SubResponse
 			if err := proto.Unmarshal(bodies[0], &got); err != nil {
 				t.Fatal(err)
 			}
@@ -2728,7 +2728,7 @@ func nearMaxMpubData(tb testing.TB, path yat.Path, inbox yat.Path) []byte {
 
 	ack := int64(1)
 	n := maxPayloadLen(tb, yat.MaxDataLen, func(size int) bool {
-		req := &msgv1.MpubRequest{
+		req := &yatv1.MpubRequest{
 			Ack:   &ack,
 			Path:  []byte(path.String()),
 			Inbox: []byte(inbox.String()),

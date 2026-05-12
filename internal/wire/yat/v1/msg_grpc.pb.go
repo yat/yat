@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             (unknown)
-// source: msg/v1/msg.proto
+// source: yat/v1/msg.proto
 
-package msgv1
+package yatv1
 
 import (
 	context "context"
@@ -19,11 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MsgService_Pub_FullMethodName  = "/msg.v1.MsgService/Pub"
-	MsgService_Mpub_FullMethodName = "/msg.v1.MsgService/Mpub"
-	MsgService_Emit_FullMethodName = "/msg.v1.MsgService/Emit"
-	MsgService_Post_FullMethodName = "/msg.v1.MsgService/Post"
-	MsgService_Sub_FullMethodName  = "/msg.v1.MsgService/Sub"
+	MsgService_Pub_FullMethodName  = "/yat.v1.MsgService/Pub"
+	MsgService_Mpub_FullMethodName = "/yat.v1.MsgService/Mpub"
+	MsgService_Emit_FullMethodName = "/yat.v1.MsgService/Emit"
+	MsgService_Post_FullMethodName = "/yat.v1.MsgService/Post"
+	MsgService_Sub_FullMethodName  = "/yat.v1.MsgService/Sub"
 )
 
 // MsgServiceClient is the client API for MsgService service.
@@ -264,7 +264,7 @@ type MsgService_SubServer = grpc.ServerStreamingServer[SubResponse]
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var MsgService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "msg.v1.MsgService",
+	ServiceName: "yat.v1.MsgService",
 	HandlerType: (*MsgServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -295,5 +295,5 @@ var MsgService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "msg/v1/msg.proto",
+	Metadata: "yat/v1/msg.proto",
 }

@@ -16,13 +16,13 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/jwt"
 
-	msgv1 "yat.io/yat/internal/wire/msg/v1"
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
 
 type Client struct {
 	config ClientConfig
 	conn   *grpc.ClientConn
-	mc     msgv1.MsgServiceClient
+	mc     yatv1.MsgServiceClient
 }
 
 type ClientConfig struct {
@@ -62,7 +62,7 @@ func NewClient(server string, config ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
-	mc := msgv1.NewMsgServiceClient(conn)
+	mc := yatv1.NewMsgServiceClient(conn)
 
 	c := &Client{
 		config: config,
@@ -88,7 +88,7 @@ func (c *Client) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	req := &msgv1.PubRequest{
+	req := &yatv1.PubRequest{
 		Path:  m.Path.bytes(),
 		Inbox: m.Inbox.bytes(),
 		Data:  m.Data,
@@ -118,7 +118,7 @@ func (c *Client) NewPublisher(ctx context.Context) (*PublishStream, error) {
 		context: ctx,
 		cancel:  cancel,
 		stream:  stream,
-		acks:    map[int64]chan *msgv1.MpubResponse{},
+		acks:    map[int64]chan *yatv1.MpubResponse{},
 	}
 
 	go p.recv()
@@ -167,7 +167,7 @@ func (c *Client) Post(ctx context.Context, req Req, f func(Res) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	in := &msgv1.PostRequest{
+	in := &yatv1.PostRequest{
 		Path:  req.Path.bytes(),
 		Data:  req.Data,
 		Limit: new(int64(req.Limit)),
@@ -275,7 +275,7 @@ func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.
 		return nil, net.ErrClosed
 	}
 
-	req := &msgv1.SubRequest{
+	req := &yatv1.SubRequest{
 		Path: sel.Path.bytes(),
 	}
 
@@ -284,7 +284,7 @@ func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.
 	}
 
 	if handler {
-		req.Flags = new(msgv1.SubFlags_SUB_FLAGS_HANDLER)
+		req.Flags = new(yatv1.SubFlags_SUB_FLAGS_HANDLER)
 	}
 
 	// FIX: transform some gRPC errors into our own client errors
@@ -394,11 +394,11 @@ func TokenFile(name string) CredsFunc {
 type PublishStream struct {
 	context context.Context
 	cancel  context.CancelCauseFunc
-	stream  grpc.BidiStreamingClient[msgv1.MpubRequest, msgv1.MpubResponse]
+	stream  grpc.BidiStreamingClient[yatv1.MpubRequest, yatv1.MpubResponse]
 
 	mu   sync.Mutex
 	ackn int64
-	acks map[int64]chan *msgv1.MpubResponse
+	acks map[int64]chan *yatv1.MpubResponse
 }
 
 // Publish publishes m.
@@ -416,7 +416,7 @@ func (p *PublishStream) Publish(ctx context.Context, m Msg) error {
 		return err
 	}
 
-	resC := make(chan *msgv1.MpubResponse, 1)
+	resC := make(chan *yatv1.MpubResponse, 1)
 
 	p.mu.Lock()
 	p.ackn++
@@ -430,7 +430,7 @@ func (p *PublishStream) Publish(ctx context.Context, m Msg) error {
 		delete(p.acks, ack)
 	}()
 
-	err := p.stream.Send(&msgv1.MpubRequest{
+	err := p.stream.Send(&yatv1.MpubRequest{
 		Ack:   &ack,
 		Path:  m.Path.bytes(),
 		Inbox: m.Inbox.bytes(),
@@ -498,7 +498,7 @@ func (p *PublishStream) recv() {
 type EmitStream struct {
 	context context.Context
 	cancel  context.CancelCauseFunc
-	stream  grpc.ClientStreamingClient[msgv1.EmitRequest, msgv1.EmitResponse]
+	stream  grpc.ClientStreamingClient[yatv1.EmitRequest, yatv1.EmitResponse]
 }
 
 // Emit publishes m without waiting for the server to respond.
@@ -511,7 +511,7 @@ func (e *EmitStream) Emit(m Msg) error {
 		return err
 	}
 
-	req := &msgv1.EmitRequest{
+	req := &yatv1.EmitRequest{
 		Path:  m.Path.bytes(),
 		Inbox: m.Inbox.bytes(),
 		Data:  m.Data,
