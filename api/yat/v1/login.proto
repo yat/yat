@@ -1,0 +1,42 @@
+edition = "2023";
+
+package yat.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service LoginService {
+  rpc Login(LoginRequest) returns (stream LoginResponse) {}
+  rpc RefreshLogin(RefreshLoginRequest) returns (RefreshLoginResponse) {}
+}
+
+message LoginRequest {}
+
+message LoginResponse {
+  oneof event {
+    LoginStart start = 1;
+    LoginCreds creds = 2;
+    LoginError error = 3;
+  }
+}
+
+message RefreshLoginRequest {
+  string refresh = 1;
+}
+
+message RefreshLoginResponse {
+  LoginCreds creds = 1;
+}
+
+message LoginStart {
+  string url = 1;
+}
+
+message LoginCreds {
+  string token = 1;
+  string refresh = 2;
+  google.protobuf.Timestamp expiry = 3;
+}
+
+message LoginError {
+  string message = 1;
+}
