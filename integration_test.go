@@ -10,12 +10,14 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,8 +28,11 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/google/uuid"
 	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -2302,6 +2307,248 @@ func TestGenAuthMTLS(t *testing.T) {
 	})
 }
 
+func TestGenServerLoginConfigValidation(t *testing.T) {
+	const clientID = "yat-login-test"
+
+	issuer := newAuthIssuer(t)
+	provider := mustOIDCProvider(t, issuer)
+
+	validURL := mustParseURL(t, "https://login.example.test")
+	loginConfig := &oauth2.Config{ClientID: clientID}
+	loginVerifier := provider.Verifier(&oidc.Config{ClientID: clientID})
+
+	cases := []struct {
+		name string
+		cfg  yat.ServerConfig
+		want string
+	}{
+		{
+			name: "invalid_url_scheme",
+			cfg: yat.ServerConfig{
+				URL: mustParseURL(t, "http://login.example.test"),
+			},
+			want: "invalid server URL",
+		},
+		{
+			name: "invalid_url_host",
+			cfg: yat.ServerConfig{
+				URL: &url.URL{Scheme: "https"},
+			},
+			want: "invalid server URL",
+		},
+		{
+			name: "login_without_url",
+			cfg: yat.ServerConfig{
+				LoginConfig:   loginConfig,
+				LoginVerifier: loginVerifier,
+			},
+			want: "server URL is not configured",
+		},
+		{
+			name: "login_without_oauth2",
+			cfg: yat.ServerConfig{
+				URL:           validURL,
+				LoginVerifier: loginVerifier,
+			},
+			want: "login OAuth2 is not configured",
+		},
+		{
+			name: "login_without_verifier",
+			cfg: yat.ServerConfig{
+				URL:         validURL,
+				LoginConfig: loginConfig,
+			},
+			want: "login ID token verifier is not configured",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := yat.NewServer(tc.cfg)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("NewServer error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenServerLogin(t *testing.T) {
+	const clientID = "yat-login-test"
+
+	issuer := newAuthIssuer(t)
+	path := yat.NewPath("login/auth/topic")
+	oauth := newLoginOAuthServer(t, issuer.rawToken(t, authTokenSpec{
+		Subject:  "login-subject",
+		Audience: []string{clientID},
+	}))
+	server := startLoginTestServer(t, clientID, issuer, oauth, path)
+
+	t.Run("bad_start_state", func(t *testing.T) {
+		cases := []struct {
+			name  string
+			state string
+		}{
+			{name: "bad_base64", state: "!"},
+			{name: "short_uuid", state: rawLoginState([]byte("short"))},
+			{name: "wrong_uuid_version", state: rawLoginUUIDState(4)},
+			{name: "expired_uuidv7", state: rawLoginUUIDState(7)},
+		}
+
+		for _, tc := range cases {
+			if got := server.browserStatus(t, server.stateURL(tc.state)); got != http.StatusBadRequest {
+				t.Fatalf("%s status = %d, want %d", tc.name, got, http.StatusBadRequest)
+			}
+		}
+	})
+
+	t.Run("start_state_is_single_use", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		stream, startURL := server.startLogin(t, ctx)
+
+		if got := server.noRedirectStatus(t, startURL); got != http.StatusFound {
+			t.Fatalf("first start status = %d, want %d", got, http.StatusFound)
+		}
+
+		if got := server.noRedirectStatus(t, startURL); got != http.StatusNotFound {
+			t.Fatalf("second start status = %d, want %d", got, http.StatusNotFound)
+		}
+
+		cancel()
+		_, _ = stream.Recv()
+	})
+
+	t.Run("callback_without_pending_state", func(t *testing.T) {
+		if got := server.browserStatus(t, server.callbackURL(newLoginState(t))); got != http.StatusNotFound {
+			t.Fatalf("callback status = %d, want %d", got, http.StatusNotFound)
+		}
+	})
+
+	t.Run("login_creds_authorize_publish", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), asyncTestTimeout)
+		defer cancel()
+
+		oauth.nextAuth("auth-code", "")
+		stream, startURL := server.startLogin(t, ctx)
+
+		if got := server.browserStatus(t, startURL); got != http.StatusOK {
+			t.Fatalf("browser status = %d, want %d", got, http.StatusOK)
+		}
+
+		authReq := oauth.receiveAuthRequest(t)
+		tokenReq := oauth.receiveTokenRequest(t)
+		assertLoginPKCE(t, authReq, tokenReq)
+
+		creds := receiveLoginCreds(t, stream)
+		if got := creds.GetRefresh(); got != "login-refresh-token" {
+			t.Fatalf("refresh token = %q, want login-refresh-token", got)
+		}
+
+		id, err := server.verifier.Verify(ctx, creds.GetToken())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if id.Subject != "login-subject" {
+			t.Fatalf("id token subject = %q, want login-subject", id.Subject)
+		}
+
+		authClient := server.authClient(t, creds.GetToken())
+		defer closeClient(t, authClient)
+
+		if err := authClient.Publish(ctx, yat.Msg{
+			Path: path,
+			Data: []byte("login-authenticated-publish"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("refresh_login", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), asyncTestTimeout)
+		defer cancel()
+
+		refresh := "login-refresh-token"
+		refreshed, err := server.login.RefreshLogin(ctx, &yatv1.RefreshLoginRequest{
+			Refresh: &refresh,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if refreshed.GetCreds() == nil {
+			t.Fatal("refresh returned no credentials")
+		}
+
+		if got := refreshed.GetCreds().GetRefresh(); got != "login-refresh-token-2" {
+			t.Fatalf("refreshed token = %q, want login-refresh-token-2", got)
+		}
+
+		req := oauth.receiveTokenRequest(t)
+		if got := req.Get("grant_type"); got != "refresh_token" {
+			t.Fatalf("refresh grant_type = %q, want refresh_token", got)
+		}
+		if got := req.Get("refresh_token"); got != refresh {
+			t.Fatalf("refresh_token = %q, want %q", got, refresh)
+		}
+	})
+
+	t.Run("refresh_login_errors", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), asyncTestTimeout)
+		defer cancel()
+
+		if _, err := server.login.RefreshLogin(ctx, &yatv1.RefreshLoginRequest{}); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("missing refresh error = %v, want %v", err, codes.FailedPrecondition)
+		}
+
+		badRefresh := "bad-refresh-token"
+		if _, err := server.login.RefreshLogin(ctx, &yatv1.RefreshLoginRequest{Refresh: &badRefresh}); status.Code(err) != codes.Internal {
+			t.Fatalf("bad refresh error = %v, want %v", err, codes.Internal)
+		}
+
+		if got := oauth.receiveTokenRequest(t).Get("refresh_token"); got != badRefresh {
+			t.Fatalf("bad refresh_token = %q, want %q", got, badRefresh)
+		}
+
+		noIDRefresh := "refresh-no-id-token"
+		_, err := server.login.RefreshLogin(ctx, &yatv1.RefreshLoginRequest{Refresh: &noIDRefresh})
+		assertErrContains(t, err, "no id_token")
+
+		if got := oauth.receiveTokenRequest(t).Get("refresh_token"); got != noIDRefresh {
+			t.Fatalf("missing ID token refresh_token = %q, want %q", got, noIDRefresh)
+		}
+	})
+
+	t.Run("callback_errors", func(t *testing.T) {
+		t.Run("oauth_error", func(t *testing.T) {
+			err := server.finishFailedLogin(t, oauth, "", "access_denied")
+			if got := err.GetMessage(); got != "access_denied" {
+				t.Fatalf("oauth error message = %q, want access_denied", got)
+			}
+		})
+
+		t.Run("token_exchange_failure", func(t *testing.T) {
+			_ = server.finishFailedLogin(t, oauth, "bad-exchange", "")
+
+			if got := oauth.receiveTokenRequest(t).Get("code"); got != "bad-exchange" {
+				t.Fatalf("bad exchange code = %q, want bad-exchange", got)
+			}
+		})
+
+		t.Run("missing_id_token", func(t *testing.T) {
+			err := server.finishFailedLogin(t, oauth, "no-id-token", "")
+			if got := err.GetMessage(); got != "no id_token" {
+				t.Fatalf("missing ID token error = %q, want no id_token", got)
+			}
+
+			if got := oauth.receiveTokenRequest(t).Get("code"); got != "no-id-token" {
+				t.Fatalf("missing ID token code = %q, want no-id-token", got)
+			}
+		})
+	})
+}
+
 type subProbe struct {
 	cancel context.CancelFunc
 	sub    yat.Sub
@@ -2809,6 +3056,452 @@ func (w *blockingFlushWriter) Flush() {
 	}
 }
 
+type loginOAuthServer struct {
+	server *httptest.Server
+
+	idToken   string
+	authReqs  chan url.Values
+	tokenReqs chan url.Values
+
+	authMu   sync.Mutex
+	authCode string
+	authErr  string
+
+	codeMu  sync.Mutex
+	codeReq map[string]url.Values
+}
+
+func newLoginOAuthServer(tb testing.TB, idToken string) *loginOAuthServer {
+	tb.Helper()
+
+	oauth := &loginOAuthServer{
+		idToken:   idToken,
+		authReqs:  make(chan url.Values, 16),
+		tokenReqs: make(chan url.Values, 16),
+		authCode:  "auth-code",
+		codeReq:   map[string]url.Values{},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/auth", oauth.handleAuth)
+	mux.HandleFunc("/token", oauth.handleToken)
+
+	oauth.server = httptest.NewServer(mux)
+	tb.Cleanup(oauth.server.Close)
+
+	return oauth
+}
+
+func (o *loginOAuthServer) endpoint() oauth2.Endpoint {
+	return oauth2.Endpoint{
+		AuthURL:   o.server.URL + "/auth",
+		TokenURL:  o.server.URL + "/token",
+		AuthStyle: oauth2.AuthStyleInParams,
+	}
+}
+
+func (o *loginOAuthServer) nextAuth(code string, oauthErr string) {
+	o.authMu.Lock()
+	o.authCode = code
+	o.authErr = oauthErr
+	o.authMu.Unlock()
+}
+
+func (o *loginOAuthServer) receiveAuthRequest(tb testing.TB) url.Values {
+	tb.Helper()
+
+	select {
+	case req := <-o.authReqs:
+		return req
+	case <-time.After(asyncTestTimeout):
+		tb.Fatal("timed out waiting for auth request")
+		return nil
+	}
+}
+
+func (o *loginOAuthServer) receiveTokenRequest(tb testing.TB) url.Values {
+	tb.Helper()
+
+	select {
+	case req := <-o.tokenReqs:
+		return req
+	case <-time.After(asyncTestTimeout):
+		tb.Fatal("timed out waiting for token request")
+		return nil
+	}
+}
+
+func (o *loginOAuthServer) handleAuth(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	o.authReqs <- query
+
+	o.authMu.Lock()
+	code := o.authCode
+	oauthErr := o.authErr
+	o.authMu.Unlock()
+
+	callback, err := url.Parse(query.Get("redirect_uri"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	values := callback.Query()
+	values.Set("state", query.Get("state"))
+	if oauthErr != "" {
+		values.Set("error", oauthErr)
+	} else {
+		o.codeMu.Lock()
+		o.codeReq[code] = cloneURLValues(query)
+		o.codeMu.Unlock()
+		values.Set("code", code)
+	}
+	callback.RawQuery = values.Encode()
+
+	http.Redirect(w, r, callback.String(), http.StatusFound)
+}
+
+func (o *loginOAuthServer) handleToken(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	form := cloneURLValues(r.PostForm)
+	o.tokenReqs <- form
+
+	switch form.Get("grant_type") {
+	case "authorization_code":
+		o.handleAuthCodeToken(w, form)
+	case "refresh_token":
+		o.handleRefreshToken(w, form)
+	default:
+		http.Error(w, "unsupported grant type", http.StatusBadRequest)
+	}
+}
+
+func (o *loginOAuthServer) handleAuthCodeToken(w http.ResponseWriter, form url.Values) {
+	code := form.Get("code")
+	if code == "bad-exchange" {
+		http.Error(w, "bad exchange", http.StatusBadRequest)
+		return
+	}
+
+	o.codeMu.Lock()
+	authReq, ok := o.codeReq[code]
+	o.codeMu.Unlock()
+	if !ok {
+		http.Error(w, "unknown code", http.StatusBadRequest)
+		return
+	}
+
+	challenge := oauth2.S256ChallengeFromVerifier(form.Get("code_verifier"))
+	if challenge != authReq.Get("code_challenge") {
+		http.Error(w, "bad code verifier", http.StatusBadRequest)
+		return
+	}
+
+	body := map[string]any{
+		"access_token":  "login-access-token",
+		"refresh_token": "login-refresh-token",
+		"token_type":    "Bearer",
+		"expires_in":    3600,
+	}
+	if code != "no-id-token" {
+		body["id_token"] = o.idToken
+	}
+
+	w.Header().Set("content-type", "application/json")
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func (o *loginOAuthServer) handleRefreshToken(w http.ResponseWriter, form url.Values) {
+	refresh := form.Get("refresh_token")
+	if refresh != "login-refresh-token" && refresh != "refresh-no-id-token" {
+		http.Error(w, "bad refresh token", http.StatusBadRequest)
+		return
+	}
+
+	body := map[string]any{
+		"access_token":  "refreshed-access-token",
+		"refresh_token": "login-refresh-token-2",
+		"token_type":    "Bearer",
+		"expires_in":    3600,
+	}
+	if refresh != "refresh-no-id-token" {
+		body["id_token"] = o.idToken
+	}
+
+	w.Header().Set("content-type", "application/json")
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+type loginTestServer struct {
+	serverURL  *url.URL
+	target     string
+	rootCAs    *x509.CertPool
+	browser    *http.Client
+	noRedirect *http.Client
+	login      yatv1.LoginServiceClient
+	verifier   *oidc.IDTokenVerifier
+}
+
+func startLoginTestServer(tb testing.TB, clientID string, issuer *authIssuer, oauth *loginOAuthServer, path yat.Path) *loginTestServer {
+	tb.Helper()
+
+	provider := mustOIDCProvider(tb, issuer)
+	ca := newTestCA(tb)
+	ts := httptest.NewUnstartedServer(nil)
+	ts.EnableHTTP2 = true
+
+	host, _, err := net.SplitHostPort(ts.Listener.Addr().String())
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	serverURL := mustParseURL(tb, "https://"+ts.Listener.Addr().String())
+	rules := mustRuleSet(tb, issuer.context(), []yat.Rule{{
+		JWT: authJWTCond(issuer.url, clientID, "login-subject"),
+		Grants: []yat.Grant{{
+			Paths:   []string{path.String()},
+			Actions: []yat.Action{yat.ActionPub},
+		}},
+	}})
+
+	verifier := provider.Verifier(&oidc.Config{ClientID: clientID})
+	server, err := yat.NewServer(yat.ServerConfig{
+		URL:   serverURL,
+		Rules: rules,
+		LoginConfig: &oauth2.Config{
+			ClientID:    clientID,
+			RedirectURL: serverURL.JoinPath("login/callback").String(),
+			Endpoint:    oauth.endpoint(),
+			Scopes:      []string{oidc.ScopeOpenID},
+		},
+		LoginVerifier: verifier,
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	ts.Config.Handler = server
+	ts.TLS = &tls.Config{
+		Certificates: []tls.Certificate{
+			ca.leafCert(tb,
+				pkigen.CN("yat-test-server"),
+				pkigen.IP(net.ParseIP(host))),
+		},
+	}
+	ts.StartTLS()
+	tb.Cleanup(ts.Close)
+
+	target := strings.TrimPrefix(ts.URL, "https://")
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
+			RootCAs: ca.pool,
+		})))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			tb.Fatal(err)
+		}
+	})
+
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: ca.pool},
+	}
+	browser := &http.Client{Transport: transport}
+
+	return &loginTestServer{
+		serverURL: serverURL,
+		target:    target,
+		rootCAs:   ca.pool,
+		browser:   browser,
+		noRedirect: &http.Client{
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		login:    yatv1.NewLoginServiceClient(conn),
+		verifier: verifier,
+	}
+}
+
+func (s *loginTestServer) stateURL(state string) string {
+	return s.serverURL.JoinPath("login", state).String()
+}
+
+func (s *loginTestServer) callbackURL(state string) string {
+	return s.serverURL.JoinPath("login/callback").String() +
+		"?state=" + url.QueryEscape(state)
+}
+
+func (s *loginTestServer) browserStatus(tb testing.TB, rawURL string) int {
+	tb.Helper()
+	return getHTTPStatus(tb, s.browser, rawURL)
+}
+
+func (s *loginTestServer) noRedirectStatus(tb testing.TB, rawURL string) int {
+	tb.Helper()
+	return getHTTPStatus(tb, s.noRedirect, rawURL)
+}
+
+func (s *loginTestServer) startLogin(tb testing.TB, ctx context.Context) (yatv1.LoginService_LoginClient, string) {
+	tb.Helper()
+
+	stream, err := s.login.Login(ctx, &yatv1.LoginRequest{})
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	start, err := stream.Recv()
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	if start.GetStart() == nil {
+		tb.Fatalf("first login event = %T, want start", start.GetEvent())
+	}
+
+	return stream, start.GetStart().GetUrl()
+}
+
+func (s *loginTestServer) authClient(tb testing.TB, token string) *yat.Client {
+	tb.Helper()
+
+	return newClient(tb, s.target,
+		&tls.Config{RootCAs: s.rootCAs},
+		&oauth2.Token{AccessToken: token})
+}
+
+func (s *loginTestServer) finishFailedLogin(tb testing.TB, oauth *loginOAuthServer, code string, oauthErr string) *yatv1.LoginError {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), asyncTestTimeout)
+	defer cancel()
+
+	oauth.nextAuth(code, oauthErr)
+	stream, startURL := s.startLogin(tb, ctx)
+	if got := s.browserStatus(tb, startURL); got != http.StatusInternalServerError {
+		tb.Fatalf("failed login browser status = %d, want %d", got, http.StatusInternalServerError)
+	}
+
+	return receiveLoginError(tb, stream)
+}
+
+func receiveLoginCreds(tb testing.TB, stream yatv1.LoginService_LoginClient) *yatv1.LoginCreds {
+	tb.Helper()
+
+	res := receiveLoginResponse(tb, stream)
+	creds := res.GetCreds()
+	if creds == nil {
+		tb.Fatalf("login event = %T, want creds", res.GetEvent())
+	}
+
+	return creds
+}
+
+func receiveLoginError(tb testing.TB, stream yatv1.LoginService_LoginClient) *yatv1.LoginError {
+	tb.Helper()
+
+	res := receiveLoginResponse(tb, stream)
+	loginErr := res.GetError()
+	if loginErr == nil {
+		tb.Fatalf("login event = %T, want error", res.GetEvent())
+	}
+
+	return loginErr
+}
+
+func receiveLoginResponse(tb testing.TB, stream yatv1.LoginService_LoginClient) *yatv1.LoginResponse {
+	tb.Helper()
+
+	res, err := stream.Recv()
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	return res
+}
+
+func assertLoginPKCE(tb testing.TB, authReq url.Values, tokenReq url.Values) {
+	tb.Helper()
+
+	if got := authReq.Get("access_type"); got != "offline" {
+		tb.Fatalf("access_type = %q, want offline", got)
+	}
+	if got := authReq.Get("code_challenge_method"); got != "S256" {
+		tb.Fatalf("code_challenge_method = %q, want S256", got)
+	}
+	if got := authReq.Get("code_challenge"); got == "" {
+		tb.Fatal("missing code_challenge")
+	}
+	if got := tokenReq.Get("grant_type"); got != "authorization_code" {
+		tb.Fatalf("login grant_type = %q, want authorization_code", got)
+	}
+	if got := tokenReq.Get("code_verifier"); got == "" {
+		tb.Fatal("missing code_verifier")
+	}
+
+	challenge := oauth2.S256ChallengeFromVerifier(tokenReq.Get("code_verifier"))
+	if challenge != authReq.Get("code_challenge") {
+		tb.Fatalf("code_verifier challenge = %q, want %q", challenge, authReq.Get("code_challenge"))
+	}
+}
+
+func rawLoginState(raw []byte) string {
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func rawLoginUUIDState(version byte) string {
+	var raw [16]byte
+	raw[6] = version << 4
+	raw[8] = 0x80
+	return rawLoginState(raw[:])
+}
+
+func newLoginState(tb testing.TB) string {
+	tb.Helper()
+
+	uid := uuid.Must(uuid.NewV7())
+	return rawLoginState(uid[:])
+}
+
+func cloneURLValues(values url.Values) url.Values {
+	clone := make(url.Values, len(values))
+	for k, vs := range values {
+		clone[k] = append([]string(nil), vs...)
+	}
+
+	return clone
+}
+
+func getHTTPStatus(tb testing.TB, client *http.Client, rawURL string) int {
+	tb.Helper()
+
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	resp.Body.Close()
+
+	return resp.StatusCode
+}
+
+func mustOIDCProvider(tb testing.TB, issuer *authIssuer) *oidc.Provider {
+	tb.Helper()
+
+	provider, err := oidc.NewProvider(issuer.context(), issuer.url)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	return provider
+}
+
 type authIssuer struct {
 	server *httptest.Server
 	signer jose.Signer
@@ -2993,6 +3686,17 @@ func mustRuleSet(tb testing.TB, ctx context.Context, rules []yat.Rule) *yat.Rule
 	}
 
 	return ruleSet
+}
+
+func mustParseURL(tb testing.TB, raw string) *url.URL {
+	tb.Helper()
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	return u
 }
 
 func authJWTCond(issuer string, audience string, subject string) *yat.JWTCond {

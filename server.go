@@ -2,8 +2,9 @@ package yat
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
-	"fmt"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -15,12 +16,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"yat.io/yat/internal/web"
 
 	yatv1 "yat.io/yat/internal/wire/yat/v1"
@@ -28,6 +34,7 @@ import (
 
 type Server struct {
 	cfg ServerConfig
+	gs  *grpc.Server
 	mux *http.ServeMux
 }
 
@@ -47,6 +54,9 @@ type ServerConfig struct {
 	// URL is the server's https address.
 	// If it is nil, only RPC routes are enabled.
 	URL *url.URL
+
+	LoginConfig   *oauth2.Config
+	LoginVerifier *oidc.IDTokenVerifier
 }
 
 func NewServer(cfg ServerConfig) (*Server, error) {
@@ -55,14 +65,32 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	// for non-messaging RPCs
+	gs := grpc.NewServer()
+
+	// for non-RPC requests
 	mux := http.NewServeMux()
 
 	s := &Server{
 		cfg: cfg,
+		gs:  gs,
 		mux: mux,
 	}
 
+	// web UI enabled
 	if cfg.URL != nil {
+		if cfg.loginEnabled() {
+			ls := &loginServer{
+				Server:   s,
+				login:    make(map[string]loginAttempt),
+				callback: make(map[string]loginAttempt),
+			}
+
+			yatv1.RegisterLoginServiceServer(gs, ls)
+			mux.HandleFunc("GET /login/callback", ls.handleGetLoginCallback)
+			mux.HandleFunc("GET /login/{state}", ls.handleGetLogin)
+		}
+
 		static, _ := fs.Sub(web.FS, "static")
 		mux.Handle("/", http.FileServerFS(static))
 	}
@@ -72,6 +100,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case yatv1.LoginService_Login_FullMethodName,
+		yatv1.LoginService_RefreshLogin_FullMethodName:
+		s.gs.ServeHTTP(w, r)
+
+	// custom yat.v1.MsgService handlers
+	// to minimize allocation on fanout
+
 	case yatv1.MsgService_Pub_FullMethodName:
 		s.serveGRPC(w, r, s.handleMsgPub)
 
@@ -518,11 +553,32 @@ func (c ServerConfig) validate() (valid ServerConfig, err error) {
 		c.Rules = &RuleSet{}
 	}
 
-	if c.URL != nil && c.URL.Scheme != "https" {
-		return ServerConfig{}, fmt.Errorf("server URL scheme (%s) is not https", c.URL.Scheme)
+	if c.URL != nil && (c.URL.Scheme != "https" || c.URL.Host == "") {
+		return ServerConfig{}, errors.New("invalid server URL")
+	}
+
+	loginConfig := c.LoginConfig != nil
+	loginVerifier := c.LoginVerifier != nil
+
+	if loginConfig || loginVerifier {
+		if c.URL == nil {
+			return ServerConfig{}, errors.New("server URL is not configured")
+		}
+
+		if !loginConfig {
+			return ServerConfig{}, errors.New("login OAuth2 is not configured")
+		}
+
+		if !loginVerifier {
+			return ServerConfig{}, errors.New("login ID token verifier is not configured")
+		}
 	}
 
 	return c, nil
+}
+
+func (c ServerConfig) loginEnabled() bool {
+	return c.URL != nil && c.LoginConfig != nil && c.LoginVerifier != nil
 }
 
 // sbuf is a subscription delivery buffer.
@@ -605,6 +661,234 @@ func (sb *sbuf) Flush(w io.Writer, r *http.Request) error {
 			return nil
 		}
 	}
+}
+
+type loginServer struct {
+	yatv1.UnsafeLoginServiceServer
+	*Server
+
+	mu       sync.Mutex
+	login    map[string]loginAttempt
+	callback map[string]loginAttempt
+}
+
+type loginAttempt struct {
+	C chan *yatv1.LoginResponse
+	V string
+}
+
+func (ls *loginServer) Login(_ *yatv1.LoginRequest, stream grpc.ServerStreamingServer[yatv1.LoginResponse]) error {
+	ctx, cancel := context.WithTimeout(stream.Context(), 5*time.Minute)
+	defer cancel()
+
+	uid := uuid.Must(uuid.NewV7())
+	id := base64.RawURLEncoding.EncodeToString(uid[:])
+	resC := make(chan *yatv1.LoginResponse, 1)
+	verifier := oauth2.GenerateVerifier()
+
+	ls.mu.Lock()
+	ls.login[id] = loginAttempt{
+		C: resC,
+		V: verifier,
+	}
+	ls.mu.Unlock()
+
+	defer func() {
+		ls.mu.Lock()
+		delete(ls.login, id)
+		delete(ls.callback, id)
+		ls.mu.Unlock()
+	}()
+
+	startURL := ls.cfg.URL.JoinPath("login", id).String()
+
+	err := stream.Send(&yatv1.LoginResponse{
+		Event: &yatv1.LoginResponse_Start{
+			Start: &yatv1.LoginStart{
+				Url: &startURL,
+			},
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+
+	case res := <-resC:
+		return stream.Send(res)
+	}
+}
+
+func (ls *loginServer) RefreshLogin(ctx context.Context, req *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error) {
+	if req.Refresh == nil {
+		return nil, status.Error(codes.FailedPrecondition, "missing refresh token")
+	}
+
+	src := ls.cfg.LoginConfig.TokenSource(ctx, &oauth2.Token{
+		RefreshToken: *req.Refresh,
+	})
+
+	o2t, err := src.Token()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal,
+			"refresh login token: %v", err)
+	}
+
+	raw, id, err := ls.parseToken(ctx, o2t)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &yatv1.RefreshLoginResponse{
+		Creds: &yatv1.LoginCreds{
+			Token:   &raw,
+			Refresh: &o2t.RefreshToken,
+			Expiry:  timestamppb.New(id.Expiry),
+		},
+	}
+
+	return res, nil
+}
+
+// handleGetLogin serves the URLs generated by the Login RPC.
+func (ls *loginServer) handleGetLogin(w http.ResponseWriter, r *http.Request) {
+	state := r.PathValue("state")
+	if err := ls.validateState(state); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ls.mu.Lock()
+
+	attempt, ok := ls.login[state]
+	if !ok {
+		ls.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+
+	delete(ls.login, state)
+	ls.callback[state] = attempt
+
+	ls.mu.Unlock()
+
+	authURL := ls.cfg.LoginConfig.AuthCodeURL(state,
+		oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(attempt.V))
+
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (ls *loginServer) handleGetLoginCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.FormValue("state")
+
+	ls.mu.Lock()
+	attempt, ok := ls.callback[state]
+	if !ok {
+		ls.mu.Unlock()
+		// FIX: this will show in the browser
+		http.NotFound(w, r)
+		return
+	}
+
+	delete(ls.callback, state)
+	ls.mu.Unlock()
+
+	fail := func(err error) {
+		select {
+		case attempt.C <- &yatv1.LoginResponse{
+			Event: &yatv1.LoginResponse_Error{
+				Error: &yatv1.LoginError{
+					Message: new(err.Error()),
+				},
+			},
+		}:
+		default:
+		}
+	}
+
+	if err := ls.validateState(state); err != nil {
+		// FIX: this will show in the browser
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		fail(err)
+		return
+	}
+
+	if e := r.FormValue("error"); e != "" {
+		// FIX: this will show in the browser
+		http.Error(w, e, http.StatusInternalServerError)
+		fail(errors.New(e)) // FIX: better message here
+		return
+	}
+
+	o2t, err := ls.cfg.LoginConfig.Exchange(r.Context(), r.FormValue("code"), oauth2.VerifierOption(attempt.V))
+	if err != nil {
+		// FIX: this will show in the browser
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(err)
+		return
+	}
+
+	raw, id, err := ls.parseToken(r.Context(), o2t)
+	if err != nil {
+		// FIX: this will show in the browser
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		fail(err)
+		return
+	}
+
+	select {
+	case attempt.C <- &yatv1.LoginResponse{
+		Event: &yatv1.LoginResponse_Creds{
+			Creds: &yatv1.LoginCreds{
+				Token:   &raw,
+				Refresh: &o2t.RefreshToken,
+				Expiry:  timestamppb.New(id.Expiry),
+			},
+		},
+	}:
+	default:
+	}
+
+	// FIX: this will show in the browser
+	w.Write([]byte("ok"))
+}
+
+func (ls *loginServer) validateState(state string) error {
+	raw, err := base64.RawURLEncoding.DecodeString(state)
+	if err != nil {
+		return err
+	}
+
+	uid, err := uuid.FromBytes(raw)
+	if err != nil {
+		return err
+	}
+
+	if uid.Version() != 7 {
+		return errors.New("malformed state")
+	}
+
+	sec, nsec := uid.Time().UnixTime()
+	if time.Since(time.Unix(sec, nsec)) > 5*time.Minute {
+		return errors.New("state expired")
+	}
+
+	return nil
+}
+
+func (ls *loginServer) parseToken(ctx context.Context, o2t *oauth2.Token) (rawID string, id *oidc.IDToken, err error) {
+	rawID, ok := o2t.Extra("id_token").(string)
+	if !ok {
+		err = errors.New("no id_token")
+		return
+	}
+
+	id, err = ls.cfg.LoginVerifier.Verify(ctx, rawID)
+	return
 }
 
 func isGRPC(r *http.Request) bool {
