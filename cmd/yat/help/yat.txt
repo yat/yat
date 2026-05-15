@@ -11,6 +11,8 @@ Client Commands:
   post        publish a request and wait
   handle      handle posted requests
   serve       run a Yat server
+  login       log in to a server
+  logout      log out of a server
 
 Client Flags:
 

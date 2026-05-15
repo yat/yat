@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"yat.io/yat"
-	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type HandleCmd struct {
-	*cmd.Config
+	clientCmd
 
 	File     string
 	Empty    bool
@@ -61,7 +60,7 @@ func (cmd *HandleCmd) Run(ctx context.Context, logger *slog.Logger, args []strin
 		}
 	}
 
-	yc, err := cmd.NewClient(ctx, logger)
+	yc, err := cmd.newClient(ctx, logger)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,9 +24,15 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"yat.io/yat"
 	"yat.io/yat/cmd"
 	"yat.io/yat/pkigen"
+
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
 
 const cliTestTimeout = 5 * time.Second
@@ -66,6 +73,8 @@ func TestCLIHelp(t *testing.T) {
 		{"subscribe_alias", []string{"sub", "-h"}},
 		{"handle", []string{"handle", "-h"}},
 		{"handle_alias", []string{"res", "-h"}},
+		{"login", []string{"login", "-h"}},
+		{"logout", []string{"logout", "-h"}},
 		{"serve", []string{"serve", "-?"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,6 +141,273 @@ func TestCLIUsageAndArgumentErrors(t *testing.T) {
 			h.runWithEnv(nil, tc.env, tc.args...).mustFail(t)
 		})
 	}
+}
+
+func TestCLILogin(t *testing.T) {
+	t.Run("positional_server_writes_creds", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		want := cliLoginCreds("login-token")
+		server := h.startLoginServer(t, []*yatv1.LoginResponse{
+			cliLoginStart("https://login.example/start"),
+			cliLoginCredsResponse(want),
+		})
+
+		result := h.run(
+			"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
+			"login", server).mustSucceed(t)
+
+		if len(result.stdout) != 0 {
+			t.Fatalf("login stdout = %q, want empty", result.stdout)
+		}
+		if !bytes.Contains(result.stderr, []byte("https://login.example/start")) {
+			t.Fatalf("login stderr = %q, want login URL", result.stderr)
+		}
+
+		got := readCLILoginCreds(t, server)
+		if got.GetToken() != want.GetToken() ||
+			got.GetRefresh() != want.GetRefresh() ||
+			!got.GetExpiry().AsTime().Equal(want.GetExpiry().AsTime()) {
+			t.Fatalf("login creds = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("positional_server_precedes_configured", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		server := h.startLoginServer(t, []*yatv1.LoginResponse{
+			cliLoginStart("https://login.example/positional"),
+			cliLoginCredsResponse(cliLoginCreds("positional-token")),
+		})
+
+		h.runWithEnv(nil, []string{"YAT_SERVER=ignored/server"},
+			"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
+			"login", server).mustSucceed(t)
+
+		got := readCLILoginCreds(t, server)
+		if got.GetToken() != "positional-token" {
+			t.Fatalf("login token = %q, want positional-token", got.GetToken())
+		}
+	})
+
+	t.Run("login_error_does_not_write_creds", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		server := h.startLoginServer(t, []*yatv1.LoginResponse{
+			cliLoginStart("https://login.example/start"),
+			cliLoginError("access denied"),
+		})
+
+		h.run(
+			"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
+			"login", server).mustFail(t)
+
+		path, err := loginCredsFile(cmd.EnvConfig().ConfigDir, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("login creds stat error = %v, want not exist", err)
+		}
+	})
+
+	t.Run("eof_before_creds_fails", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		server := h.startLoginServer(t, []*yatv1.LoginResponse{
+			cliLoginStart("https://login.example/start"),
+		})
+
+		h.run(
+			"-tls-ca-file", filepath.Join(h.tlsDir, "ca.crt"),
+			"login", server).mustFail(t)
+	})
+
+	t.Run("argument_errors", func(t *testing.T) {
+		h := newCLIHarness(t)
+
+		h.run("login").mustFail(t)
+		h.run("login", "bad/server").mustFail(t)
+		h.run("login", "one", "two").mustFail(t)
+	})
+}
+
+func TestLoginCredsGetCreds(t *testing.T) {
+	t.Run("fresh_creds_return_bearer_token", func(t *testing.T) {
+		h := newCLIHarness(t)
+		path := filepath.Join(h.dir, "fresh-login-creds")
+		if err := writeLoginCreds(path, cliLoginCreds("fresh-token")); err != nil {
+			t.Fatal(err)
+		}
+
+		metadata, err := (&loginCreds{Path: path}).GetCreds(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := metadata["authorization"]; got != "Bearer fresh-token" {
+			t.Fatalf("authorization = %q, want Bearer fresh-token", got)
+		}
+	})
+
+	t.Run("near_expiry_refreshes_and_writes_creds", func(t *testing.T) {
+		h := newCLIHarness(t)
+		path := filepath.Join(h.dir, "expired-login-creds")
+
+		oldRefresh := "old-refresh-token"
+		old := cliLoginCreds("old-token")
+		old.Refresh = &oldRefresh
+		old.Expiry = timestamppb.New(time.Now().Add(time.Second))
+		if err := writeLoginCreds(path, old); err != nil {
+			t.Fatal(err)
+		}
+
+		refreshReqs := make(chan string, 1)
+		server := h.startLoginServerWithRefresh(t, nil,
+			func(_ context.Context, req *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error) {
+				refreshReqs <- req.GetRefresh()
+				return &yatv1.RefreshLoginResponse{
+					Creds: cliLoginCreds("new-token"),
+				}, nil
+			})
+
+		ctx, cancel := context.WithTimeout(context.Background(), cliTestTimeout)
+		defer cancel()
+
+		lc := &loginCreds{
+			Client: h.loginClient(t, server),
+			Path:   path,
+		}
+		metadata, err := lc.GetCreds(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if got := metadata["authorization"]; got != "Bearer new-token" {
+			t.Fatalf("authorization = %q, want Bearer new-token", got)
+		}
+
+		select {
+		case got := <-refreshReqs:
+			if got != oldRefresh {
+				t.Fatalf("refresh token = %q, want %q", got, oldRefresh)
+			}
+		default:
+			t.Fatal("refresh login was not called")
+		}
+
+		got, err := readLoginCreds(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.GetToken() != "new-token" {
+			t.Fatalf("written token = %q, want new-token", got.GetToken())
+		}
+	})
+
+	t.Run("expired_without_refresh_fails", func(t *testing.T) {
+		h := newCLIHarness(t)
+		path := filepath.Join(h.dir, "missing-refresh-login-creds")
+		creds := cliLoginCreds("old-token")
+		creds.Refresh = nil
+		creds.Expiry = timestamppb.New(time.Now().Add(-time.Second))
+		if err := writeLoginCreds(path, creds); err != nil {
+			t.Fatal(err)
+		}
+
+		server := h.startLoginServerWithRefresh(t, nil,
+			func(_ context.Context, req *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error) {
+				if got := req.GetRefresh(); got != "" {
+					t.Fatalf("refresh token = %q, want empty", got)
+				}
+				return nil, errors.New("missing refresh token")
+			})
+
+		lc := &loginCreds{
+			Client: h.loginClient(t, server),
+			Path:   path,
+		}
+		_, err := lc.GetCreds(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "missing refresh token") {
+			t.Fatalf("GetCreds error = %v, want missing refresh token", err)
+		}
+	})
+}
+
+func TestCLILogout(t *testing.T) {
+	t.Run("positional_server_removes_creds", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		server := "localhost:25120"
+		path, err := loginCredsFile(cmd.EnvConfig().ConfigDir, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeLoginCreds(path, cliLoginCreds("logout-token")); err != nil {
+			t.Fatal(err)
+		}
+
+		result := h.run("logout", server).mustSucceed(t)
+		if len(result.stdout) != 0 {
+			t.Fatalf("logout stdout = %q, want empty", result.stdout)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("login creds stat error = %v, want not exist", err)
+		}
+	})
+
+	t.Run("positional_server_precedes_configured", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		server := "localhost:25121"
+		path, err := loginCredsFile(cmd.EnvConfig().ConfigDir, server)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeLoginCreds(path, cliLoginCreds("configured-logout-token")); err != nil {
+			t.Fatal(err)
+		}
+
+		configured := "localhost:25122"
+		configuredPath, err := loginCredsFile(cmd.EnvConfig().ConfigDir, configured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := writeLoginCreds(configuredPath, cliLoginCreds("configured-logout-token")); err != nil {
+			t.Fatal(err)
+		}
+
+		h.runWithEnv(nil, []string{"YAT_SERVER=" + configured},
+			"logout", server).mustSucceed(t)
+
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("login creds stat error = %v, want not exist", err)
+		}
+		if _, err := os.Stat(configuredPath); err != nil {
+			t.Fatalf("configured login creds stat error = %v, want exist", err)
+		}
+	})
+
+	t.Run("missing_file_succeeds", func(t *testing.T) {
+		h := newCLIHarness(t)
+		setupCLILoginConfigDir(t, h)
+
+		h.run("logout", "localhost:25122").mustSucceed(t)
+	})
+
+	t.Run("argument_errors", func(t *testing.T) {
+		h := newCLIHarness(t)
+
+		h.run("logout").mustFail(t)
+		h.run("logout", "bad/server").mustFail(t)
+		h.run("logout", "one", "two").mustFail(t)
+	})
 }
 
 func TestCLIPublishSubscribeRoundTrip(t *testing.T) {
@@ -595,6 +871,52 @@ func (h *cliHarness) startTokenServer(t *testing.T, configFile string) {
 		"-tls-require-client-cert=false")
 }
 
+func (h *cliHarness) startLoginServer(t *testing.T, responses []*yatv1.LoginResponse) string {
+	return h.startLoginServerWithRefresh(t, responses, nil)
+}
+
+func (h *cliHarness) startLoginServerWithRefresh(
+	t *testing.T,
+	responses []*yatv1.LoginResponse,
+	refresh func(context.Context, *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error),
+) string {
+	t.Helper()
+
+	h.setupTLS(t)
+
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(h.tlsDir, "tls.crt"),
+		filepath.Join(h.tlsDir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gs := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS13,
+	})))
+	yatv1.RegisterLoginServiceServer(gs, cliLoginServer{
+		responses: responses,
+		refresh:   refresh,
+	})
+
+	go func() {
+		_ = gs.Serve(lis)
+	}()
+
+	t.Cleanup(func() {
+		gs.Stop()
+		_ = lis.Close()
+	})
+
+	return lis.Addr().String()
+}
+
 func (h *cliHarness) serveArgs(t *testing.T, flags ...string) []string {
 	t.Helper()
 
@@ -698,6 +1020,23 @@ func (h *cliHarness) clientTLSConfig(t *testing.T, clientCert bool) *tls.Config 
 	}
 
 	return tcfg
+}
+
+func (h *cliHarness) loginClient(t *testing.T, server string) yatv1.LoginServiceClient {
+	t.Helper()
+
+	conn, err := grpc.NewClient(server,
+		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithTransportCredentials(credentials.NewTLS(h.clientTLSConfig(t, false))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_ = conn.Close()
+	})
+
+	return yatv1.NewLoginServiceClient(conn)
 }
 
 func (h *cliHarness) getRootStatus(t *testing.T, tcfg *tls.Config) (int, error) {
@@ -957,6 +1296,94 @@ type cliTestAuthIssuer struct {
 	server *httptest.Server
 	signer jose.Signer
 	url    string
+}
+
+type cliLoginServer struct {
+	yatv1.UnimplementedLoginServiceServer
+	responses []*yatv1.LoginResponse
+	refresh   func(context.Context, *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error)
+}
+
+func (s cliLoginServer) Login(_ *yatv1.LoginRequest, stream grpc.ServerStreamingServer[yatv1.LoginResponse]) error {
+	for _, res := range s.responses {
+		if err := stream.Send(res); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s cliLoginServer) RefreshLogin(ctx context.Context, req *yatv1.RefreshLoginRequest) (*yatv1.RefreshLoginResponse, error) {
+	if s.refresh == nil {
+		return nil, errors.New("refresh login is not configured")
+	}
+
+	return s.refresh(ctx, req)
+}
+
+func setupCLILoginConfigDir(t *testing.T, h *cliHarness) {
+	t.Helper()
+
+	t.Setenv("HOME", h.dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h.dir, "config"))
+}
+
+func cliLoginStart(url string) *yatv1.LoginResponse {
+	return &yatv1.LoginResponse{
+		Event: &yatv1.LoginResponse_Start{
+			Start: &yatv1.LoginStart{
+				Url: &url,
+			},
+		},
+	}
+}
+
+func cliLoginCreds(token string) *yatv1.LoginCreds {
+	refresh := token + "-refresh"
+	return &yatv1.LoginCreds{
+		Token:   &token,
+		Refresh: &refresh,
+		Expiry:  timestamppb.New(time.Now().Add(time.Hour).Truncate(time.Second)),
+	}
+}
+
+func cliLoginCredsResponse(creds *yatv1.LoginCreds) *yatv1.LoginResponse {
+	return &yatv1.LoginResponse{
+		Event: &yatv1.LoginResponse_Creds{
+			Creds: creds,
+		},
+	}
+}
+
+func cliLoginError(msg string) *yatv1.LoginResponse {
+	return &yatv1.LoginResponse{
+		Event: &yatv1.LoginResponse_Error{
+			Error: &yatv1.LoginError{
+				Message: &msg,
+			},
+		},
+	}
+}
+
+func readCLILoginCreds(t *testing.T, server string) *yatv1.LoginCreds {
+	t.Helper()
+
+	path, err := loginCredsFile(cmd.EnvConfig().ConfigDir, server)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var creds yatv1.LoginCreds
+	if err := proto.Unmarshal(data, &creds); err != nil {
+		t.Fatal(err)
+	}
+
+	return &creds
 }
 
 func newCLITestAuthIssuer(t *testing.T) *cliTestAuthIssuer {

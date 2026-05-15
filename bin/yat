@@ -8,6 +8,7 @@ bin/build
 unset YAT_TOKEN
 unset YAT_TOKEN_FILE
 
+export YAT_CONFIG_DIR=tmp/config
 export YAT_SERVER=localhost:25120
 export YAT_TLS_CERT_FILE=tmp/tls/tls.crt
 export YAT_TLS_KEY_FILE=tmp/tls/tls.key

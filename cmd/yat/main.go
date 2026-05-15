@@ -10,11 +10,19 @@ import (
 	"slices"
 	"strings"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"yat.io/yat"
 	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 
 	_ "golang.org/x/crypto/x509roots/fallback"
+	yatv1 "yat.io/yat/internal/wire/yat/v1"
 )
+
+type clientCmd struct {
+	*cmd.Config
+}
 
 type usageError struct {
 	Usage string
@@ -83,24 +91,34 @@ func run(ctx context.Context, args []string) error {
 	switch name {
 	case "handle", "respond", "res":
 		cmd = &HandleCmd{
-			Config: &cfg,
-			File:   "/dev/stdin",
+			clientCmd: clientCmd{&cfg},
+			File:      "/dev/stdin",
 		}
 
 	case "help":
 		cmd = &HelpCmd{}
 
+	case "login":
+		cmd = &LoginCmd{
+			Config: &cfg,
+		}
+
+	case "logout":
+		cmd = &LogoutCmd{
+			Config: &cfg,
+		}
+
 	case "post", "request", "req":
 		cmd = &PostCmd{
-			Config: &cfg,
-			File:   "/dev/stdin",
-			Limit:  1,
+			clientCmd: clientCmd{&cfg},
+			File:      "/dev/stdin",
+			Limit:     1,
 		}
 
 	case "publish", "pub":
 		cmd = &PublishCmd{
-			Config: &cfg,
-			File:   "/dev/stdin",
+			clientCmd: clientCmd{&cfg},
+			File:      "/dev/stdin",
 		}
 
 	case "serve", "server":
@@ -112,7 +130,7 @@ func run(ctx context.Context, args []string) error {
 
 	case "subscribe", "sub":
 		cmd = &SubscribeCmd{
-			Config: &cfg,
+			clientCmd: clientCmd{&cfg},
 		}
 
 	default:
@@ -167,6 +185,63 @@ func run(ctx context.Context, args []string) error {
 	}))
 
 	return cmd.Run(ctx, logger, args)
+}
+
+// newClient is like [cmd.Config.NewClient], but adds support for login credentials.
+func (cc clientCmd) newClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
+	if cc.Server == "" {
+		return nil, errors.New("server is not configured")
+	}
+
+	tcfg, watch, err := cc.TLSFiles.ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	go watch(ctx, logger)
+
+	cfg := yat.ClientConfig{
+		Logger:    logger,
+		TLSConfig: tcfg,
+	}
+
+	switch {
+	case cc.Token != "":
+		token := strings.TrimSpace(cc.Token)
+		cfg.GetCreds = yat.BearerToken(token)
+
+	case cc.TokenFile != "":
+		cfg.GetCreds = yat.TokenFile(cc.TokenFile)
+
+	default:
+		credsFile, err := loginCredsFile(cc.ConfigDir, cc.Server)
+		if err != nil {
+			return nil, err
+		}
+
+		if _, err := os.Stat(credsFile); err == nil {
+			cc, err := grpc.NewClient(cc.Server,
+				grpc.WithTransportCredentials(credentials.NewTLS(tcfg)))
+
+			if err != nil {
+				return nil, err
+			}
+
+			go func() {
+				<-ctx.Done()
+				cc.Close()
+			}()
+
+			lc := &loginCreds{
+				Client: yatv1.NewLoginServiceClient(cc),
+				Path:   credsFile,
+			}
+
+			cfg.GetCreds = lc.GetCreds
+		}
+	}
+
+	return yat.NewClient(cc.Server, cfg)
 }
 
 func (ue usageError) Error() string {

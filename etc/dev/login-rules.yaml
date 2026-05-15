@@ -1,0 +1,10 @@
+apiVersion: yat.io/v1alpha1
+kind: RuleSet
+
+rules:
+  - jwt:
+      iss: https://localhost:5556
+      aud: yat
+    grants:
+      - paths: ["**"]
+        actions: [pub, sub]

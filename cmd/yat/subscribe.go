@@ -8,12 +8,11 @@ import (
 	"time"
 
 	"yat.io/yat"
-	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type SubscribeCmd struct {
-	*cmd.Config
+	clientCmd
 
 	Limit    int
 	Duration time.Duration
@@ -71,7 +70,7 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		defer cancel()
 	}
 
-	yc, err := cmd.NewClient(ctx, logger)
+	yc, err := cmd.newClient(ctx, logger)
 	if err != nil {
 		return err
 	}
