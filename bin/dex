@@ -1,0 +1,14 @@
+#!/bin/sh
+# login auth provider
+
+set -eu
+
+bin/setup
+
+exec docker run --rm \
+  --name yat-dex \
+  -p 127.0.0.1:5556:5556 \
+  -v "$PWD/etc/dev/dex.yaml:/etc/dex/config.yaml:ro" \
+  -v "$PWD/tmp/tls:/etc/dex/tls:ro" \
+  ghcr.io/dexidp/dex:v2.44.0 \
+  dex serve /etc/dex/config.yaml
