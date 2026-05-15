@@ -7,12 +7,11 @@ import (
 	"os"
 
 	"yat.io/yat"
-	"yat.io/yat/cmd"
 	"yat.io/yat/cmd/yat/internal/flagset"
 )
 
 type PublishCmd struct {
-	*cmd.Config
+	clientCmd
 
 	File  string
 	Empty bool
@@ -57,7 +56,7 @@ func (cmd *PublishCmd) Run(ctx context.Context, logger *slog.Logger, args []stri
 		Inbox: inbox,
 	}
 
-	yc, err := cmd.NewClient(ctx, logger)
+	yc, err := cmd.newClient(ctx, logger)
 	if err != nil {
 		return err
 	}

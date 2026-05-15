@@ -5,21 +5,26 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"yat.io/yat"
 )
 
 // Config collects configuration for the yat command.
+// Call [EnvConfig] to read configuration from the environment.
+// Call [Config.NewClient] to construct a Yat client from the configuration.
 type Config struct {
+	ConfigDir string
 	TLSFiles  TLSFiles
 	Server    string
 	Token     string
 	TokenFile string
 }
 
-// Env reads configuration from the yat environment variables.
+// EnvConfig reads from the yat environment variables.
 //
+//   - YAT_CONFIG_DIR
 //   - YAT_TLS_CERT_FILE
 //   - YAT_TLS_KEY_FILE
 //   - YAT_TLS_CA_FILE
@@ -29,6 +34,8 @@ type Config struct {
 //   - YAT_TOKEN_FILE
 func EnvConfig() Config {
 	ec := Config{
+		ConfigDir: os.Getenv("YAT_CONFIG_DIR"),
+
 		TLSFiles: TLSFiles{
 			CertFile: os.Getenv("YAT_TLS_CERT_FILE"),
 			KeyFile:  os.Getenv("YAT_TLS_KEY_FILE"),
@@ -37,6 +44,16 @@ func EnvConfig() Config {
 		Server:    os.Getenv("YAT_SERVER"),
 		Token:     os.Getenv("YAT_TOKEN"),
 		TokenFile: os.Getenv("YAT_TOKEN_FILE"),
+	}
+
+	if ec.ConfigDir == "" {
+		if d, err := os.UserConfigDir(); err == nil {
+			ec.ConfigDir = filepath.Join(d, "yat")
+		}
+	}
+
+	if ec.ConfigDir == "" {
+		ec.ConfigDir = "/etc/yat"
 	}
 
 	if name, ok := os.LookupEnv("YAT_TLS_CA_FILE"); ok {
@@ -56,6 +73,7 @@ func EnvConfig() Config {
 	return ec
 }
 
+// NewClient returns a new Yat client with the current configuration.
 func (c Config) NewClient(ctx context.Context, logger *slog.Logger) (*yat.Client, error) {
 	if c.Server == "" {
 		return nil, errors.New("server is not configured")

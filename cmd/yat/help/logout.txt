@@ -1,0 +1,5 @@
+Logout logs out of a Yat server.
+
+Usage:
+
+  yat logout [SERVER]

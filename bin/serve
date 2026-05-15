@@ -4,10 +4,21 @@
 bin/build
 bin/setup
 
-exec go tool logfmt ./yat serve \
+set -- \
   -log-level debug \
   -tls-cert-file tmp/tls/tls.crt \
   -tls-key-file tmp/tls/tls.key \
   -tls-ca-file tmp/tls/ca.crt \
   -tls-require-client-cert=false \
-  -config etc/dev/rules.yaml
+  -config etc/dev/local-rules.yaml
+
+dex=https://localhost:5556
+if curl -fsS "$dex/.well-known/openid-configuration" >/dev/null 2>&1; then
+  export YAT_LOGIN_CLIENT_SECRET=secret
+  set -- "$@" \
+    -config etc/dev/login-rules.yaml \
+    -login-provider "$dex" \
+    -login-client-id yat
+fi
+
+exec go tool logfmt ./yat serve "$@"
