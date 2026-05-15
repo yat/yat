@@ -10,12 +10,14 @@ bin/dev # for hot reloads
 # or run bin/serve directly
 ```
 
+The dev TLS credentials are allowed to use any path matching `local/**`, so:
+
 ```
-bin/yat sub greetings
+bin/yat sub local/greetings
 ```
 
 ```
-echo hi | bin/yat pub greetings
+echo hi | bin/yat pub local/greetings
 ```
 
 ### Required Tools
@@ -32,11 +34,11 @@ echo hi | bin/yat pub greetings
 The yat client outputs JSON with the format `{"path": "<path>", "data": "<base64-encoded data>"}`. To decode the data, you can use `jq`:
 
 ```sh
-bin/yat sub greetings | jq '{path: .path, data: (.data | @base64d)}'
+bin/yat sub local/greetings | jq '{path: .path, data: (.data | @base64d)}'
 ```
 
 If the data itself is JSON, you can further parse it:
 
 ```sh
-bin/yat sub greetings | jq '{path: .path, data: (.data | @base64d | fromjson)}'
+bin/yat sub local/greetings | jq '{path: .path, data: (.data | @base64d | fromjson)}'
 ```
