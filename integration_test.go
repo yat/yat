@@ -29,6 +29,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/google/uuid"
+	"golang.org/x/net/http2"
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -2547,6 +2548,132 @@ func TestGenServerLogin(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestSubReconnectsAfterServerRestart(t *testing.T) {
+	ca := newTestCA(t)
+
+	// startTLS starts a fresh TLS+HTTP/2 server on the given listener.
+	// http2.ConfigureServer hooks the HTTP/2 server's graceful shutdown into
+	// httpSrv.Shutdown so that Shutdown sends a proper GOAWAY frame.
+	startTLS := func(ln net.Listener) *http.Server {
+		h2s := &http2.Server{}
+		httpSrv := &http.Server{
+			Handler: newTestServer(t, yat.AllowAll()),
+			TLSConfig: &tls.Config{
+				Certificates: []tls.Certificate{ca.serverCert(t, testServerName)},
+			},
+		}
+		if err := http2.ConfigureServer(httpSrv, h2s); err != nil {
+			t.Fatal(err)
+		}
+		go func() { _ = httpSrv.Serve(tls.NewListener(ln, httpSrv.TLSConfig)) }()
+		return httpSrv
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := &connTrackingListener{Listener: ln}
+	addr := ln.Addr().String()
+	httpSrv := startTLS(tracker)
+
+	client := newClient(t, addr, &tls.Config{RootCAs: ca.pool, ServerName: testServerName}, nil)
+	defer closeClient(t, client)
+
+	path := yat.NewPath("reconnect/test")
+	probe := newSubProbe(t, client, yat.Sel{Path: path})
+	defer probe.Cancel(t)
+
+	// Confirm the subscription is live on instance 1.
+	if err := client.Publish(context.Background(), yat.Msg{
+		Path: path, Data: []byte("instance-1"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertMsg(t, receiveMsg(t, probe.msgs), path, yat.Path{}, []byte("instance-1"))
+
+	// Simulate a graceful server shutdown followed by process exit.
+	//
+	// Step 1: Shutdown sends GOAWAY (code: NO_ERROR, lastStreamID = subscription
+	// stream ID — meaning the stream is considered processed, so gRPC's
+	// transparent retry does not fire). Shutdown also closes the listener.
+	// The subscription never drains so Shutdown returns on context timeout.
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer shutCancel()
+	_ = httpSrv.Shutdown(shutCtx)
+
+	// Step 2: Process exits. The OS closes all file descriptors with TCP FIN.
+	// stream.Recv returns Unavailable with "received prior goaway: code: NO_ERROR"
+	// in the description — matching what is observed in production.
+	tracker.Kill()
+
+	ln2, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer startTLS(ln2).Close()
+
+	// sub.Done() must remain open: it closing would mean the subscription was
+	// dropped rather than re-established on the new server.
+	select {
+	case <-probe.sub.Done():
+		t.Fatal("subscription closed during server restart")
+	default:
+	}
+
+	// Keep publishing "instance-2" until the subscriber receives it.
+	// Receiving this payload is unambiguous: instance 1 is gone, so it can
+	// only have been routed by instance 2, proving the subscription was
+	// re-established on the new server and is not a stale delivery.
+	ctx, cancel := context.WithTimeout(context.Background(), asyncTestTimeout)
+	defer cancel()
+	for {
+		_ = client.Publish(ctx, yat.Msg{Path: path, Data: []byte("instance-2")})
+		select {
+		case msg := <-probe.msgs:
+			assertMsg(t, msg, path, yat.Path{}, []byte("instance-2"))
+			return
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for message after server restart")
+		case <-time.After(50 * time.Millisecond):
+			// subscriber not yet reconnected; publish again
+		}
+	}
+}
+
+// connTrackingListener wraps a net.Listener and records accepted connections
+// so they can be closed directly via Kill. Use this together with
+// http.Server.Shutdown: Shutdown sends the GOAWAY and closes the listener,
+// then Kill closes the remaining TCP connections to simulate the OS sending
+// FIN when the server process exits after a graceful shutdown timeout.
+type connTrackingListener struct {
+	net.Listener
+	mu    sync.Mutex
+	conns []net.Conn
+}
+
+func (l *connTrackingListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return conn, err
+	}
+	l.mu.Lock()
+	l.conns = append(l.conns, conn)
+	l.mu.Unlock()
+	return conn, nil
+}
+
+// Kill closes all tracked connections (TCP FIN), simulating the OS closing
+// file descriptors on process exit. Call after http.Server.Shutdown.
+func (l *connTrackingListener) Kill() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, c := range l.conns {
+		_ = c.Close()
+	}
+	l.conns = nil
 }
 
 type subProbe struct {

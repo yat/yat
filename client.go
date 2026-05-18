@@ -287,22 +287,32 @@ func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.
 		req.Flags = new(yatv1.SubFlags_SUB_FLAGS_HANDLER)
 	}
 
-	// FIX: transform some gRPC errors into our own client errors
-	stream, err := c.mc.Sub(ctx, req)
-	if err != nil {
-		return nil, err
+	// openStream dials a new subscription stream and verifies the server accepted it.
+	openStream := func() (grpc.ServerStreamingClient[yatv1.SubResponse], error) {
+		// FIX: transform some gRPC errors into our own client errors
+		stream, err := c.mc.Sub(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		// did the stream end early?
+		md, err := stream.Header()
+		if err != nil {
+			return nil, err
+		}
+
+		// yes it did,
+		// probably auth
+		if md == nil {
+			_, err := stream.Recv()
+			return nil, err
+		}
+
+		return stream, nil
 	}
 
-	// did the stream end early?
-	md, err := stream.Header()
+	stream, err := openStream()
 	if err != nil {
-		return nil, err
-	}
-
-	// yes it did,
-	// probably auth
-	if md == nil {
-		_, err := stream.Recv()
 		return nil, err
 	}
 
@@ -316,7 +326,21 @@ func (c *Client) sub(ctx context.Context, sel Sel, handler bool, f func(context.
 		for {
 			res, err := stream.Recv()
 			if err != nil {
-				return
+				if err == io.EOF || ctx.Err() != nil {
+					return
+				}
+
+				c.config.Logger.WarnContext(ctx, "subscription disconnected, reconnecting",
+					"error", err, "path", sel.Path)
+
+				stream, err = openStream()
+				if err != nil {
+					c.config.Logger.ErrorContext(ctx, "resubscribe failed",
+						"error", err, "path", sel.Path)
+					return
+				}
+
+				continue
 			}
 
 			var m Msg
