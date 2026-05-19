@@ -734,7 +734,7 @@ func (ls *loginServer) RefreshLogin(ctx context.Context, req *yatv1.RefreshLogin
 	}
 
 	src := ls.cfg.LoginConfig.TokenSource(ctx, &oauth2.Token{
-		RefreshToken: *req.Refresh,
+		RefreshToken: req.GetRefresh(),
 	})
 
 	o2t, err := src.Token()
