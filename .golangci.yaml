@@ -1,0 +1,80 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    - canonicalheader
+    - containedctx # FIX: enable
+    - contextcheck # FIX: enable
+    - cyclop
+    - depguard
+    - embeddedstructfieldcheck # FIX: enable
+    - err113
+    - errcheck # FIX: enable
+    - errname # FIX: enable
+    - errorlint
+    - exhaustive # FIX: consider enabling
+    - exhaustruct
+    - forbidigo # FIX: consider enabling
+    - forcetypeassert # FIX: enable
+    - funcorder # FIX: enable
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - godoclint # FIX: enable
+    - godot # FIX: enable
+    - gosec # FIX: enable
+    - inamedparam # FIX: enable
+    - ireturn
+    - lll # FIX: enable
+    - mnd
+    - nakedret # FIX: enable
+    - nestif
+    - nilnil # FIX: enable
+    - nlreturn # FIX: enable
+    - noctx # FIX: enable
+    - noinlineerr
+    - nonamedreturns
+    - recvcheck # FIX: enable
+    - revive # FIX: enable
+    - staticcheck # FIX: enable
+    - unconvert # FIX: enable
+    - unparam # FIX: enable
+    - varnamelen # FIX: consider enabling
+    - whitespace # FIX: enable
+    - wrapcheck
+    - wsl # FIX: consider enabling
+    - wsl_v5 # FIX: consider enabling
+  exclusions:
+    paths:
+      - '^path\.rl\.go$'
+    rules:
+      - path: '_test\.go$'
+        linters:
+          - embeddedstructfieldcheck
+          - err113
+          - errchkjson
+          - exhaustruct
+          - gochecknoglobals
+          - gocognit
+          - goconst
+          - gocyclo
+          - canonicalheader
+          - ireturn
+          - lll
+          - maintidx
+          - modernize
+          - nlreturn
+          - paralleltest
+          - prealloc
+          - revive
+          - testpackage
+          - thelper
+          - tparallel
+          - unparam
+          - usetesting
+          - varnamelen
+          - wrapcheck
+          - wsl_v5
