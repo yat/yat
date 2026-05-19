@@ -583,7 +583,10 @@ func TestGenServerProtocol(t *testing.T) {
 		authSub := marshalProto(t, &yatv1.SubRequest{Path: []byte("auth/topic")})
 		authSubRR := httptest.NewRecorder()
 		denyAll.ServeHTTP(authSubRR, newGRPCRequest(http.MethodPost, yatv1.MsgService_Sub_FullMethodName, appendGRPCFrame(nil, authSub)))
-		assertHTTPStatus(t, authSubRR, http.StatusForbidden)
+		assertGRPCStatus(t, authSubRR, codes.PermissionDenied)
+		if authSubRR.Body.Len() != 0 {
+			t.Fatalf("sub permission body length = %d", authSubRR.Body.Len())
+		}
 
 		badTokenReq := newGRPCRequest(http.MethodPost, yatv1.MsgService_Pub_FullMethodName, appendGRPCFrame(nil, authPub))
 		badTokenReq.Header.Set("authorization", "Bearer not-a-jwt")

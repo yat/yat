@@ -266,6 +266,11 @@ func (s *Server) serveGRPC(w http.ResponseWriter, r *http.Request, handle grpcHa
 	st, _ := status.FromError(err)
 	code := st.Code()
 
+	if code != codes.OK {
+		// Send trailers-only gRPC header response if there's an immediate error
+		w.Header().Del("trailer")
+	}
+
 	w.Header().Set("grpc-status",
 		strconv.FormatUint(uint64(code), 10))
 
@@ -521,7 +526,7 @@ func (s *Server) handleMsgSub(logger *slog.Logger, allow func(Path, Action) bool
 	}
 
 	if !allow(sel.Path, ActionSub) {
-		return httpErrPerms
+		return rpcErrPerms
 	}
 
 	sb := &sbuf{

@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"net/http"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -57,10 +56,6 @@ var (
 	errWildInbox = errors.New("wild inbox path")
 	errWildPath  = errors.New("wild path")
 	errNegLimit  = errors.New("negative limit")
-)
-
-var (
-	httpErrPerms = httpError{http.StatusForbidden, "permission denied"}
 )
 
 var (
