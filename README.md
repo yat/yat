@@ -40,17 +40,3 @@ so commands like `bin/yat sub "**"` will only work if you're logged in.
 
 - `buf` is required to run `(cd api && buf build)`, which generates [`internal/wire`](internal/wire)
 - `ragel` is required to run `go generate .`, which compiles [`path.rl`](path.rl)
-
-### jq for output parsing
-
-The yat client outputs JSON with the format `{"path": "<path>", "data": "<base64-encoded data>"}`. To decode the data, you can use `jq`:
-
-```sh
-bin/yat sub local/greetings | jq '{path: .path, data: (.data | @base64d)}'
-```
-
-If the data itself is JSON, you can further parse it:
-
-```sh
-bin/yat sub local/greetings | jq '{path: .path, data: (.data | @base64d | fromjson)}'
-```

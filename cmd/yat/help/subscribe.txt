@@ -12,5 +12,7 @@ Flags:
   -duration, -d 0s
       Stop after some amount of time.
 
-  -raw
-      Print raw message data.
+  -data-format, -F string
+      Controls the format of the printed data field.
+      Supported formats are base64, string, json, and raw.
+      The raw format prints the message data instead of a JSON line.

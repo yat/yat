@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"time"
@@ -14,15 +15,15 @@ import (
 type SubscribeCmd struct {
 	clientCmd
 
-	Limit    int
-	Duration time.Duration
-	Raw      bool
+	Limit      int
+	Duration   time.Duration
+	DataFormat dataFormat
 }
 
 func (cmd *SubscribeCmd) AddFlags(flags *flagset.Set) {
 	flags.Int(&cmd.Limit, "limit", "n")
 	flags.Duration(&cmd.Duration, "duration", "d")
-	flags.Bool(&cmd.Raw, "raw")
+	flags.Text(&cmd.DataFormat, "data-format", "F")
 }
 
 func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
@@ -33,16 +34,40 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		}
 	}
 
+	errC := make(chan error, 1)
+	jsonOut := json.NewEncoder(os.Stdout)
 	cb := func(_ context.Context, m yat.Msg) {
-		var err error
-		if cmd.Raw {
-			_, err = os.Stdout.Write(m.Data)
-		} else {
-			err = json.NewEncoder(os.Stdout).Encode(m)
+		printMsg := func(m yat.Msg) error {
+			if cmd.DataFormat == dfRaw {
+				_, err := os.Stdout.Write(m.Data)
+				return err
+			}
+
+			type outMsg struct {
+				Path  string `json:"path"`
+				Data  any    `json:"data,omitempty"`
+				Inbox string `json:"inbox,omitempty"`
+			}
+
+			data, err := dataField(m.Data, cmd.DataFormat)
+			if err != nil {
+				return err
+			}
+
+			om := outMsg{
+				Path:  m.Path.String(),
+				Data:  data,
+				Inbox: m.Inbox.String(),
+			}
+
+			return jsonOut.Encode(om)
 		}
 
-		if err != nil {
-			logger.ErrorContext(ctx, "write failed", "error", err)
+		if err := printMsg(m); err != nil {
+			select {
+			case errC <- err:
+			default:
+			}
 		}
 	}
 
@@ -89,7 +114,63 @@ func (cmd *SubscribeCmd) Run(ctx context.Context, logger *slog.Logger, args []st
 		}
 		return ctx.Err()
 
+	case err := <-errC:
+		return err
+
 	case <-sub.Done():
+		select {
+		case err := <-errC:
+			return err
+		default:
+			return nil
+		}
+	}
+}
+
+type dataFormat string
+
+const (
+	dfString = dataFormat("string")
+	dfBase64 = dataFormat("base64")
+	dfRaw    = dataFormat("raw")
+	dfJSON   = dataFormat("json")
+)
+
+func (df dataFormat) MarshalText() (text []byte, err error) {
+	return []byte(df), nil
+}
+
+func (df *dataFormat) UnmarshalText(text []byte) error {
+	switch dataFormat(text) {
+	case dfString, dfBase64, dfRaw, dfJSON:
+		*df = dataFormat(text)
 		return nil
+
+	default:
+		return errors.New("unknown format")
+	}
+}
+
+func dataField(data []byte, format dataFormat) (any, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	switch format {
+	case dfString:
+		return string(data), nil
+
+	case dfJSON:
+		var value any
+		if err := json.Unmarshal(data, &value); err != nil {
+			return nil, err
+		}
+		return value, nil
+
+	case dfBase64:
+		fallthrough
+
+	default:
+		return data, nil
 	}
 }

@@ -15,21 +15,21 @@ import (
 type PostCmd struct {
 	clientCmd
 
-	File     string
-	Empty    bool
-	Raw      bool
-	Limit    int
-	Duration time.Duration
-	Timeout  time.Duration
+	File       string
+	Empty      bool
+	Limit      int
+	Duration   time.Duration
+	Timeout    time.Duration
+	DataFormat dataFormat
 }
 
 func (cmd *PostCmd) AddFlags(flags *flagset.Set) {
 	flags.String(&cmd.File, "file", "f")
 	flags.Bool(&cmd.Empty, "empty", "e")
-	flags.Bool(&cmd.Raw, "raw")
 	flags.Int(&cmd.Limit, "limit", "n")
 	flags.Duration(&cmd.Duration, "duration", "d")
 	flags.Duration(&cmd.Timeout, "timeout", "t")
+	flags.Text(&cmd.DataFormat, "data-format", "F")
 }
 
 func (cmd *PostCmd) Run(ctx context.Context, logger *slog.Logger, args []string) error {
@@ -100,15 +100,29 @@ func (cmd *PostCmd) Run(ctx context.Context, logger *slog.Logger, args []string)
 		Limit: cmd.Limit,
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-
+	jsonOut := json.NewEncoder(os.Stdout)
 	err = yc.Post(ctx, req, func(r yat.Res) error {
-		if cmd.Raw {
+		if cmd.DataFormat == dfRaw {
 			_, err := os.Stdout.Write(r.Data)
 			return err
 		}
 
-		return enc.Encode(r)
+		type outRes struct {
+			Data  any    `json:"data,omitempty"`
+			Inbox string `json:"inbox,omitempty"`
+		}
+
+		data, err := dataField(r.Data, cmd.DataFormat)
+		if err != nil {
+			return err
+		}
+
+		or := outRes{
+			Data:  data,
+			Inbox: r.Inbox.String(),
+		}
+
+		return jsonOut.Encode(or)
 	})
 
 	if context.Cause(ctx) == errDuration {
