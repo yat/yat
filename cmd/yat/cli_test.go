@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -428,17 +429,17 @@ func TestCLIPublishSubscribeRoundTrip(t *testing.T) {
 	var msg struct {
 		Path  string `json:"path"`
 		Inbox string `json:"inbox"`
-		Data  []byte `json:"data"`
+		Data  string `json:"data"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(result.stdout), &msg); err != nil {
 		t.Fatalf("decode subscribe output %q: %v", result.stdout, err)
 	}
-	if msg.Path != "cli/pub" || msg.Inbox != "cli/reply" || string(msg.Data) != "hello from cli" {
+	if msg.Path != "cli/pub" || msg.Inbox != "cli/reply" || msg.Data != "hello from cli" {
 		t.Fatalf("subscribe output = path:%q inbox:%q data:%q", msg.Path, msg.Inbox, msg.Data)
 	}
 
 	rawSub := h.start(t, nil, nil,
-		h.clientArgs("sub", "cli/raw", "-raw", "-n", "1")...)
+		h.clientArgs("sub", "cli/raw", "-F", "raw", "-n", "1")...)
 	defer rawSub.cancel()
 
 	rawResult := waitForProcessAfter(t, rawSub, func() cliResult {
@@ -449,6 +450,190 @@ func TestCLIPublishSubscribeRoundTrip(t *testing.T) {
 	if string(rawResult.stdout) != "raw cli data" {
 		t.Fatalf("raw subscribe stdout = %q", rawResult.stdout)
 	}
+}
+
+func TestCLISubscribeDataFormats(t *testing.T) {
+	h := newCLIHarness(t)
+	h.startServer(t)
+
+	type msgOut struct {
+		Path  string          `json:"path"`
+		Data  json.RawMessage `json:"data"`
+		Inbox string          `json:"inbox,omitempty"`
+	}
+
+	assertMsg := func(t *testing.T, stdout []byte, path string) msgOut {
+		t.Helper()
+
+		var msg msgOut
+		if err := json.Unmarshal(bytes.TrimSpace(stdout), &msg); err != nil {
+			t.Fatalf("decode subscribe output %q: %v", stdout, err)
+		}
+		if msg.Path != path {
+			t.Fatalf("subscribe path = %q, want %q; stdout = %q", msg.Path, path, stdout)
+		}
+		return msg
+	}
+
+	for _, tc := range []struct {
+		name    string
+		flags   []string
+		payload []byte
+		check   func(*testing.T, []byte, string)
+	}{
+		{
+			name:    "default_string",
+			payload: []byte("hello from default"),
+			check: func(t *testing.T, stdout []byte, path string) {
+				msg := assertMsg(t, stdout, path)
+				var data string
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", msg.Data, err)
+				}
+				if data != "hello from default" {
+					t.Fatalf("data = %q", data)
+				}
+			},
+		},
+		{
+			name:    "string",
+			flags:   []string{"-data-format", "string"},
+			payload: []byte("hello from string"),
+			check: func(t *testing.T, stdout []byte, path string) {
+				msg := assertMsg(t, stdout, path)
+				var data string
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", msg.Data, err)
+				}
+				if data != "hello from string" {
+					t.Fatalf("data = %q", data)
+				}
+			},
+		},
+		{
+			name:    "base64",
+			flags:   []string{"-F", "base64"},
+			payload: []byte{0, 1, 2, 'b', '6', '4'},
+			check: func(t *testing.T, stdout []byte, path string) {
+				msg := assertMsg(t, stdout, path)
+				var data string
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", msg.Data, err)
+				}
+				want := base64.StdEncoding.EncodeToString([]byte{0, 1, 2, 'b', '6', '4'})
+				if data != want {
+					t.Fatalf("data = %q, want %q", data, want)
+				}
+			},
+		},
+		{
+			name:    "json",
+			flags:   []string{"-F", "json"},
+			payload: []byte(`{"ok":true,"n":2}`),
+			check: func(t *testing.T, stdout []byte, path string) {
+				msg := assertMsg(t, stdout, path)
+				var data struct {
+					OK bool `json:"ok"`
+					N  int  `json:"n"`
+				}
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", msg.Data, err)
+				}
+				if !data.OK || data.N != 2 {
+					t.Fatalf("data = %+v", data)
+				}
+			},
+		},
+		{
+			name:    "raw",
+			flags:   []string{"-F", "raw"},
+			payload: []byte("raw subscribe data"),
+			check: func(t *testing.T, stdout []byte, _ string) {
+				if string(stdout) != "raw subscribe data" {
+					t.Fatalf("raw stdout = %q", stdout)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "cli/sub-format/" + tc.name
+			args := append([]string{"sub", path, "-n", "1"}, tc.flags...)
+			sub := h.start(t, nil, nil, h.clientArgs(args...)...)
+			defer sub.cancel()
+
+			result := waitForProcessAfter(t, sub, func() cliResult {
+				return h.runWithEnv(tc.payload, nil,
+					h.clientArgs("pub", path)...)
+			})
+			result.mustSucceed(t)
+			tc.check(t, result.stdout, path)
+		})
+	}
+
+	t.Run("json_invalid_data", func(t *testing.T) {
+		path := "cli/sub-format/json-invalid"
+		sub := h.start(t, nil, nil,
+			h.clientArgs("sub", path, "-F", "json", "-n", "1")...)
+		defer sub.cancel()
+
+		result := waitForProcessAfter(t, sub, func() cliResult {
+			return h.runWithEnv([]byte("not json"), nil,
+				h.clientArgs("pub", path)...)
+		})
+		result.mustFail(t)
+		if len(result.stdout) != 0 {
+			t.Fatalf("invalid JSON stdout = %q", result.stdout)
+		}
+		if !bytes.Contains(result.stderr, []byte("invalid character")) {
+			t.Fatalf("invalid JSON stderr = %q", result.stderr)
+		}
+	})
+
+	t.Run("limit_two", func(t *testing.T) {
+		path := "cli/sub-format/limit-two"
+		sub := h.start(t, nil, nil,
+			h.clientArgs("sub", path, "-n", "2")...)
+		defer sub.cancel()
+
+		result := waitForProcessAfter(t, sub, func() cliResult {
+			first := h.runWithEnv([]byte("one"), nil,
+				h.clientArgs("pub", path)...)
+			if first.err != nil {
+				return first
+			}
+			return h.runWithEnv([]byte("two"), nil,
+				h.clientArgs("pub", path)...)
+		})
+		result.mustSucceed(t)
+
+		lines := bytes.Split(bytes.TrimSpace(result.stdout), []byte("\n"))
+		if len(lines) != 2 {
+			t.Fatalf("subscribe output lines = %d, want 2; stdout = %q", len(lines), result.stdout)
+		}
+
+		got := map[string]bool{}
+		for _, line := range lines {
+			var msg struct {
+				Data string `json:"data"`
+			}
+			if err := json.Unmarshal(line, &msg); err != nil {
+				t.Fatalf("decode subscribe output line %q: %v", line, err)
+			}
+			got[msg.Data] = true
+		}
+		if !got["one"] || !got["two"] {
+			t.Fatalf("subscribe data = %#v; stdout = %q", got, result.stdout)
+		}
+	})
+
+	t.Run("unknown_format", func(t *testing.T) {
+		result := h.runWithEnv(nil, nil,
+			h.clientArgs("sub", "cli/sub-format/unknown", "-F", "wat")...)
+		result.mustFail(t)
+		if !bytes.Contains(result.stderr, []byte("unknown format")) {
+			t.Fatalf("unknown format stderr = %q", result.stderr)
+		}
+	})
 }
 
 func TestCLIPostHandleRoundTrip(t *testing.T) {
@@ -462,7 +647,7 @@ func TestCLIPostHandleRoundTrip(t *testing.T) {
 
 	post := waitForHandlerReady(t, handle, func() cliResult {
 		return h.runWithEnv([]byte("request data"), nil,
-			h.clientArgs("req", "cli/request", "-raw", "-limit", "1")...)
+			h.clientArgs("req", "cli/request", "-F", "raw", "-limit", "1")...)
 	})
 	if string(post.stdout) != "response data" {
 		t.Fatalf("post stdout = %q", post.stdout)
@@ -479,14 +664,170 @@ func TestCLIPostHandleRoundTrip(t *testing.T) {
 			h.clientArgs("req", "cli/request-json", "-limit", "1")...)
 	})
 
-	var res yat.Res
+	var res struct {
+		Data string `json:"data"`
+	}
 	if err := json.Unmarshal(bytes.TrimSpace(post.stdout), &res); err != nil {
 		t.Fatalf("decode post output %q: %v", post.stdout, err)
 	}
-	if string(res.Data) != "json response" {
+	if res.Data != "json response" {
 		t.Fatalf("post response data = %q; stdout = %q", res.Data, post.stdout)
 	}
 	handle.wait(t, cliTestTimeout).mustSucceed(t)
+}
+
+func TestCLIPostDataFormats(t *testing.T) {
+	h := newCLIHarness(t)
+	h.startServer(t)
+
+	yc := h.newClient(t)
+	defer yc.Close()
+
+	type resOut struct {
+		Data  json.RawMessage `json:"data"`
+		Inbox string          `json:"inbox,omitempty"`
+	}
+
+	assertRes := func(t *testing.T, stdout []byte) resOut {
+		t.Helper()
+
+		var res resOut
+		if err := json.Unmarshal(bytes.TrimSpace(stdout), &res); err != nil {
+			t.Fatalf("decode post output %q: %v", stdout, err)
+		}
+		return res
+	}
+
+	for _, tc := range []struct {
+		name     string
+		flags    []string
+		response []byte
+		check    func(*testing.T, []byte)
+		wantErr  bool
+	}{
+		{
+			name:     "default_string",
+			response: []byte("default response"),
+			check: func(t *testing.T, stdout []byte) {
+				res := assertRes(t, stdout)
+				var data string
+				if err := json.Unmarshal(res.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", res.Data, err)
+				}
+				if data != "default response" {
+					t.Fatalf("data = %q", data)
+				}
+			},
+		},
+		{
+			name:     "string",
+			flags:    []string{"-F", "string"},
+			response: []byte("string response"),
+			check: func(t *testing.T, stdout []byte) {
+				res := assertRes(t, stdout)
+				var data string
+				if err := json.Unmarshal(res.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", res.Data, err)
+				}
+				if data != "string response" {
+					t.Fatalf("data = %q", data)
+				}
+			},
+		},
+		{
+			name:     "base64",
+			flags:    []string{"-data-format", "base64"},
+			response: []byte{3, 2, 1, 'b', '6', '4'},
+			check: func(t *testing.T, stdout []byte) {
+				res := assertRes(t, stdout)
+				var data string
+				if err := json.Unmarshal(res.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", res.Data, err)
+				}
+				want := base64.StdEncoding.EncodeToString([]byte{3, 2, 1, 'b', '6', '4'})
+				if data != want {
+					t.Fatalf("data = %q, want %q", data, want)
+				}
+			},
+		},
+		{
+			name:     "json",
+			flags:    []string{"-F", "json"},
+			response: []byte(`{"ok":true,"n":3}`),
+			check: func(t *testing.T, stdout []byte) {
+				res := assertRes(t, stdout)
+				var data struct {
+					OK bool `json:"ok"`
+					N  int  `json:"n"`
+				}
+				if err := json.Unmarshal(res.Data, &data); err != nil {
+					t.Fatalf("decode data %q: %v", res.Data, err)
+				}
+				if !data.OK || data.N != 3 {
+					t.Fatalf("data = %+v", data)
+				}
+			},
+		},
+		{
+			name:     "raw",
+			flags:    []string{"-F", "raw"},
+			response: []byte("raw post response"),
+			check: func(t *testing.T, stdout []byte) {
+				if string(stdout) != "raw post response" {
+					t.Fatalf("raw stdout = %q", stdout)
+				}
+			},
+		},
+		{
+			name:     "json_invalid_data",
+			flags:    []string{"-F", "json"},
+			response: []byte("not json"),
+			wantErr:  true,
+			check: func(t *testing.T, stdout []byte) {
+				if len(stdout) != 0 {
+					t.Fatalf("invalid JSON stdout = %q", stdout)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "cli/post-format/" + tc.name
+			handlerCtx, cancelHandler := context.WithCancel(context.Background())
+			sub, err := yc.Handle(handlerCtx, yat.Sel{Path: yat.NewPath(path)}, func(context.Context, yat.Path, []byte) []byte {
+				return tc.response
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cancelHandler()
+				waitCLISubDone(t, sub)
+			}()
+
+			args := append([]string{"req", path, "-empty"}, tc.flags...)
+			result := waitForPostResult(t, func() cliResult {
+				return h.runWithEnv(nil, nil, h.clientArgs(args...)...)
+			})
+			if tc.wantErr {
+				result.mustFail(t)
+				if !bytes.Contains(result.stderr, []byte("invalid character")) {
+					t.Fatalf("invalid JSON stderr = %q", result.stderr)
+				}
+			} else {
+				result.mustSucceed(t)
+			}
+			tc.check(t, result.stdout)
+		})
+	}
+
+	t.Run("unknown_format", func(t *testing.T) {
+		result := h.runWithEnv(nil, nil,
+			h.clientArgs("req", "cli/post-format/unknown", "-empty", "-F", "wat")...)
+		result.mustFail(t)
+		if !bytes.Contains(result.stderr, []byte("unknown format")) {
+			t.Fatalf("unknown format stderr = %q", result.stderr)
+		}
+	})
 }
 
 func TestCLIPostDuration(t *testing.T) {
@@ -1243,6 +1584,26 @@ func waitForHandlerReady(t *testing.T, handle *cliProcess, post func() cliResult
 		}
 		if !bytes.Contains(result.stderr, []byte("no handler for post")) {
 			result.mustSucceed(t)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func waitForPostResult(t *testing.T, post func() cliResult) cliResult {
+	t.Helper()
+
+	var result cliResult
+	deadline := time.After(cliTestTimeout)
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for post result; last stderr:\n%s", result.stderr)
+		default:
+		}
+
+		result = post()
+		if result.err == nil || !bytes.Contains(result.stderr, []byte("no handler for post")) {
+			return result
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

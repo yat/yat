@@ -13,9 +13,6 @@ Flags:
   -empty, -e
       Post a request with no data.
 
-  -raw
-      Print raw response data.
-
   -limit, -n 1
       Stop after n responses.
 
@@ -24,3 +21,8 @@ Flags:
 
   -timeout, -t 0s
       Fail after some amount of time.
+
+  -data-format, -F string
+      Controls the format of the printed data field.
+      Supported formats are base64, string, json, and raw.
+      The raw format prints the response data instead of a JSON line.

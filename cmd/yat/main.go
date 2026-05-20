@@ -110,9 +110,10 @@ func run(ctx context.Context, args []string) error {
 
 	case "post", "request", "req":
 		cmd = &PostCmd{
-			clientCmd: clientCmd{&cfg},
-			File:      "/dev/stdin",
-			Limit:     1,
+			clientCmd:  clientCmd{&cfg},
+			File:       "/dev/stdin",
+			Limit:      1,
+			DataFormat: dfString,
 		}
 
 	case "publish", "pub":
@@ -130,7 +131,8 @@ func run(ctx context.Context, args []string) error {
 
 	case "subscribe", "sub":
 		cmd = &SubscribeCmd{
-			clientCmd: clientCmd{&cfg},
+			clientCmd:  clientCmd{&cfg},
+			DataFormat: dfString,
 		}
 
 	default:
