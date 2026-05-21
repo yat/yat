@@ -6,7 +6,7 @@
 ## Development
 
 ```
-bin/dev # for hot reloads 
+bin/dev # for hot reloads
 # or run bin/serve directly
 ```
 
@@ -54,3 +54,7 @@ If the data itself is JSON, you can further parse it:
 ```sh
 bin/yat sub local/greetings | jq '{path: .path, data: (.data | @base64d | fromjson)}'
 ```
+
+### gRPC client logging
+
+For internal gRPC client logs on STDERR, set `GRPC_GO_LOG_SEVERITY_LEVEL=info` in the environment.
