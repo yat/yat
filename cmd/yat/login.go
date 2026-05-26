@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattn/go-isatty"
+	"github.com/pkg/browser"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
@@ -76,7 +78,13 @@ func (cmd *LoginCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 
 		switch event := res.GetEvent().(type) {
 		case *yatv1.LoginResponse_Start:
-			fmt.Fprintln(os.Stderr, event.Start.GetUrl())
+			url := event.Start.GetUrl()
+			fmt.Fprintf(os.Stderr, "opening %s\n", url)
+			if isatty.IsTerminal(os.Stderr.Fd()) {
+				if err := browser.OpenURL(url); err != nil {
+					fmt.Fprintf(os.Stderr, "error opening browser: %v\n", err)
+				}
+			}
 
 		case *yatv1.LoginResponse_Creds:
 			return writeLoginCreds(path, event.Creds)
