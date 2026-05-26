@@ -1,0 +1,21 @@
+body {
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    place-items: center;
+    place-content: center;
+    background: #050505;
+    color: #a9a9a9;
+    font-family: monospace;
+    text-align: center;
+}
+
+.logo {
+    font-size: 8em;
+    margin: 0;
+}
+
+.msg {
+    font-size: 1em;
+    margin-top: 0.5em;
+}
