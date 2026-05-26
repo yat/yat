@@ -858,8 +858,13 @@ func (ls *loginServer) handleGetLoginCallback(w http.ResponseWriter, r *http.Req
 	default:
 	}
 
-	// FIX: this will show in the browser
-	w.Write([]byte("ok"))
+	data, err := web.FS.ReadFile("static/login-success.html")
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(data)
 }
 
 func (ls *loginServer) validateState(state string) error {
