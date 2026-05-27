@@ -3,6 +3,9 @@ issuer: https://localhost:5556
 storage:
   type: memory
 
+oauth2:
+  skipApprovalScreen: true
+
 web:
   https: 0.0.0.0:5556
   tlsCert: /etc/dex/tls/tls.crt
