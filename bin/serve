@@ -14,11 +14,14 @@ set -- \
 
 dex=https://localhost:5556
 if curl -fsS "$dex/.well-known/openid-configuration" >/dev/null 2>&1; then
+  echo "using dex at $dex and etc/dev/login-rules.yaml"
   export YAT_LOGIN_CLIENT_SECRET=secret
   set -- "$@" \
     -config etc/dev/login-rules.yaml \
     -login-provider "$dex" \
     -login-client-id yat
+else
+  echo "dex not available, using etc/dev/local-rules.yaml"
 fi
 
 exec go tool logfmt ./yat serve "$@"
