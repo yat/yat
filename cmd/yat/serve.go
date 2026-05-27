@@ -173,7 +173,7 @@ func (cmd *ServeCmd) Run(ctx context.Context, logger *slog.Logger, args []string
 			ClientSecret: clientSecret,
 			Endpoint:     p.Endpoint(),
 			RedirectURL:  cmd.EndpointURL.JoinPath("login", "callback").String(),
-			Scopes:       []string{oidc.ScopeOpenID, oidc.ScopeOfflineAccess, "profile", "email"},
+			Scopes:       []string{oidc.ScopeOpenID, oidc.ScopeOfflineAccess, "profile", "email", "groups"},
 		}
 
 		loginVerifier = p.Verifier(&oidc.Config{
